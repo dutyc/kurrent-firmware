@@ -1,0 +1,40 @@
+--- a/src/net/tcp/nvmetcp.c
++++ b/src/net/tcp/nvmetcp.c
+@@ -1284,17 +1284,36 @@
+ 	return nvmetcp_parse_secret ( nvmetcp, uri );
+ }
+ 
++/** NVMe host NQN setting (overrides the UUID-derived default) */
++static struct setting hostnqn_setting __setting ( SETTING_HOST_EXTRA,
++						  hostnqn ) = {
++	.name = "hostnqn",
++	.description = "NVMe host NQN",
++	.type = &setting_type_string,
++};
++
+ /**
+- * Construct default host NQN
++ * Construct host NQN
+  *
+  * @v nvmetcp		NVMe/TCP session
+  * @ret rc		Return status code
++ *
++ * Prefer the explicitly configured host NQN (e.g. injected by the
++ * boot server per MAC address), falling back to the UUID-derived
++ * default so plain nvme:// URIs stay self-contained.
+  */
+ static int nvmetcp_set_host_nqn ( struct nvmetcp_session *nvmetcp ) {
+ 	union uuid uuid;
+ 	char *nqn;
+ 	size_t len;
+ 
++	nqn = NULL;
++	fetch_string_setting_copy ( NULL, &hostnqn_setting, &nqn );
++	if ( nqn ) {
++		nvmetcp->host_nqn = nqn;
++		return 0;
++	}
++
+ 	len = ( sizeof ( NVMETCP_DEFAULT_HOST_NQN ) - 1 +
+ 		sizeof ( uuid ) * 2 );
+ 	nqn = zalloc ( len );
