@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
+本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十二个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
 
 | # | 补丁 | 内容 |
 |---|---|---|
@@ -16,6 +16,8 @@
 | 0008 | `0008-efi-nvs-backend.patch` | EFI 变量 NVS 后端（`device-key` / `server-fingerprint` 重启保留） |
 | 0009 | `0009-tofu-fingerprint.patch` | TOFU 指纹链路（首次接触 TLS 放行、指纹存储） |
 | 0010 | `0010-devicekey-commands.patch` | 设备身份密钥命令（`keygen` / `pubkey` / `sign`） |
+| 0011 | `0011-nvmetcp-hostnqn-setting.patch` | NVMe/TCP host NQN 设置（按 MAC 注入身份，严格模式认证） |
+| 0012 | `0012-nvmetcp-nbct-acpi-table.patch` | NVMe 引导凭证表（NBCT：DH-HMAC-CHAP 密钥 + host NQN 经 ACPI 表交接内核侧） |
 
 ## 设计动机
 
@@ -30,7 +32,7 @@ patches/（差异文件，唯一事实来源）
     +
 embed/（脚本资产）
     ↓ build/build.sh
-dist/（十个固件产物 + SHA256SUMS）
+dist/（七个固件产物 + SHA256SUMS）
 ```
 
 补丁全部基于**固定上游基线**生成，升级上游时重新生成补丁即可（见 [patches/README.zh-CN.md](../patches/README.zh-CN.md)）。
@@ -93,7 +95,7 @@ dist/（十个固件产物 + SHA256SUMS）
   - EFI 设备路径描述与 BlockIo 钩接（供 `sanboot`）；单元测试（结构布局 + Identify NS 解析）
 - **用法**：端到端指南（nvmet 服务端配置含认证、`sanboot` 语法、QEMU 验证）见 [nvmeof-usage.md](nvmeof-usage.md)。
 - **验证**：QEMU/OVMF + Ubuntu 26.04 内核 7.0 nvmet target，GRUB 2.14 SAN 引导链路通过（见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)）。
-- **授权**：ipxe-stateless 自研实现，`FILE_LICENCE ( GPL2_ONLY )`——仅按 GPL-2.0 授权，不得以 UBDL 再分发。
+- **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_ONLY )`——仅按 GPL-2.0 授权，不得以 UBDL 再分发。
 
 ### 7. NVMe/TCP 认证与状态机修复（`0007`）
 
@@ -129,7 +131,24 @@ dist/（十个固件产物 + SHA256SUMS）
   - `pubkey`：经 P-256 曲线乘法推导未压缩点（`0x04‖X‖Y`，130 hex）
   - `sign`：数据（参数拼接）SHA-256 摘要 → ECDSA P-256 → base64(DER) 签名，同时存入 `sig` 设置供脚本使用
 - **验证**：QEMU/OVMF 两轮——第 1 轮（清空 NVRAM）：keygen/pubkey/sign 全部成功；主机侧（OpenSSL/python）对打印的公钥与签名独立验签通过（PREHASHED 与 REHASH）；第 2 轮（保留 NVRAM）：keygen 拒绝覆盖，pubkey/sign 输出与第 1 轮完全一致（持久化验证）。
-- **授权**：ipxe-stateless 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`。
+- **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`。
+
+### 11. NVMe/TCP host NQN 设置（`0011`）
+
+- **背景**：严格模式 DH-HMAC-CHAP 认证要求 host NQN 与 nvmet `hosts/` 注册匹配；引导服务器无法预测任意客户端的 UUID 派生默认值。
+- **修改**：`src/net/tcp/nvmetcp.c`——注册 `hostnqn` 设置项，覆盖 `nvmetcp_set_host_nqn()` 中 UUID 派生的默认值；未设置该选项的普通 `nvme://` URI 保持原回退行为（`nqn.2014-08.org.ipxe:<uuid>`）。
+- **验证**：引导服务器按 MAC 经凭证端点注入 host NQN；nvmet `hosts/` 严格模式接受（`test/nvmet-setup.sh` 的 `AUTH=1`）。
+
+### 12. NVMe 引导凭证表（`0012`）
+
+- **背景**：认证引导下，内核侧重连不得第二次经网络获取凭证——固件已持有每会话的 DH-HMAC-CHAP 密钥与 host NQN，应以内核可读的方式带内接力。
+- **修改**：`src/drivers/block/nbct.c`（新）、`src/include/ipxe/nbct.h`（新）、`src/include/ipxe/errfile.h`、`src/include/ipxe/nvmetcp.h`、`src/net/tcp/nvmetcp.c`
+  - 按 iBFT 的 `acpi_model` 注册模式安装（`nbct_model`）；每个已认证 NVMe/TCP 会话暴露 `acpi_describe` 接口操作
+  - sanboot 描述时（`efi_block_describe` → `acpi_install`）安装签名为 `NBCT` 的自定义 ACPI 表：36 字节 ACPI 头 + 记录数 + N 条定长 1024 字节记录（traddr / trsvcid / nqn / hostnqn / secret）
+  - 表仅驻留内存（不入 NVRAM），随引导会话消亡
+- **消费侧**：`initramfs-nbft/nbft-connect --connect` 检测 `/sys/firmware/acpi/tables/NBCT*`，以 `--dhchap-secret` / `--hostnqn` 逐条重连；无表时回退 `connect-all --nbft`（见 [../initramfs-nbft/README.md](../initramfs-nbft/README.md)）
+- **验证**：`nbft-connect --selftest`（合成表解析）+ `test/test-nbft-connect-nbct.sh`（mock nvme 场景）；QEMU `AUTH=1` 六环全链路验证记录见仓库验证部分。
+- **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( BSD2 )`。
 
 ## EMBED 自动引导脚本
 

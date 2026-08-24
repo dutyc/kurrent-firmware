@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **ten patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
+Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **twelve patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
 
 | # | Patch | Scope |
 |---|---|---|
@@ -16,6 +16,8 @@ Every customization in this repository, relative to the upstream iPXE baseline (
 | 0008 | `0008-efi-nvs-backend.patch` | EFI variable NVS backend (`device-key` / `server-fingerprint` persist across reboot) |
 | 0009 | `0009-tofu-fingerprint.patch` | TOFU fingerprint chain (first-contact TLS acceptance, fingerprint storage) |
 | 0010 | `0010-devicekey-commands.patch` | Device identity key commands (`keygen` / `pubkey` / `sign`) |
+| 0011 | `0011-nvmetcp-hostnqn-setting.patch` | NVMe/TCP host NQN setting (per-MAC identity override for strict-mode authentication) |
+| 0012 | `0012-nvmetcp-nbct-acpi-table.patch` | NVMe boot credentials table (NBCT ACPI handoff of DH-HMAC-CHAP secret + host NQN to the kernel side) |
 
 ## Design Rationale
 
@@ -30,7 +32,7 @@ patches/ (diff files, single source of truth)
     +
 embed/ (script assets)
     ↓ build/build.sh
-dist/ (ten firmware artifacts + SHA256SUMS)
+dist/ (seven firmware artifacts + SHA256SUMS)
 ```
 
 All patches are generated against the **same pinned upstream baseline**; upgrading upstream means regenerating the patches (see [patches/README.md](../patches/README.md)).
@@ -93,7 +95,7 @@ All patches are generated against the **same pinned upstream baseline**; upgradi
   - EFI device-path description and BlockIo hooking for `sanboot`; unit tests (structure layout + Identify NS parsing)
 - **Usage**: end-to-end guide (nvmet target setup incl. auth, `sanboot` syntax, QEMU validation) in [nvmeof-usage.md](nvmeof-usage.md) (Chinese only).
 - **Verification**: QEMU/OVMF + Ubuntu 26.04 kernel 7.0 nvmet target, GRUB 2.14 SAN boot chain passing (see [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md), Chinese only).
-- **Licence**: original ipxe-stateless implementation, `FILE_LICENCE ( GPL2_ONLY )` — GPL-2.0 only, not redistributable under UBDL.
+- **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_ONLY )` — GPL-2.0 only, not redistributable under UBDL.
 
 ### 7. NVMe/TCP authentication and state-machine fixes (`0007`)
 
@@ -129,7 +131,24 @@ All patches are generated against the **same pinned upstream baseline**; upgradi
   - `pubkey`: derives the uncompressed point (`0x04‖X‖Y`, 130 hex) via P-256 curve multiplication
   - `sign`: SHA-256 digest of the data (arguments concatenated) → ECDSA P-256 → base64(DER) signature, also stored in the `sig` setting for scripts
 - **Verification**: QEMU/OVMF two rounds — round 1 (clean NVRAM): keygen/pubkey/sign all succeed; host-side independent verification (OpenSSL/python) of the printed public key and signature passes (PREHASHED and REHASH); round 2 (kept NVRAM): keygen refuses to overwrite, pubkey/sign output identical to round 1 (persistence proven).
-- **Licence**: original ipxe-stateless implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`.
+- **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`.
+
+### 11. NVMe/TCP host NQN setting (`0011`)
+
+- **Rationale**: strict-mode DH-HMAC-CHAP authentication requires the host NQN to match the nvmet `hosts/` registration; the UUID-derived default cannot be predicted by the boot server for an arbitrary client.
+- **Changes**: `src/net/tcp/nvmetcp.c` — a registered `hostnqn` setting overrides the UUID-derived default in `nvmetcp_set_host_nqn()`; plain `nvme://` URIs without the setting keep the old fallback (`nqn.2014-08.org.ipxe:<uuid>`).
+- **Verification**: host NQN injected per MAC via the credential endpoint; nvmet `hosts/` strict-mode acceptance (`test/nvmet-setup.sh` with `AUTH=1`).
+
+### 12. NVMe boot credentials table (`0012`)
+
+- **Rationale**: with authenticated boot the kernel-side reconnect must not fetch credentials over the network a second time — the firmware already holds the per-session DH-HMAC-CHAP secret and host NQN.
+- **Changes**: `src/drivers/block/nbct.c` (new), `src/include/ipxe/nbct.h` (new), `src/include/ipxe/errfile.h`, `src/include/ipxe/nvmetcp.h`, `src/net/tcp/nvmetcp.c`
+  - iBFT-style `acpi_model` registration (`nbct_model`); each authenticated NVMe/TCP session exposes an `acpi_describe` interface op
+  - at sanboot description time (`efi_block_describe` → `acpi_install`) a custom ACPI table signed `NBCT` is installed: 36-byte ACPI header + entry count + N fixed 1024-byte records (traddr / trsvcid / nqn / hostnqn / secret)
+  - the table lives in memory only (no NVRAM) and dies with the boot session
+- **Consumption**: `initramfs-nbft/nbft-connect --connect` detects `/sys/firmware/acpi/tables/NBCT*` and connects each record with `--dhchap-secret` / `--hostnqn`, falling back to `connect-all --nbft` when the table is absent (see `../initramfs-nbft/README.md`)
+- **Verification**: `nbft-connect --selftest` (synthetic-table parsing) + `test/test-nbft-connect-nbct.sh` (mock-nvme scenarios); full QEMU `AUTH=1` six-stage boot in the repository verification records.
+- **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( BSD2 )`.
 
 ## EMBED Auto-Boot Script
 

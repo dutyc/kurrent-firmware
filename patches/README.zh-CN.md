@@ -28,6 +28,8 @@
 | `0008-efi-nvs-backend.patch` | `src/config/config_efi.c`、`src/interface/efi/efi_nvs.c`、`src/include/ipxe/dhcp.h`、`src/include/ipxe/errfile.h` | EFI 变量 NVS 后端：新增 `efi_nvs.c` 设置后端，持久化于 EFI NVRAM 变量（项目命名空间 GUID）——`device-key`（0x5e）与 `server-fingerprint`（0x5f）设置重启保留 |
 | `0009-tofu-fingerprint.patch` | `src/include/ipxe/tofu.h`、`src/net/tofu.c`、`src/net/tls.c`、`src/include/ipxe/errfile.h` | TOFU 指纹链路：首次 TLS 握手时接受未受信任的叶子证书并将其 SHA-256 指纹存储（镜像至 `trust` 设置）；一旦存在指纹，后续任何证书校验失败均致命 |
 | `0010-devicekey-commands.patch` | `src/hci/commands/devicekey_cmd.c`、`src/config/general.h`、`src/config/config.c`、`src/include/ipxe/dhcp.h`、`src/include/ipxe/errfile.h` | 设备身份密钥命令（`keygen`/`pubkey`/`sign`）：ECDSA P-256 密钥生成（DRBG 以 EFI RNG 为熵源）、公钥推导（未压缩点，130 hex）、SHA-256 → ECDSA 签名并以 base64(DER) 输出；`DEVICEKEY_CMD` 配置项 |
+| `0011-nvmetcp-hostnqn-setting.patch` | `src/net/tcp/nvmetcp.c` | NVMe/TCP host NQN 设置：注册 `hostnqn` 设置项，覆盖 `nvmetcp_set_host_nqn()` 中 UUID 派生的默认值，使引导服务器可按 MAC 注入与 nvmet `hosts/` 注册匹配的身份（严格模式认证）；未设置该选项的普通 `nvme://` URI 保持原回退行为 |
+| `0012-nvmetcp-nbct-acpi-table.patch` | `src/drivers/block/nbct.c`（新）、`src/include/ipxe/nbct.h`（新）、`src/include/ipxe/errfile.h`、`src/include/ipxe/nvmetcp.h`、`src/net/tcp/nvmetcp.c` | NVMe 引导凭证表（NBCT）：sanboot 时按 iBFT 的 `acpi_model` 注册模式安装自定义 ACPI 表，每个已认证 NVMe/TCP 会话一条定长记录（传输地址、子系统 NQN、host NQN、DH-HMAC-CHAP 密钥）；initramfs 侧 `nbft-connect`（见 `../initramfs-nbft/`）消费该表，以 `--dhchap-secret`/`--hostnqn` 逐条重连，避免二次网络获取凭证 |
 
 > RTL8168 相关研究已于 2026-08 终止，补丁不含 8168 过滤或修复代码（见 `../docs/8168-research-log.md`）。
 
@@ -36,8 +38,9 @@
 - 补丁修改的上游文件（`realtek.c`、`snponly.c`、`Makefile`、`smbios.h`、`smbios_settings.c`、`pci.c`）继承 iPXE 的 GPL-2.0-or-later / UBDL 许可；
 - `0001` 中 RTL8125 适配部分（XID 版本表、EPHY 初始化、电源管理等）参考 Linux 内核 r8169 驱动（`drivers/net/ethernet/realtek/r8169_main.c`，GPL-2.0-only），该部分**仅按 GPL-2.0 授权**，不得以 UBDL 或更高版本许可再分发；
 - `0004` 中 RTL8126 适配部分（PHY 静态配置表、GPHY OCP/CSI 接口、ZRXDC/ASPM 配置等）参考 Realtek r8126 驱动（`r8126_n.c`，GPL-2.0-only，Copyright 2025 Realtek Semiconductor Corp.）与 Linux 内核 r8169 驱动（`drivers/net/ethernet/realtek/r8169_main.c`，GPL-2.0-only），该部分**仅按 GPL-2.0 授权**，不得以 UBDL 或更高版本许可再分发；
-- `0006`/`0007` 中的 NVMe/TCP 驱动文件（`nvmetcp.c`、`nvmetcp_auth.c`、`nvmetcp.h`、`nvmetcp_test.c`）为 ipxe-stateless 自研实现，文件头 `FILE_LICENCE ( GPL2_ONLY )`，**仅按 GPL-2.0 授权**，不得以 UBDL 许可再分发；
-- `0008`/`0009`/`0010` 中的设备身份新文件（`efi_nvs.c`、`tofu.c`、`tofu.h`、`devicekey_cmd.c`）为 ipxe-stateless 自研实现，文件头 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`，与上游 iPXE 双许可一致；
+- `0006`/`0007` 中的 NVMe/TCP 驱动文件（`nvmetcp.c`、`nvmetcp_auth.c`、`nvmetcp.h`、`nvmetcp_test.c`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( GPL2_ONLY )`，**仅按 GPL-2.0 授权**，不得以 UBDL 许可再分发；
+- `0008`/`0009`/`0010` 中的设备身份新文件（`efi_nvs.c`、`tofu.c`、`tofu.h`、`devicekey_cmd.c`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`，与上游 iPXE 双许可一致；
+- `0012` 中的 NBCT 新文件（`nbct.c`、`nbct.h`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( BSD2 )`（类内核许可，对齐上游 iPXE `ibft.c` 的 ACPI 表先例）；
 - 本仓库整体遵循 GPL-2.0（见 `../LICENSE`），补丁头部均含 SPDX 声明。
 
 ## 升级上游基线流程

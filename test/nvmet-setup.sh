@@ -8,7 +8,8 @@ set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 NQN="nqn.2026-08.org.ipxe-stateless:test"
-IMG=$ROOT/diag/nvme-boot.img
+# backing 文件支持环境覆盖（如 VMware 盘作为 target）
+IMG="${IMG:-$ROOT/diag/nvme-boot.img}"
 SYS=/sys/kernel/config/nvmet/subsystems/$NQN
 PORT=/sys/kernel/config/nvmet/ports/1
 
@@ -64,8 +65,17 @@ if [ ! -e "$IMG" ]; then
 fi
 
 echo "==> Removing stale config"
-rm -f "$PORT/subsystems/$NQN"
-rmdir "$PORT" 2>/dev/null || true
+# The validation environment owns port 1 / 4420 exclusively: drop every
+# subsystem link (including leftovers from other projects), then remove
+# the port itself.  A stale enabled port rejects attribute writes with
+# EACCES ("Cannot change address family while enabled"), which surfaces
+# as a confusing "write error: Permission denied" further down.
+rm -f "$PORT"/subsystems/*
+if [ -d "$PORT" ] && ! rmdir "$PORT" 2>/dev/null; then
+	echo "WARNING: port dir still present, contents:" >&2
+	ls -la "$PORT" >&2 || true
+	echo "       remove it manually: sudo rmdir $PORT" >&2
+fi
 if [ -d "$SYS" ]; then
 	# 7.x teardown: rmdir of a subsystem fails while configfs links under
 	# allowed_hosts/ (stale AUTH=1 config) exist, which in turn blocks

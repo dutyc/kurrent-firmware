@@ -31,8 +31,11 @@ initramfs/scripts/local-top/nbft  initramfs-tools local-top（网络 + 连接）
    MAC → 内核接口名（/sys/class/net 匹配）、DHCP/静态判定、VLAN、地址
 3. 网络应用：DHCP 交 `configure_networking`（dhcpcd/ipconfig）；静态手动应用
    + 写 `/run/net-<iface>.conf`（标记网络就绪，与 ipconfig/dhcpcd 同格式）
-4. `nvme connect-all --nbft` 连接 NVMe-oF 子系统（nvme-cli 2.5+；
-   旧版自动降级 `connect-nbft`）
+4. 连接 NVMe-oF 子系统：检测固件注入的 NBCT 凭证表
+   （`/sys/firmware/acpi/tables/NBCT*`，见 `patches/0012`）——存在则逐条
+   `nvme connect` 并附加 `--dhchap-secret`/`--hostnqn`（密钥不落盘、仅随引导
+   会话存活，避免内核侧二次 HTTP 取凭证）；无 NBCT 表时回退
+   `nvme connect-all --nbft`（nvme-cli 2.5+；旧版自动降级 `connect-nbft`）
 
 ## 母盘安装（一次定制，克隆即用）
 
@@ -58,9 +61,12 @@ sudo update-grub && sudo update-initramfs -u
 ## 测试
 
 ```sh
-# 语法 + 辅助函数自检（无需 NBFT 表）
+# 语法 + 辅助函数自检（无需 NBFT 表；NBCT 解析用合成表验证）
 sh -n nbft-connect initramfs/hooks/nbft initramfs/scripts/local-top/nbft
 ./nbft-connect --selftest
+
+# mock 驱动单测：NBCT 逐条 connect（带/不带密钥）、NBFT 回退、坏条目跳过
+bash ../test/test-nbft-connect-nbct.sh
 
 # mock 解析测试（无 NBFT 表环境）
 # 见 diag/tmp/nbft-test/bin/nvme 的 mock（SUSE 95nvmf 样例 JSON 形态）
@@ -68,6 +74,10 @@ PATH=<mock-bin>:$PATH NBFT_SYSFS_PATH=<mock-firmware> ./nbft-connect --entries
 ```
 
 全链路验证（QEMU + nvmet + 装有本模块的 initramfs）见仓库验证记录。
+
+注意：`nbft-connect` 须以 dash/ash 运行（initramfs 默认 `/bin/sh`）——NBCT
+字段提取依赖命令替换在首个 NUL 字节截断的语义，bash 4.4+ 会保留 NUL 导致
+空字段误判。
 
 ## 上游纳入路径（种子退役条件）
 

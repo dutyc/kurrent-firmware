@@ -1,10 +1,13 @@
-#!/bin/sh
+#! /bin/sh
 # nbft-connect - NBFT (NVMe Boot Firmware Table) consumer core.
 #
 # Framework-independent: detects the ACPI NBFT table, parses it via
 # `nvme nbft show` (nvme-cli, libnvme), and prints per-HFI records that
 # initramfs adapter scripts turn into network configuration.  With
-# --connect it performs the NVMe-oF connection (nvme connect-all --nbft).
+# --connect it performs the NVMe-oF connection: sessions recorded in the
+# custom NBCT (NVMe boot credentials) ACPI table are connected one by
+# one with their DH-HMAC-CHAP secret and host NQN; when no NBCT table is
+# present it falls back to `nvme connect-all --nbft`.
 #
 # Design mirrors:
 #   - SUSE dracut 95nvmf parse-nvmf-boot-connections.sh (NBFT -> ip=)
@@ -12,12 +15,17 @@
 #
 # Intended as a seed implementation to be adopted upstream, e.g. packaged
 # with nvme-cli like open-iscsi ships its initramfs integration.
+#
+# Must run under dash/ash (the initramfs default /bin/sh): the NBCT
+# field extractor relies on command substitution truncating at the first
+# NUL byte, which dash does (bash 4.4+ keeps NULs and would misparse
+# empty fields).
 
 set -u
 
 NBFT_SYSFS_PATH="${NBFT_SYSFS_PATH:-/sys/firmware/acpi/tables}"
 JQ="$(command -v jq || echo /usr/bin/jq)"
-NVME="$(command -v nvme || echo /usr/sbin/nvme)"
+NVME="${NVME:-$(command -v nvme || echo /usr/sbin/nvme)}"
 
 # --- helpers ----------------------------------------------------------------
 log() {
@@ -39,6 +47,118 @@ detect_nbft() {
         log "found NBFT table at $f"
     done
     [ "$found" -eq 1 ]
+}
+
+# --- NBCT (NVMe boot credentials table) -------------------------------------
+#
+# The firmware (iPXE) writes one fixed-size entry per authenticated
+# NVMe/TCP session into a custom ACPI table signed "NBCT", so that the
+# kernel-side reconnect can attach the DH-HMAC-CHAP secret and host NQN
+# without a second network fetch of credentials.  Layout (see
+# iPXE src/drivers/block/nbct.c):
+#
+#   offset  size  field
+#   0       36    ACPI header (signature "NBCT", length, revision, ...)
+#   36      4     nbct_header: count (u8) + reserved[3]
+#   40 + i*1024  entry i (fixed 1024 bytes):
+#     +0    4     index (u16) + reserved (u16)
+#     +4    128   traddr (NUL-terminated)
+#     +132  16    trsvcid
+#     +148  256   nqn
+#     +404  256   hostnqn
+#     +660  320   secret (empty if unauthenticated)
+
+NBCT_ENTRY_LEN=1024
+NBCT_BODY_OFF=40        # first entry (ACPI header 36 + nbct_header 4)
+NBCT_HDR_OFF=36        # nbct_header: count (u8) + reserved[3]
+NBCT_TRADDR_OFF=4
+NBCT_TRADDR_LEN=128
+NBCT_TRSVCID_OFF=132
+NBCT_TRSVCID_LEN=16
+NBCT_NQN_OFF=148
+NBCT_NQN_LEN=256
+NBCT_HOSTNQN_OFF=404
+NBCT_HOSTNQN_LEN=256
+NBCT_SECRET_OFF=660
+NBCT_SECRET_LEN=320
+
+# Detect the NBCT credentials table exported by the kernel.
+detect_nbct() {
+    local f found=0
+    for f in "${NBFT_SYSFS_PATH}"/NBCT*; do
+        [ -e "$f" ] || continue
+        found=1
+        log "found NBCT table at $f"
+    done
+    [ "$found" -eq 1 ]
+}
+
+# Extract one NUL-terminated field from NBCT entry $2 of table $1.
+# Command substitution truncates the dd output at the first NUL byte
+# under dash/ash, giving exactly the C-string semantics of the firmware
+# (the padding after the terminator never reaches the variable).
+nbct_field() {
+    dd if="$1" bs=1 skip=$(( NBCT_BODY_OFF + $2 * NBCT_ENTRY_LEN + $3 )) \
+       count="$4" 2>/dev/null
+}
+
+# Connect the sessions recorded in the NBCT table, attaching the
+# per-session DH-HMAC-CHAP secret and host NQN.  Skips entries without a
+# transport address or subsystem NQN; continues on per-entry failure so
+# one bad record cannot block the rest.
+nbct_connect() {
+    local tbl f i count traddr trsvcid nqn hostnqn secret rc=0
+
+    tbl=
+    for f in "${NBFT_SYSFS_PATH}"/NBCT*; do
+        [ -e "$f" ] || continue
+        tbl="$f"
+        break
+    done
+    [ -n "$tbl" ] || return 1
+
+    # Entry count comes from the nbct_header byte, which the firmware
+    # always writes.  Klibc-only initramfs images (Debian 13) ship no
+    # wc/od/stat, so the size-derived formula is unavailable; the single
+    # header byte round-trips through command substitution and ord().
+    # Corner cases: a NUL (count 0) reads back empty, and so does 0x0a
+    # (exactly 10 records) because the shell strips trailing newlines.
+    count=$(dd if="$tbl" bs=1 skip=$NBCT_HDR_OFF count=1 2>/dev/null)
+    [ -n "$count" ] || return 0
+    count=$(printf '%d' "'$count") || return 0
+    [ "$count" -gt 0 ] || return 0
+
+    i=0
+    while [ "$i" -lt "$count" ]; do
+        traddr="$(nbct_field "$tbl" "$i" $NBCT_TRADDR_OFF $NBCT_TRADDR_LEN)"
+        trsvcid="$(nbct_field "$tbl" "$i" $NBCT_TRSVCID_OFF $NBCT_TRSVCID_LEN)"
+        nqn="$(nbct_field "$tbl" "$i" $NBCT_NQN_OFF $NBCT_NQN_LEN)"
+        hostnqn="$(nbct_field "$tbl" "$i" $NBCT_HOSTNQN_OFF $NBCT_HOSTNQN_LEN)"
+        secret="$(nbct_field "$tbl" "$i" $NBCT_SECRET_OFF $NBCT_SECRET_LEN)"
+
+        if [ -z "$traddr" ] || [ -z "$nqn" ]; then
+            warn "NBCT entry $i incomplete (traddr='${traddr}' nqn='${nqn}')"
+            rc=1
+            i=$((i + 1))
+            continue
+        fi
+        [ -n "$trsvcid" ] || trsvcid=4420
+
+        # All fields are simple ASCII (hex secret, NQN, IP), so quoting
+        # and eval are safe; the values carry no shell metacharacters.
+        local cmd="${NVME} connect -t tcp -a '${traddr}' -s '${trsvcid}' -n '${nqn}'"
+        [ -n "$hostnqn" ] && cmd="${cmd} -q '${hostnqn}'"
+        [ -n "$secret" ] && cmd="${cmd} --dhchap-secret '${secret}'"
+        log "running: $cmd"
+        if eval "$cmd"; then
+            log "connected ${nqn} @ ${traddr}:${trsvcid}"
+        else
+            warn "connect failed for ${nqn} @ ${traddr}:${trsvcid} (rc=$?)"
+            rc=1
+        fi
+        i=$((i + 1))
+    done
+    return "$rc"
 }
 
 # Normalize a MAC address to lowercase colon-separated form.
@@ -131,12 +251,109 @@ selftest() {
     got="$(normalize_mac '52-54-00-4F-97-E9')"
     [ "$got" = "52:54:00:4f:97:e9" ] || { echo "FAIL mac dash: $got" >&2; fail=1; }
 
+    # NBCT table parsing against a synthetic table (two entries: one
+    # authenticated, one without a secret).
+    if selftest_nbct; then
+        echo "NBCT parsing: OK"
+    else
+        fail=1
+    fi
+
     if [ "$fail" -eq 0 ]; then
         echo "nbft-connect selftest: OK"
         return 0
     fi
     echo "nbft-connect selftest: FAILED" >&2
     return 1
+}
+
+# Build a synthetic NBCT ACPI table in $1 and verify the field parser.
+selftest_nbct() {
+    local dir fail=0 got tbl
+    dir="${TMPDIR:-/tmp}/nbct-selftest.$$"
+    rm -rf "$dir"
+    mkdir -p "$dir" || return 1
+    tbl="$dir/NBCT"
+
+    # Standard ACPI header (36 bytes).
+    printf 'NBCT' > "$tbl"
+    printf '\050\010\000\000' >> "$tbl"   # length 2088 (le32)
+    printf '\001\000' >> "$tbl"             # revision 1, checksum 0
+    printf 'IPXE00' >> "$tbl"                # oem_id
+    printf 'NBCTTEST' >> "$tbl"              # oem_table_id
+    printf '\001\000\000\000' >> "$tbl"    # oem_revision
+    printf 'IPXE' >> "$tbl"                  # creator_id
+    printf '\001\000\000\000' >> "$tbl"    # creator_revision
+    # nbct_header: count = 2, reserved.
+    printf '\002\000\000\000' >> "$tbl"
+
+    build_nbct_entry "$tbl" '192.0.2.10' '4420' 'nqn.2026-08.test:disk0' \
+        'nqn.2026-08.test:host' '00112233445566778899aabbccddeeff'
+    build_nbct_entry "$tbl" '192.0.2.11' '' 'nqn.2026-08.test:disk1' \
+        '' ''
+
+    NBFT_SYSFS_PATH="$dir"
+    detect_nbct || { echo "FAIL detect_nbct" >&2; fail=1; }
+
+    got="$(nbct_field "$tbl" 0 $NBCT_TRADDR_OFF $NBCT_TRADDR_LEN)"
+    [ "$got" = "192.0.2.10" ] || { echo "FAIL entry0 traddr: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 0 $NBCT_TRSVCID_OFF $NBCT_TRSVCID_LEN)"
+    [ "$got" = "4420" ] || { echo "FAIL entry0 trsvcid: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 0 $NBCT_NQN_OFF $NBCT_NQN_LEN)"
+    [ "$got" = "nqn.2026-08.test:disk0" ] || { echo "FAIL entry0 nqn: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 0 $NBCT_HOSTNQN_OFF $NBCT_HOSTNQN_LEN)"
+    [ "$got" = "nqn.2026-08.test:host" ] || { echo "FAIL entry0 hostnqn: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 0 $NBCT_SECRET_OFF $NBCT_SECRET_LEN)"
+    [ "$got" = "00112233445566778899aabbccddeeff" ] || { echo "FAIL entry0 secret: $got" >&2; fail=1; }
+
+    got="$(nbct_field "$tbl" 1 $NBCT_TRADDR_OFF $NBCT_TRADDR_LEN)"
+    [ "$got" = "192.0.2.11" ] || { echo "FAIL entry1 traddr: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 1 $NBCT_SECRET_OFF $NBCT_SECRET_LEN)"
+    [ -z "$got" ] || { echo "FAIL entry1 secret (should be empty): ${#got} bytes" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 1 $NBCT_HOSTNQN_OFF $NBCT_HOSTNQN_LEN)"
+    [ -z "$got" ] || { echo "FAIL entry1 hostnqn (should be empty)" >&2; fail=1; }
+
+    # Table format sanity: 40 bytes of headers + N * 1024 (host-side
+    # check; the klibc initramfs path derives the count from the header
+    # byte instead, see nbct_connect).
+    got=$(( $(wc -c < "$tbl") - NBCT_BODY_OFF ))
+    [ "$got" -eq $(( 2 * NBCT_ENTRY_LEN )) ] || { echo "FAIL table size: $got" >&2; fail=1; }
+    # The header count byte (offset 36, nbct_header.count) must round-trip as 2.
+    got="$(dd if="$tbl" bs=1 skip=$NBCT_HDR_OFF count=1 2>/dev/null)"
+    if [ -n "$got" ]; then
+        got=$(printf '%d' "'$got")
+    else
+        got=0
+    fi
+    [ "$got" -eq 2 ] || { echo "FAIL table count byte: $got" >&2; fail=1; }
+
+    rm -rf "$dir"
+    return "$fail"
+}
+
+# Append one fixed-size NBCT entry (1024 bytes) to $1.
+build_nbct_entry() {
+    local i
+    printf '\000\000\000\000' >> "$1"   # index + reserved
+    printf '%s' "$2" >> "$1"
+    i=$(( NBCT_TRADDR_LEN - ${#2} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    printf '%s' "$3" >> "$1"
+    i=$(( NBCT_TRSVCID_LEN - ${#3} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    printf '%s' "$4" >> "$1"
+    i=$(( NBCT_NQN_LEN - ${#4} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    printf '%s' "$5" >> "$1"
+    i=$(( NBCT_HOSTNQN_LEN - ${#5} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    printf '%s' "$6" >> "$1"
+    i=$(( NBCT_SECRET_LEN - ${#6} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    # The packed entry body is 980 bytes; the firmware strides entries
+    # by NBCT_ENTRY_LEN (1024), so pad the remainder.
+    i=$(( NBCT_ENTRY_LEN - 980 ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
 }
 
 # --- core actions -----------------------------------------------------------
@@ -240,9 +457,18 @@ print_entries() {
     done
 }
 
-# Connect the NBFT-defined subsystems.  Called by the adapter after the
-# network is up; the connection itself is idempotent.
+# Connect the boot NVMe-oF subsystems.  Sessions recorded in the NBCT
+# credentials table (firmware-injected secrets) are connected one by
+# one; without a NBCT table the classic `connect-all --nbft` path is
+# used, which carries no authentication secrets.
+# Called by the adapter after the network is up; connections are
+# idempotent.
 do_connect() {
+    if detect_nbct; then
+        nbct_connect && return 0
+        warn "NBCT connection failed; not falling back to connect-all --nbft"
+        return 1
+    fi
     detect_nbft || return 0
     if connect_all_nbft_supported; then
         log "running: nvme connect-all --nbft"
@@ -262,7 +488,10 @@ Usage: nbft-connect [options]
 Framework-independent NBFT (NVMe Boot Firmware Table) consumer core.
 
 Options:
-  --connect          connect the NBFT-defined subsystems (nvme connect-all --nbft)
+  --connect          connect the boot NVMe-oF subsystems: NBCT-recorded
+                     sessions first (with DH-HMAC-CHAP secret and host NQN),
+                     falling back to nvme connect-all --nbft without a NBCT
+                     table
   --entries          print parsed NBFT records (default)
   --json             print raw \`nvme nbft show -H -o json\` output
   --selftest         run the helper-function self-test and exit
@@ -272,6 +501,10 @@ Options:
 
 Environment:
   NBFT_SYSFS_PATH    path to the kernel ACPI table export (default: /sys/firmware/acpi/tables)
+  NVME               path to the nvme binary (default: from PATH or /usr/sbin/nvme)
+
+Note: run under dash/ash; the NBCT field extractor relies on command
+substitution truncating at the first NUL byte (bash 4.4+ keeps NULs).
 EOF
 }
 
