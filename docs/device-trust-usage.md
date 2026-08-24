@@ -1,6 +1,6 @@
 # 设备信任根能力使用文档（主仓库参考）
 
-> 面向 iPXE-All-Ready 主仓库的固件侧能力使用说明：设备身份密钥命令、TOFU
+> 面向 Kurrent 主仓库的固件侧能力使用说明：设备身份密钥命令、TOFU
 > HTTPS 信任、NVRAM 持久化设置与签名接口契约。对应固件补丁 0008/0009/0010
 > （见 [patches/README.md](../patches/README.md) 与
 > [customizations.md](customizations.md) 的 ## 8/9/10）。

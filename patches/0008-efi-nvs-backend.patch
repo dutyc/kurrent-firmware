@@ -9,7 +9,7 @@ index 1278bf5bb..7e9002165 100644
 +
 +/*
 + * Drag in the EFI variable non-volatile storage backend
-+ * (ipxe-stateless device identity trust root)
++ * (kurrent-firmware device identity trust root)
 + *
 + */
 +
@@ -38,7 +38,7 @@ index 000000000..7bd4a7ca8
 +++ b/src/interface/efi/efi_nvs.c
 @@ -0,0 +1,233 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless project contributors.
++ * Copyright (C) 2026 kurrent-firmware project contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as

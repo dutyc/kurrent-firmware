@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# ipxe-stateless 自动化构建流水线
+# kurrent-firmware 自动化构建流水线
 #
 # 流程：获取上游源码（固定基线）-> 应用补丁 -> 嵌入脚本 -> 构建 -> 归档
 #
@@ -25,6 +25,7 @@ OUT_DIR="${FERRY_ROOT}/dist"
 JOBS="${JOBS:-$(nproc)}"
 
 # 构建清单：输出名|make 目标|make 参数
+# 仅 UEFI 平台（x86_64-efi）；传统 BIOS 目标（ipxe.lkrn/undionly.kpxe/ipxe.usb）不构建
 # 同名目标（bin-x86_64-efi/ipxe.efi）受 EMBED 参数影响，构建前强制删除目标以保证参数生效
 BUILD_TARGETS=(
   "pxe-uefi/ipxe.efi|bin-x86_64-efi/ipxe.efi|"
@@ -34,13 +35,10 @@ BUILD_TARGETS=(
   "direct-uefi/ipxe.efi|bin-x86_64-efi/ipxe.efi|EMBED=embed/auto.ipxe"
   "direct-uefi/ipxe-debug.efi|bin-x86_64-efi/ipxe-debug.efi|EMBED=embed/auto.ipxe DEBUG=realtek:3"
   "direct-uefi/snponly.efi|bin-x86_64-efi/snponly.efi|EMBED=embed/auto.ipxe"
-  "grub-bios/ipxe.lkrn|bin/ipxe.lkrn|EMBED=embed/auto.ipxe"
-  "undionly.kpxe|bin/undionly.kpxe|"
-  "usb/ipxe.usb|bin/ipxe.usb|EMBED=embed/auto.ipxe"
 )
 
-log() { echo -e "\033[1;32m[stateless]\033[0m $*"; }
-die() { echo -e "\033[1;31m[stateless]\033[0m ERROR: $*" >&2; exit 1; }
+log() { echo -e "\033[1;32m[kurrent-firmware]\033[0m $*"; }
+die() { echo -e "\033[1;31m[kurrent-firmware]\033[0m ERROR: $*" >&2; exit 1; }
 
 command -v git  >/dev/null || die "缺少 git"
 command -v make >/dev/null || die "缺少 make"
@@ -113,7 +111,8 @@ build_all() {
 
 # ---------------------------------------------------------------- 4. 校验
 write_manifest() {
-  ( cd "${OUT_DIR}" && find . -type f | sort | xargs sha256sum ) > "${OUT_DIR}/SHA256SUMS"
+  # 排除 SHA256SUMS 自身：清单哈希须可复现（sha256sum -c 校验通过）
+  ( cd "${OUT_DIR}" && find . -type f ! -name SHA256SUMS | sort | xargs sha256sum ) > "${OUT_DIR}/SHA256SUMS"
   log "构建产物清单（${OUT_DIR}）："
   cat "${OUT_DIR}/SHA256SUMS"
 }

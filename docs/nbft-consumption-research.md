@@ -10,7 +10,7 @@
 1. NBFT 规范中 KD（Security Profile Descriptor）子表**本身不含明文密钥**，只有 `secret_type` + `sec_keypath_obj`（指向外部密钥存储的 URI 引用）——规范设计即"表内无密钥"
 2. 内核侧各层**只解析不消费**认证信息：libnvme 能解析 security_list，但 `libnvmf_discover_nbft` 不传递任何 key；`nvme connect-all --nbft` 无认证密钥参数；dracut 95nvmf 无密钥处理
 3. 因此 iPXE 侧生成 NBFT 的定位修正为：**注入网络拓扑与子系统信息（HFI+SS 子表）**；认证密钥走独立注入通道，由种子模块扩展逐条连接时附加
-4. **整机引导可行性已由主仓库先例证明**：iPXE-All-Ready 已在 iSCSI+iBFT 场景完整跑通"固件写表 → 内核/initramfs 消费 → 桌面环境启动"（见 3.5 节六环链路与母盘配方）；NVMe-oF+NBFT 链路与之一一对应，差异点（内核无 NBFT 表发现、表内无密钥）已实证并给出替代路径。该 NVMe-oF+NBFT 六环链路已由本仓库 QEMU 全链路实测闭环（2026-08-21，见 [nbft-boot-verification.md](nbft-boot-verification.md)）
+4. **整机引导可行性已由主仓库先例证明**：Kurrent 已在 iSCSI+iBFT 场景完整跑通"固件写表 → 内核/initramfs 消费 → 桌面环境启动"（见 3.5 节六环链路与母盘配方）；NVMe-oF+NBFT 链路与之一一对应，差异点（内核无 NBFT 表发现、表内无密钥）已实证并给出替代路径。该 NVMe-oF+NBFT 六环链路已由本仓库 QEMU 全链路实测闭环（2026-08-21，见 [nbft-boot-verification.md](nbft-boot-verification.md)）
 
 ## 2. 验证对象与证据链
 

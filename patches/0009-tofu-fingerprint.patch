@@ -30,7 +30,7 @@ index 000000000..10cefe9c0
 +++ b/src/net/tofu.c
 @@ -0,0 +1,113 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless project contributors.
++ * Copyright (C) 2026 kurrent-firmware project contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as

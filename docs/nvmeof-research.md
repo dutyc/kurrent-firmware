@@ -47,7 +47,7 @@
 
 - `thirdparty/kernel/linux-7.1.7`：**真内核源码**（7.1.7），nvme-tcp 客户端权威参考：`drivers/nvme/host/tcp.c`（3088 行，含 `nvme_tcp_hdr` / `nvme_tcp_icreq_pdu` / `nvme_tcp_icresp_pdu` 结构）、`fabrics.c`、`include/linux/nvme.h`。`include/acpi/actbl1.h` 保留 `ACPI_SIG_NBFT` 签名，但**无表结构定义**。
 - `thirdparty/kernel/linux-v6.12`：无 NBFT 任何痕迹。
-- `thirdparty/kernel/linux-master`：**不是内核源码**（HEAD 为 ipxe-stateless 自身提交 20fb7c8），排除。
+- `thirdparty/kernel/linux-master`：**不是内核源码**（HEAD 为 kurrent-firmware 自身提交 20fb7c8），排除。
 - `thirdparty/ipxe`：上游 master（e6d0a97c0，2026-08-11），无 NVMe/NBFT 代码。
 
 ## 3. 协议研究要点（NVMe/TCP，TP 8000）

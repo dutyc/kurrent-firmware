@@ -45,7 +45,7 @@ index 000000000..64abad322
 +++ b/src/include/ipxe/nvmetcp.h
 @@ -0,0 +1,880 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless contributors.
++ * Copyright (C) 2026 kurrent-firmware contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as
@@ -931,7 +931,7 @@ index 000000000..a281ce81e
 +++ b/src/net/tcp/nvmetcp.c
 @@ -0,0 +1,1386 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless contributors.
++ * Copyright (C) 2026 kurrent-firmware contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as
@@ -2323,7 +2323,7 @@ index 000000000..090ec0295
 +++ b/src/net/tcp/nvmetcp_auth.c
 @@ -0,0 +1,733 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless contributors.
++ * Copyright (C) 2026 kurrent-firmware contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as
@@ -3062,7 +3062,7 @@ index 000000000..d9c734b43
 +++ b/src/tests/nvmetcp_test.c
 @@ -0,0 +1,243 @@
 +/*
-+ * Copyright (C) 2026 ipxe-stateless contributors.
++ * Copyright (C) 2026 kurrent-firmware contributors.
 + *
 + * This program is free software; you can redistribute it and/or
 + * modify it under the terms of the GNU General Public License as
