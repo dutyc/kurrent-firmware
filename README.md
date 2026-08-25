@@ -9,6 +9,8 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+>  **Production full-stack chain verified (2026-08-25)** — DHCP → TFTP → iPXE → control plane → NVMe/TCP auth (firmware + kernel) → GRUB 2.14 → rootfs → `login:`. Full record with serial + pcap evidence: **[production-boot-verification.md](docs/production-boot-verification.md)**.
+
 **Kurrent Firmware** is the **firmware engine for Kurrent** — *make bare metal flow at the boot layer*. It is a **network boot firmware build repository**: it contains no iPXE source code — only difference patches and build assets — rebuildable on any upstream baseline. The `research/nvme-of` branch centres on the **NVMe-oF (NVMe over TCP) SAN boot** capability: a native `nvmetcp` driver with DH-HMAC-CHAP authentication, plus an in-band boot-credentials table (NBCT) so the kernel-side reconnect reuses the firmware's secret.
 
 > **Branch: `research/nvme-of`** — experimental NVMe-oF SAN boot development branch: `nvmetcp` driver, DH-HMAC-CHAP authentication, NBCT credential table, NBFT/initramfs consumer seed module, test tooling. Exploratory work is kept isolated from `main`; it may be merged into `main` once stabilized.
@@ -47,6 +49,7 @@ Patch [0011](patches/0011-nvmetcp-hostnqn-setting.patch) adds a `hostnqn` settin
 
 - DH-HMAC-CHAP authentication → SAN boot chain closed end-to-end under QEMU + Linux nvmet (2026-08-19): [nvmeof-auth-debug-log.md](docs/nvmeof-auth-debug-log.md)
 - Six-ring NBFT chain — sanboot → GRUB → kernel → initramfs NBFT consumption → rootfs → login — verified (2026-08-21): [nbft-boot-verification.md](docs/nbft-boot-verification.md)
+- Full production-stack chain — DHCP → TFTP → iPXE → control plane (report/challenge/boot-vars) → NVMe/TCP auth (firmware + kernel) → GRUB 2.14 → 6.12 kernel → rootfs → login — verified (2026-08-25): [production-boot-verification.md](docs/production-boot-verification.md)
 - Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvmeof-research.md)
 
 ## Other Customizations
@@ -74,6 +77,7 @@ bash test/run-qemu-auth.sh           # one QEMU validation round
 - [NVMe-oF usage](./docs/nvmeof-usage.md) — target setup (incl. DH-HMAC-CHAP auth), `sanboot` usage, QEMU validation (Chinese only)
 - [NVMe-oF test procedure](./docs/nvmeof-test-procedure.md) — end-to-end test flow: `test/` scripts, GRUB boot disk, QEMU rounds, pcap analysis (Chinese only)
 - [NBFT boot verification](./docs/nbft-boot-verification.md) — six-ring full-chain verification record (Chinese only)
+- [Production boot verification](./docs/production-boot-verification.md) — Kurrent full-stack cold-boot chain record: three blocking issues fixed (4K GPT / 6.12 auth kernel / systemd network takeover), serial + pcap evidence (Chinese only)
 - [Customizations](./docs/customizations.md) — design rationale and implementation of every patch
 - [NIC support matrix](./docs/network-support.md) — coverage and field-test records
 - [Device information reporting](./docs/device-info-reporting.md) — collected settings and report URL usage

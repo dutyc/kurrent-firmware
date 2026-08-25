@@ -9,6 +9,8 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
+>  **生产栈全链路验证通过（2026-08-25）** — DHCP → TFTP → iPXE → 控制面 → NVMe/TCP 认证（固件段 + 内核段）→ GRUB 2.14 → rootfs → `login:`。完整证据与复现步骤：**[production-boot-verification.md](docs/production-boot-verification.md)**。
+
 **Kurrent Firmware** 是 **Kurrent（周流）的固件引擎**——让裸机在引导层流动起来。它是**网络引导固件构建仓库**：不包含 iPXE 源码，仅维护差异补丁与构建资产，可在任意上游基线之上重建。`research/nvme-of` 分支以 **NVMe-oF（NVMe over TCP）SAN 引导**能力为主线：自研 `nvmetcp` 驱动（含 DH-HMAC-CHAP 认证），配合带内引导凭证表（NBCT），让内核侧重连复用固件持有的密钥。
 
 > **分支：`research/nvme-of`** — NVMe-oF SAN 引导实验分支：`nvmetcp` 驱动、DH-HMAC-CHAP 认证、NBCT 凭证表、NBFT/initramfs 消费种子模块与测试工具。探索性开发与 `main` 主干隔离，稳定后可能合入 `main`。
@@ -47,6 +49,7 @@ UEFI → iPXE nvmetcp → NVMe/TCP :4420 → nvmet target
 
 - DH-HMAC-CHAP 认证 → SAN 引导链路在 QEMU + Linux nvmet 下端到端闭环（2026-08-19）：[nvmeof-auth-debug-log.md](docs/nvmeof-auth-debug-log.md)
 - 六环 NBFT 链路——sanboot → GRUB → 内核 → initramfs NBFT 消费 → rootfs → 登录提示符——验证通过（2026-08-21）：[nbft-boot-verification.md](docs/nbft-boot-verification.md)
+- 生产栈全链路——DHCP → TFTP → iPXE → 控制面（report/challenge/boot-vars）→ NVMe/TCP 认证（固件段 + 内核段）→ GRUB 2.14 → 6.12 内核 → rootfs → login——验证通过（2026-08-25）：[production-boot-verification.md](docs/production-boot-verification.md)
 - 协议设计、消息格式与线缆细节：[nvmeof-research.md](docs/nvmeof-research.md)
 
 ## 其他定制
@@ -74,6 +77,7 @@ bash test/run-qemu-auth.sh           # 一轮 QEMU 验证
 - [NVMe-OF 使用指南](./docs/nvmeof-usage.md) — target 配置（含 DH-HMAC-CHAP 认证）、`sanboot` 用法、QEMU 验证方法（仅中文）
 - [NVMe-OF 测试流程](./docs/nvmeof-test-procedure.md) — 端到端测试流程：`test/` 脚本、GRUB 引导盘、QEMU 轮次、pcap 分析（仅中文）
 - [NBFT 引导链路验证](./docs/nbft-boot-verification.md) — 六环全链路验证记录（仅中文）
+- [生产引导链验证](./docs/production-boot-verification.md) — Kurrent 全栈冷启动链路记录：三个阻塞点修复历程（4K GPT / 6.12 认证内核 / systemd 网络接管）、串口 + pcap 证据（仅中文）
 - [定制详解](./docs/customizations.zh-CN.md) — 每个补丁的设计动机与实现
 - [网卡支持矩阵](./docs/network-support.zh-CN.md) — 覆盖情况与实测记录
 - [设备信息上报](./docs/device-info-reporting.zh-CN.md) — 采集变量清单与用法
