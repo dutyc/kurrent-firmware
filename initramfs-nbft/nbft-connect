@@ -26,6 +26,11 @@ set -u
 NBFT_SYSFS_PATH="${NBFT_SYSFS_PATH:-/sys/firmware/acpi/tables}"
 JQ="$(command -v jq || echo /usr/bin/jq)"
 NVME="${NVME:-$(command -v nvme || echo /usr/sbin/nvme)}"
+# Kernel host tracking rejects a custom hostnqn under the DMI-derived
+# default hostid ("found same hostid but different hostnqn"), so the
+# hostid must be pinned explicitly.  External value wins; the fixed
+# default keeps single-host deployments working out of the box.
+HOSTID="${HOSTID:-11111111-2222-3333-4444-555555555555}"
 
 # --- helpers ----------------------------------------------------------------
 log() {
@@ -148,6 +153,7 @@ nbct_connect() {
         # and eval are safe; the values carry no shell metacharacters.
         local cmd="${NVME} connect -t tcp -a '${traddr}' -s '${trsvcid}' -n '${nqn}'"
         [ -n "$hostnqn" ] && cmd="${cmd} -q '${hostnqn}'"
+        [ -n "$HOSTID" ] && cmd="${cmd} --hostid '${HOSTID}'"
         [ -n "$secret" ] && cmd="${cmd} --dhchap-secret '${secret}'"
         log "running: $cmd"
         if eval "$cmd"; then
@@ -502,6 +508,9 @@ Options:
 Environment:
   NBFT_SYSFS_PATH    path to the kernel ACPI table export (default: /sys/firmware/acpi/tables)
   NVME               path to the nvme binary (default: from PATH or /usr/sbin/nvme)
+  HOSTID             host ID passed as --hostid to nvme connect (default:
+                     11111111-2222-3333-4444-555555555555; pinned to avoid
+                     kernel "same hostid but different hostnqn" rejection)
 
 Note: run under dash/ash; the NBCT field extractor relies on command
 substitution truncating at the first NUL byte (bash 4.4+ keeps NULs).
