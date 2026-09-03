@@ -1,0 +1,233 @@
+/*
+ * Copyright (C) 2026 kurrent-firmware project contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
+ */
+
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
+
+/** @file
+ *
+ * EFI variable non-volatile storage
+ *
+ * A project-private EFI variable (NON_VOLATILE attribute) carries a
+ * single NVO block: one checksum byte followed by DHCP-encoded
+ * options.  The NVO layer provides checksum protection and the
+ * settings plumbing for the project options (device-key and
+ * server-fingerprint).
+ *
+ * EFI variables are naturally read and written as a whole block,
+ * which matches the NVS abstraction.  There are no block boundaries
+ * and the storage is implicitly resized by SetVariable().
+ */
+
+#include <string.h>
+#include <errno.h>
+#include <ipxe/nvs.h>
+#include <ipxe/nvo.h>
+#include <ipxe/settings.h>
+#include <ipxe/dhcp.h>
+#include <ipxe/init.h>
+#include <ipxe/efi/efi.h>
+
+/** EFI variable GUID (project namespace, UUIDv5 "ipxe-stateless.device-nvs") */
+#define EFI_NVS_VARIABLE_GUID \
+	{ 0xafb6f42e, 0x6148, 0x5d2b, \
+	  { 0x96, 0xaf, 0x8f, 0xf4, 0x5b, 0x4b, 0x94, 0xae } }
+
+/** EFI variable name */
+#define EFI_NVS_VARIABLE_NAME L"IpXeStatelessNvo"
+
+/** EFI variable attributes */
+#define EFI_NVS_ATTRIBUTES \
+	( EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS | \
+	  EFI_VARIABLE_NON_VOLATILE )
+
+/** EFI variable GUID */
+static EFI_GUID efi_nvs_guid = EFI_NVS_VARIABLE_GUID;
+
+/** NVS device */
+static struct nvs_device efi_nvs;
+
+/** Non-volatile options block */
+static struct nvo_block efi_nvo;
+
+/** Device identity private key setting */
+const struct setting device_key_setting __setting ( SETTING_CRYPTO,
+						    device_key ) = {
+	.name = "device-key",
+	.description = "Device identity private key (ECDSA P-256)",
+	.tag = DHCP_EB_DEVICE_KEY,
+	.type = &setting_type_hexraw,
+};
+
+/** Trusted server certificate fingerprint setting */
+const struct setting server_fingerprint_setting __setting ( SETTING_CRYPTO,
+							    server_fingerprint ) = {
+	.name = "server-fingerprint",
+	.description = "Trusted server certificate fingerprint (TOFU)",
+	.tag = DHCP_EB_SERVER_FINGERPRINT,
+	.type = &setting_type_hexraw,
+};
+
+/**
+ * Read from EFI variable
+ *
+ * @v nvs		NVS device
+ * @v address		Address from which to read
+ * @v data		Data buffer
+ * @v len		Length of data buffer
+ * @ret rc		Return status code
+ */
+static int efi_nvs_read ( struct nvs_device *nvs __unused,
+			  unsigned int address __unused, void *data, size_t len ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	UINTN size = len;
+	EFI_STATUS efirc;
+	int rc;
+
+	/* Allow reading non-existent variable */
+	if ( len == 0 )
+		return 0;
+
+	/* Read variable */
+	efirc = rs->GetVariable ( EFI_NVS_VARIABLE_NAME, &efi_nvs_guid,
+				  NULL, &size, data );
+	if ( efirc != EFI_SUCCESS ) {
+		rc = -EEFI ( efirc );
+		DBGC ( &efi_nvs, "EFI NVS could not read %zd bytes: %s\n",
+		       len, strerror ( rc ) );
+		return rc;
+	}
+
+	/* Sanity check */
+	if ( size != len ) {
+		DBGC ( &efi_nvs, "EFI NVS variable is %ld bytes, expected "
+		       "%zd\n", ( unsigned long ) size, len );
+		return -EIO;
+	}
+
+	return 0;
+}
+
+/**
+ * Write to EFI variable
+ *
+ * @v nvs		NVS device
+ * @v address		Address to which to write
+ * @v data		Data buffer
+ * @v len		Length of data buffer
+ * @ret rc		Return status code
+ */
+static int efi_nvs_write ( struct nvs_device *nvs __unused,
+			    unsigned int address __unused, const void *data,
+			    size_t len ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	EFI_STATUS efirc;
+	int rc;
+
+	/* Write variable */
+	efirc = rs->SetVariable ( EFI_NVS_VARIABLE_NAME, &efi_nvs_guid,
+				  EFI_NVS_ATTRIBUTES, len, ( void * ) data );
+	if ( efirc != EFI_SUCCESS ) {
+		rc = -EEFI ( efirc );
+		DBGC ( &efi_nvs, "EFI NVS could not write %zd bytes: %s\n",
+		       len, strerror ( rc ) );
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * Resize non-volatile options block
+ *
+ * @v nvo		Non-volatile options block
+ * @v len		New size
+ * @ret rc		Return status code
+ *
+ * EFI variables are implicitly resized by SetVariable(); there is no
+ * need to pre-allocate storage.
+ */
+static int efi_nvs_resize ( struct nvo_block *nvo __unused,
+			    size_t len __unused ) {
+	return 0;
+}
+
+/**
+ * Probe length of existing EFI variable
+ *
+ * @ret len		Length of existing variable, or zero
+ */
+static size_t efi_nvs_probe_len ( void ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	UINTN size = 0;
+	EFI_STATUS efirc;
+
+	/* Probe variable size */
+	efirc = rs->GetVariable ( EFI_NVS_VARIABLE_NAME, &efi_nvs_guid,
+				  NULL, &size, NULL );
+	if ( efirc == EFI_NOT_FOUND )
+		return 0;
+	if ( efirc != EFI_BUFFER_TOO_SMALL ) {
+		DBGC ( &efi_nvs, "EFI NVS could not probe variable: %s\n",
+		       strerror ( -EEFI ( efirc ) ) );
+		return 0;
+	}
+
+	return size;
+}
+
+/**
+ * Initialise EFI variable non-volatile storage
+ */
+static void efi_nvs_startup ( void ) {
+	size_t len;
+	int rc;
+
+	/* Initialise NVS device */
+	efi_nvs.word_len_log2 = 0;
+	efi_nvs.size = 0;
+	efi_nvs.block_size = 0; /* single variable: no block boundaries */
+	efi_nvs.read = efi_nvs_read;
+	efi_nvs.write = efi_nvs_write;
+
+	/* Probe length of existing variable */
+	len = efi_nvs_probe_len();
+
+	/* Initialise non-volatile options block */
+	nvo_init ( &efi_nvo, &efi_nvs, 0, len, efi_nvs_resize, NULL );
+
+	/* Register non-volatile options */
+	if ( ( rc = register_nvo ( &efi_nvo, NULL ) ) != 0 ) {
+		DBGC ( &efi_nvs, "EFI NVS could not register options: %s\n",
+		       strerror ( rc ) );
+		return;
+	}
+
+	DBGC ( &efi_nvs, "EFI NVS registered (%zd-byte block)\n", len );
+}
+
+/** EFI variable NVS startup function */
+struct startup_fn efi_nvs_startup_fn __startup_fn ( STARTUP_EARLY ) = {
+	.name = "efi_nvs",
+	.startup = efi_nvs_startup,
+};
