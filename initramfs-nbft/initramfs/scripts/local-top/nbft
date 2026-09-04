@@ -37,25 +37,13 @@ done
 # Only act when explicitly enabled (nbft_auto), like iscsi_auto.
 [ -n "${NBFT_AUTO}" ] || exit 0
 [ -x /usr/local/sbin/nbft-connect ] || exit 0
-# TEMP-DEBUG: NBCT visibility in initramfs
-{
-	echo "nbft: dbg entered, cmdline=$(cat /proc/cmdline)"
-	echo "nbft: dbg nbft-connect exists"
-	echo "nbft: dbg tables dir:"
-	ls /sys/firmware/acpi/tables/ 2>&1
-	echo "nbft: dbg NBCT glob: $(ls /sys/firmware/acpi/tables/NBCT* 2>&1)"
-} >/dev/console 2>&1
 # Proceed with either an NBFT table (HFI network records) or a NBCT table
 # (in-band boot credentials).  NBCT carries no network records: with
 # `ip=dhcp` on the command line configure_networking below handles
 # addressing, and nbft-connect --connect re-establishes the NVMe/TCP
 # sessions straight from the table.
 [ -e /sys/firmware/acpi/tables/NBFT ] || \
-	ls /sys/firmware/acpi/tables/NBCT* >/dev/null 2>&1 || {
-		echo "nbft: dbg EXIT: no NBFT and no NBCT visible" >/dev/console 2>&1
-		exit 0
-	}
-echo "nbft: dbg table gate passed" >/dev/console 2>&1
+	ls /sys/firmware/acpi/tables/NBCT* >/dev/null 2>&1 || exit 0
 
 udevadm settle
 
@@ -147,12 +135,9 @@ configure_networking
 #    core and fabrics dependencies via modules.dep.
 modprobe -q nvme-tcp 2>/dev/null || modprobe -q nvme_tcp 2>/dev/null || \
         echo "nbft: WARNING: nvme-tcp module not found" >&2
-echo "nbft: dbg modprobe done, /sys/class/nvme=$(ls /sys/class/nvme 2>&1)" >/dev/console 2>&1
 
 # 5. Connect the NBFT-defined NVMe-oF subsystems.
-echo "nbft: dbg connecting..." >/dev/console 2>&1
 /usr/local/sbin/nbft-connect --connect
-echo "nbft: dbg connect rc=$?" >/dev/console 2>&1
 
 udevadm settle
 
