@@ -19,6 +19,9 @@
 #   --skip-disk   跳过 E 磁盘格式（不重写 GPT / 不重建 ESP）
 #   --no-serial   grub.cfg 不加 console=ttyS0,115200（无串口场景）
 #   --yes         跳过 E 阶段交互确认
+#   --grub-efi F  注入宿主预构建 BOOTX64.EFI（跳过母盘内 grub-mkimage）。
+#                 Debian 12 自带 grub 2.06 的 mkimage 产物在 SAN 引导路径实测卡死
+#                 （2026-09-04，见 docs/golden-image-customization.md 6.3），需 2.12+。
 #   -h, --help    显示帮助
 #
 # 幂等：重复运行安全（已处理的步骤自动跳过；E 阶段重跑会刷新 ESP 内容）。
@@ -35,6 +38,7 @@ CONSOLE=console=ttyS0,115200
 GRUB_ARGS="net.ifnames=0 biosdevname=0 ip=dhcp nbft_auto systemd.mask=NetworkManager.service systemd.mask=systemd-networkd.service"
 DO_DISK=1
 YES=0
+GRUB_EFI=
 
 usage() {
     sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
     --skip-disk) DO_DISK=0; shift ;;
     --no-serial) CONSOLE=; shift ;;
     --yes) YES=1; shift ;;
+    --grub-efi) GRUB_EFI=$2; shift 2 ;;
     -h | --help) usage ;;
     *) echo "ERROR: unknown option: $1" >&2; usage ;;
     esac
@@ -355,12 +360,28 @@ PYEOF
     mkdir -p /boot/efi/EFI/BOOT
 
     local grub_mods="normal search search_fs_uuid part_gpt part_msdos ext2 fat linux xzio gzio serial terminal echo ls configfile test"
-    if ! grub-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods; then
-        echo "WARN: grub-mkimage 含 echo 失败，降级重试（GRUB 2.06 兼容）"
-        grub_mods=${grub_mods/ echo/}
-        grub-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods
+    if [ -n "${GRUB_EFI:-}" ]; then
+        [ -f "$GRUB_EFI" ] || { echo "ERROR: --grub-efi 文件不存在: $GRUB_EFI"; exit 1; }
+        install -m 0644 "$GRUB_EFI" /boot/efi/EFI/BOOT/BOOTX64.EFI
+        echo "    BOOTX64.EFI 使用预构建注入（$GRUB_EFI）"
+    else
+        # 发行版 grub-mkimage 版本门控：Debian 12 自带 2.06 的产物在 SAN 引导路径
+        # 实测卡死（发行版缺陷，与 4K 逻辑块无关；2026-09-04 实测，见文档 6.3）
+        local gver
+        gver=$(grub-mkimage --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1) || gver=""
+        if [ -z "$gver" ] || ! dpkg --compare-versions "$gver" ge 2.12; then
+            echo "ERROR: 母盘 grub-mkimage 版本 ${gver:-未知} < 2.12，其 BOOTX64.EFI 在 SAN 引导路径卡死。出路：" >&2
+            echo "       a) 宿主机（grub 2.14+）生成后 --grub-efi 注入；" >&2
+            echo "       b) 母盘升级 grub-efi >= 2.12 后重跑本脚本。" >&2
+            exit 1
+        fi
+        if ! grub-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods; then
+            echo "WARN: grub-mkimage 含 echo 失败，降级重试（echo 模块缺失）"
+            grub_mods=${grub_mods/ echo/}
+            grub-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods
+        fi
+        echo "    BOOTX64.EFI 生成（grub-mkimage $gver）"
     fi
-    echo "    BOOTX64.EFI 生成（grub-mkimage）"
 
     local rootuuid
     rootuuid=$(blkid -s UUID -o value "$rootdev")

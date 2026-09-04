@@ -34,6 +34,7 @@ A–F 全部阶段已自动化，**在母盘系统内以 root 运行**：
 sudo bash test/golden-image-setup-debian12.sh          # 全流程（E 阶段交互确认）
 sudo bash test/golden-image-setup-debian12.sh --yes    # E 阶段不交互
 sudo bash test/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 E（仅 A-D+F）
+sudo bash test/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # 注入宿主 2.14 预构建 GRUB（见 6.3）
 sudo bash test/golden-image-setup-debian12.sh -d /path/to/initramfs-nbft -k 6.12.95+deb12-amd64
 ```
 
@@ -149,7 +150,7 @@ nvmet file backend 以 **4096 B 逻辑块**导出（`i_blkbits`），盘必须�
 - volid `855B-91DF`（fstab 引用值），内容：
   - `vmlinuz-6.12.95+deb12-amd64`（6.12 内核，对应 B 节）
   - `initrd.img-6.12.95+deb12-amd64`（**hostid 修复版**；initrd 为多段结构：前 148480 B 微码段 + zstd 压缩 cpio 段，拼接公式 `段1偏移 + 段2长度`，替换段 2 时用 `cat 段1 zstd > 新initrd` 而非 `>>` 追加）
-  - `EFI/BOOT/BOOTX64.EFI`（GRUB 2.14，`grub-mkimage` 定制）
+  - `EFI/BOOT/BOOTX64.EFI`（GRUB 2.14，`grub-mkimage` 定制；版本要求与步骤见 6.3）
   - `EFI/BOOT/grub.cfg`（SAN 引导菜单，见下）
 
 - **为什么必须是 `EFI/BOOT/BOOTX64.EFI`**：Debian 安装器只写 `EFI/debian/`（shim/grub），不创建 `EFI/BOOT/` 可移动介质 fallback。固件侧若没有持久化的引导项（全新 NVRAM、清 CMOS 后、或 iPXE `sanboot` 完成后固件重扫盘），只按标准 fallback 路径 `\EFI\BOOT\BOOTX64.EFI` 找引导器——找不到即跳过该盘（实测：OVMF 报 `BdsDxe: failed to load Boot0002 ... Not Found` 后转入 PXE）。E 阶段重建 ESP 时用 `grub-mkimage` 写 `EFI/BOOT/BOOTX64.EFI`，既是 SAN 冷启动的入口，也让母盘在任意 UEFI 机器上可直接本地引导（2026-09-02 本地引导验证即依赖此文件）。
@@ -165,6 +166,39 @@ menuentry 'Debian GNU/Linux 12 (SAN, 6.12.95+deb12-amd64)' {
 ```
 
 - 注意：GRUB 走 `search --fs-uuid 855B-91DF` 定位 ESP——4K FAT 的卷标/UUID 必须与 fstab 注释行、grub.cfg 三者一致。
+
+### 6.3 GRUB 2.14 定制（SAN 引导必做，2026-09-04 实测）
+
+- **为什么不能用发行版 grub-mkimage**：Debian 12 自带 GRUB 2.06 生成的 BOOTX64.EFI 在 SAN 引导路径实测卡死——固件交接进入 GRUB 后菜单画面冻结（search 挂起、键盘无响应）。同一磁盘换用宿主 grub-mkimage 2.14 定制版后完整引导到 GDM（带密钥与明文各一轮复验）。**根因是发行版 GRUB 2.06 自身缺陷（shim 链），与 4K 逻辑块无关**（此前“GRUB 4Kn 不兼容”的旧结论已证伪）。
+
+- **宿主侧生成（grub 2.14+，推荐）**：
+
+  ```bash
+  grub-mkimage -O x86_64-efi -o BOOTX64.EFI -p /EFI/BOOT \
+      normal search search_fs_uuid part_gpt ext2 fat linux serial \
+      search_fs_file search_fs_label halt reboot
+  ```
+
+  模块清单为 2026-09-04 实战通过的最小集；一键脚本内置清单为其超集（多 xzio/gzio/terminal/echo/ls/test/part_msdos），两者均可。
+
+- **grub.cfg 两种形态**（均实测通过）：
+  - **直列式**（一键脚本 E 阶段默认，适合新装母盘）：菜单项内联 `linux`/`initrd` 行，见 6.2 节参考；
+  - **接力式**（适合已装好 Debian 的存量盘，9/4 golden 盘实战形态）：嵌入配置只做定位与交接，完整菜单沿用盘上 `update-grub` 维护的 `/boot/grub/grub.cfg`：
+
+    ```cfg
+    serial --unit=0 --speed=115200
+    terminal_input serial console
+    terminal_output serial console
+    set timeout=3
+    set default=0
+    search.fs_uuid d0a8ebeb-202b-4481-9f52-9eae81af44be root
+    set prefix=($root)'/boot/grub'
+    configfile $prefix/grub.cfg
+    ```
+
+    注意 `search.fs_uuid` 用 **root 分区 UUID**（与 fstab 同源），非 ESP volid。
+
+- **一键脚本行为**：`--grub-efi <file>` 注入宿主预构建 BOOTX64.EFI（跳过母盘内 mkimage）；未注入时脚本检测 `grub-mkimage --version`，< 2.12 直接报错退出并给出两条出路——不再静默产出缺陷引导器。
 
 ## 7. F. 无状态校验（验收）
 
@@ -200,6 +234,8 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 
 **给主项目使用的交付前置**：定制（A–F）完成、且 8.2 这轮 SAN 冷启动验收通过后，母盘即可克隆分发交主项目使用。其中 E 阶段（4K 转换 + ESP 重建）是 SAN 可引导的必要步骤，且需在真实目标盘上执行——截至 2026-09-02，脚本 A–D+F 已实测，E 尚未在真实盘端到端运行（离线单测已过），首次真机执行建议伴随 8.2 验收一并完成。
 
+> **2026-09-04 更新**：E 阶段核心产物形态已实战验证——4K GPT + 4K FAT32 ESP + GRUB 2.14 定制 BOOTX64.EFI 经 nvmet 严格模式（AUTH=1）完整引导到 Debian 12 GDM（带密钥与明文各一轮）；同盘换回发行版 2.06 产物即卡死，确证 6.3 节版本要求。
+
 ## 9. 常见问题速查（对应三个历史阻塞点）
 
 | 现象 | 根因 | 修复 |
@@ -210,6 +246,7 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 | boot-efi.mount 失败 → emergency | fstab 未注释 /boot/efi | 4.1 节注释 |
 | OVMF 报 `failed to load Boot0002 ... Not Found` 后转 PXE | ESP 无 `EFI/BOOT/BOOTX64.EFI` fallback（安装器只写 `EFI/debian/`，2026-09-02 本地引导验证确认） | 6.2 节 E 阶段重建 ESP 写入 BOOTX64.EFI |
 | 串口看不到内核段 `authenticated`（仅固件段一次） | cmdline 带 `quiet`（console 日志压到 WARNING） | 5 节 D 段移除 quiet |
+| GRUB 菜单出现后卡死（search 挂起、键盘无响应） | 发行版 grub-mkimage 2.06 产物缺陷（shim 链，SAN 路径；与 4K 逻辑块无关，2026-09-04 实测） | 6.3 节 2.14 定制（`--grub-efi` 注入或母盘 grub-efi ≥ 2.12） |
 
 ## 10. 跨发行版支持现状（支持基线）
 
