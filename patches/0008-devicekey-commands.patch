@@ -1,6 +1,43 @@
+# kurrent-firmware 0008: device identity key commands
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The devicekey command implementation
+# (src/hci/commands/devicekey_cmd.c) is original kurrent-firmware code
+# carrying FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ).  Modifications to
+# the iPXE configuration and headers inherit the upstream licence
+# (GPL-2.0-or-later / UBDL).
+
+diff --git a/src/config/config.c b/src/config/config.c
+index 568508d89..154d0e2e8 100644
+--- a/src/config/config.c
++++ b/src/config/config.c
+@@ -234,6 +234,9 @@ REQUIRE_OBJECT ( image_cmd );
+ #ifdef IMAGE_TRUST_CMD
+ REQUIRE_OBJECT ( image_trust_cmd );
+ #endif
++#ifdef DEVICEKEY_CMD
++REQUIRE_OBJECT ( devicekey_cmd );
++#endif
+ #ifdef DHCP_CMD
+ REQUIRE_OBJECT ( dhcp_cmd );
+ #endif
+diff --git a/src/config/general.h b/src/config/general.h
+index d6be19920..123214230 100644
+--- a/src/config/general.h
++++ b/src/config/general.h
+@@ -93,6 +93,7 @@ FILE_SECBOOT ( PERMITTED );
+ #define CONFIG_CMD		/* Option configuration console */
+ #define CONSOLE_CMD		/* Console command */
+ #define DIGEST_CMD		/* Image crypto digest commands */
++#define DEVICEKEY_CMD	/* Device identity key commands */
+ #define DHCP_CMD		/* DHCP management commands */
+ #define FCMGMT_CMD		/* Fibre Channel management commands */
+ #define FORM_CMD		/* Form commands */
 diff --git a/src/hci/commands/devicekey_cmd.c b/src/hci/commands/devicekey_cmd.c
 new file mode 100644
-index 000000000..a60cd867e
+index 000000000..255388519
 --- /dev/null
 +++ b/src/hci/commands/devicekey_cmd.c
 @@ -0,0 +1,344 @@
@@ -373,29 +410,3 @@ index a2927a8fc..b62a2a0ae 100644
  
  /** @} */
  
-diff --git a/src/config/general.h b/src/config/general.h
-index d6be19920..123214230 100644
---- a/src/config/general.h
-+++ b/src/config/general.h
-@@ -93,6 +93,7 @@ FILE_SECBOOT ( PERMITTED );
- #define CONFIG_CMD		/* Option configuration console */
- #define CONSOLE_CMD		/* Console command */
- #define DIGEST_CMD		/* Image crypto digest commands */
-+#define DEVICEKEY_CMD	/* Device identity key commands */
- #define DHCP_CMD		/* DHCP management commands */
- #define FCMGMT_CMD		/* Fibre Channel management commands */
- #define FORM_CMD		/* Form commands */
-diff --git a/src/config/config.c b/src/config/config.c
-index 568508d89..154d0e2e8 100644
---- a/src/config/config.c
-+++ b/src/config/config.c
-@@ -234,6 +234,9 @@ REQUIRE_OBJECT ( image_cmd );
- #ifdef IMAGE_TRUST_CMD
- REQUIRE_OBJECT ( image_trust_cmd );
- #endif
-+#ifdef DEVICEKEY_CMD
-+REQUIRE_OBJECT ( devicekey_cmd );
-+#endif
- #ifdef DHCP_CMD
- REQUIRE_OBJECT ( dhcp_cmd );
- #endif

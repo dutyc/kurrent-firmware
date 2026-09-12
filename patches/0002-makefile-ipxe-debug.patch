@@ -7,10 +7,10 @@
 # (GPL-2.0-or-later / UBDL).
 
 diff --git a/src/Makefile b/src/Makefile
+index dde9eb92f..d80134829 100644
 --- a/src/Makefile
 +++ b/src/Makefile
-@@ -246,7 +246,15 @@
- # All drivers (defined on a per-platform basis)
+@@ -247,6 +247,14 @@ version :
  #
  DRIVERS_ipxe	+=
  

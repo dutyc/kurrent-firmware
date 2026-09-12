@@ -1,5 +1,23 @@
+# kurrent-firmware 0001: RTL8125 / RTL8126 series adaptation
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Modifications to iPXE src/drivers/net/realtek.c and realtek.h inherit
+# the upstream licence (GPL-2.0-or-later / UBDL).  The RTL8125
+# adaptation parts (XID version table, EPHY initialisation, power
+# management, etc.) are derived from the Linux kernel r8169 driver
+# (drivers/net/ethernet/realtek/r8169_main.c, GPL-2.0-only).  The
+# RTL8126 adaptation parts (PHY static configuration tables, GPHY
+# OCP/CSI interfaces, ZRXDC/ASPM configuration, etc.) are derived from
+# the Realtek r8126 driver (r8126_n.c, GPL-2.0-only, Copyright 2025
+# Realtek Semiconductor Corp.) and the Linux kernel r8169 driver
+# (drivers/net/ethernet/realtek/r8169_main.c, GPL-2.0-only).  Those
+# derived parts are licensed under GPL-2.0 only and may not be
+# redistributed under UBDL or any later licence.
+
 diff --git a/src/drivers/net/realtek.c b/src/drivers/net/realtek.c
-index 8449f6cdd..f33fda22c 100644
+index dcb221199..e216a8139 100644
 --- a/src/drivers/net/realtek.c
 +++ b/src/drivers/net/realtek.c
 @@ -234,6 +234,171 @@ static int realtek_init_eeprom ( struct net_device *netdev ) {
@@ -174,54 +192,289 @@ index 8449f6cdd..f33fda22c 100644
  /******************************************************************************
   *
   * MII interface
-@@ -264,19 +429,7 @@ static int realtek_mii_read ( struct mii_interface *mdio,
- 	/* Read via OCP GPHY interface, if applicable */
- 	if ( rtl->have_ocp ) {
- 		addr = ( RTL_OCP_STD_PHY_BASE + ( 2 * reg ) );
--		writel ( ( addr << 15 ), rtl->regs + RTL_GPHY_OCP );
--
--		/* Wait for read to complete */
--		for ( i = 0 ; i < RTL_MII_MAX_WAIT_US ; i++ ) {
--			value = readl ( rtl->regs + RTL_GPHY_OCP );
--			if ( value & RTL_OCPAR_FLAG )
--				return ( value & RTL_EPHYAR_DATA_MASK );
--			udelay ( 1 );
--		}
--
--		DBGC ( rtl, "REALTEK %p timed out waiting for OCP MII read\n",
--		       rtl );
--		return -ETIMEDOUT;
-+		return realtek_gphy_ocp_read ( rtl, addr );
- 	}
+@@ -254,12 +419,19 @@ static int realtek_mii_read ( struct mii_interface *mdio,
+ 	struct realtek_nic *rtl =
+ 		container_of ( mdio, struct realtek_nic, mdio );
+ 	unsigned int i;
++	uint32_t addr;
+ 	uint32_t value;
  
+ 	/* Fail if PHYAR register is not present */
+ 	if ( ! rtl->have_phy_regs )
+ 		return -ENOTSUP;
+ 
++	/* Read via OCP GPHY interface, if applicable */
++	if ( rtl->have_ocp ) {
++		addr = ( RTL_OCP_STD_PHY_BASE + ( 2 * reg ) );
++		return realtek_gphy_ocp_read ( rtl, addr );
++	}
++
  	/* Initiate read */
-@@ -324,20 +477,8 @@ static int realtek_mii_write ( struct mii_interface *mdio,
- 	/* Write via OCP GPHY interface, if applicable */
- 	if ( rtl->have_ocp ) {
- 		addr = ( RTL_OCP_STD_PHY_BASE + ( 2 * reg ) );
--		writel ( ( RTL_OCPAR_FLAG | ( addr << 15 ) | data ),
--			 rtl->regs + RTL_GPHY_OCP );
--
--		/* Wait for write to complete */
--		for ( i = 0 ; i < RTL_MII_MAX_WAIT_US ; i++ ) {
--			if ( ! ( readl ( rtl->regs + RTL_GPHY_OCP ) &
--				 RTL_OCPAR_FLAG ) )
--				return 0;
--			udelay ( 1 );
--		}
--
--		DBGC ( rtl, "REALTEK %p timed out waiting for OCP MII write\n",
--		       rtl );
--		return -ETIMEDOUT;
+ 	writel ( RTL_PHYAR_VALUE ( 0, reg, 0 ), rtl->regs + RTL_PHYAR );
+ 
+@@ -296,11 +468,19 @@ static int realtek_mii_write ( struct mii_interface *mdio,
+ 	struct realtek_nic *rtl =
+ 		container_of ( mdio, struct realtek_nic, mdio );
+ 	unsigned int i;
++	uint32_t addr;
+ 
+ 	/* Fail if PHYAR register is not present */
+ 	if ( ! rtl->have_phy_regs )
+ 		return -ENOTSUP;
+ 
++	/* Write via OCP GPHY interface, if applicable */
++	if ( rtl->have_ocp ) {
++		addr = ( RTL_OCP_STD_PHY_BASE + ( 2 * reg ) );
 +		realtek_gphy_ocp_write ( rtl, addr, data );
 +		return 0;
- 	}
- 
++	}
++
  	/* Initiate write */
-@@ -605,8 +746,17 @@ static void realtek_hw_start_8125 ( struct realtek_nic *rtl ) {
- 	/* Disable new TX descriptor format */
- 	realtek_mac_ocp_modify ( rtl, 0xeb58, 0x0001, 0x0000 );
+ 	writel ( RTL_PHYAR_VALUE ( RTL_PHYAR_FLAG, reg, data ),
+ 		 rtl->regs + RTL_PHYAR );
+@@ -327,6 +507,864 @@ static struct mii_operations realtek_mii_operations = {
+ 	.write = realtek_mii_write,
+ };
  
++/******************************************************************************
++ *
++ * RTL8125 hardware initialisation
++ *
++ ******************************************************************************
++ */
++
++/** An EPHY register initialisation value */
++struct realtek_ephy_init {
++	/** Register address */
++	unsigned int reg;
++	/** Mask of bits to preserve */
++	unsigned int mask;
++	/** Value to write */
++	unsigned int value;
++};
++
++/** A chip version identifier */
++struct realtek_chip_version {
++	/** Chip ID mask */
++	uint32_t mask;
++	/** Chip ID value */
++	uint32_t value;
++	/** MAC version */
++	unsigned int version;
++	/** Chip name */
++	const char *name;
++};
++
++/** RTL8125 chip versions (from Linux r8169 rtl_chip_infos) */
++static const struct realtek_chip_version realtek_8125_versions[] = {
++	{ 0x7cf, 0x681, 66, "RTL8125BP" },
++	{ 0x7cf, 0x708, 65, "RTL8125CP" },
++	{ 0x7cf, 0x68b, 64, "RTL9151A" },
++	{ 0x7cf, 0x68a, 64, "RTL8125K" },
++	{ 0x7cf, 0x689, 64, "RTL8125D" },
++	{ 0x7cf, 0x688, 64, "RTL8125D" },
++	{ 0x7cf, 0x641, 63, "RTL8125B" },
++	{ 0x7cf, 0x609, 61, "RTL8125A" },
++};
++
++/** RTL8125A EPHY initialisation values */
++static const struct realtek_ephy_init realtek_8125a_ephy[] = {
++	{ 0x04, 0xffff, 0xd000 },
++	{ 0x0a, 0xffff, 0x8653 },
++	{ 0x23, 0xffff, 0xab66 },
++	{ 0x20, 0xffff, 0x9455 },
++	{ 0x21, 0xffff, 0x99ff },
++	{ 0x29, 0xffff, 0xfe04 },
++	{ 0x44, 0xffff, 0xd000 },
++	{ 0x4a, 0xffff, 0x8653 },
++	{ 0x63, 0xffff, 0xab66 },
++	{ 0x60, 0xffff, 0x9455 },
++	{ 0x61, 0xffff, 0x99ff },
++	{ 0x69, 0xffff, 0xfe04 },
++};
++
++/** RTL8125B EPHY initialisation values */
++static const struct realtek_ephy_init realtek_8125b_ephy[] = {
++	{ 0x0b, 0xffff, 0xa908 },
++	{ 0x1e, 0xffff, 0x20eb },
++	{ 0x4b, 0xffff, 0xa908 },
++	{ 0x5e, 0xffff, 0x20eb },
++	{ 0x22, 0x0030, 0x0020 },
++	{ 0x62, 0x0030, 0x0020 },
++};
++
++/**
++ * Detect RTL8125 chip version
++ *
++ * @v rtl		Realtek device
++ * @ret rc		Return status code
++ */
++static int realtek_detect_8125 ( struct realtek_nic *rtl ) {
++	const struct realtek_chip_version *chip;
++	uint32_t txconfig;
++	unsigned int xid;
++	unsigned int i;
++
++	/* Read chip ID from TxConfig register */
++	txconfig = readl ( rtl->regs + RTL_TCR );
++	if ( txconfig == 0xffffffff )
++		return -ENODEV;
++	xid = ( ( txconfig >> 20 ) & 0xfcf );
++
++	/* Search for matching chip version */
++	for ( i = 0 ; i < ( sizeof ( realtek_8125_versions ) /
++			    sizeof ( realtek_8125_versions[0] ) ) ; i++ ) {
++		chip = &realtek_8125_versions[i];
++		if ( ( xid & chip->mask ) == chip->value ) {
++			rtl->mac_ver = chip->version;
++			DBGC ( rtl, "REALTEK %p is a %s (XID %04x)\n",
++			       rtl, chip->name, xid );
++			return 0;
++		}
++	}
++
++	return -ENODEV;
++}
++
++/**
++ * Read from OCP register
++ *
++ * @v rtl		Realtek device
++ * @v reg		Register address
++ * @ret value		Data read
++ */
++static uint32_t realtek_mac_ocp_read ( struct realtek_nic *rtl,
++				       uint32_t reg ) {
++
++	/* OCP registers are 16-bit and must be 2-byte aligned */
++	if ( reg & 0xffff0001 )
++		return 0;
++
++	/* Initiate read */
++	writel ( ( reg << 15 ), rtl->regs + RTL_OCPDR );
++
++	/* Return register value */
++	return readl ( rtl->regs + RTL_OCPDR );
++}
++
++/**
++ * Write to OCP register
++ *
++ * @v rtl		Realtek device
++ * @v reg		Register address
++ * @v data		Data to write
++ */
++static void realtek_mac_ocp_write ( struct realtek_nic *rtl, uint32_t reg,
++				    uint32_t data ) {
++
++	/* OCP registers are 16-bit and must be 2-byte aligned */
++	if ( reg & 0xffff0001 )
++		return;
++
++	/* Initiate write */
++	writel ( ( RTL_OCPAR_FLAG | ( reg << 15 ) | data ),
++		 rtl->regs + RTL_OCPDR );
++}
++
++/**
++ * Modify OCP register
++ *
++ * @v rtl		Realtek device
++ * @v reg		Register address
++ * @v clear		Bits to clear
++ * @v set		Bits to set
++ */
++static void realtek_mac_ocp_modify ( struct realtek_nic *rtl, uint32_t reg,
++				     uint32_t clear, uint32_t set ) {
++	uint16_t data;
++
++	data = realtek_mac_ocp_read ( rtl, reg );
++	data &= ~clear;
++	data |= set;
++	realtek_mac_ocp_write ( rtl, reg, data );
++}
++
++/**
++ * Write to EPHY register
++ *
++ * @v rtl		Realtek device
++ * @v reg		Register address
++ * @v value		Value to write
++ */
++static void realtek_ephy_write ( struct realtek_nic *rtl, unsigned int reg,
++				 unsigned int value ) {
++	unsigned int i;
++
++	/* Initiate write */
++	writel ( ( RTL_EPHYAR_FLAG | ( value & RTL_EPHYAR_DATA_MASK ) |
++		   ( ( reg & RTL_EPHYAR_REG_MASK ) << RTL_EPHYAR_REG_SHIFT ) ),
++		 rtl->regs + RTL_EPHYAR );
++
++	/* Wait for write to complete */
++	for ( i = 0 ; i < RTL_MII_MAX_WAIT_US ; i++ ) {
++		if ( ! ( readl ( rtl->regs + RTL_EPHYAR ) & RTL_EPHYAR_FLAG ) )
++			return;
++		udelay ( 1 );
++	}
++
++	DBGC ( rtl, "REALTEK %p timed out waiting for EPHY write\n", rtl );
++}
++
++/**
++ * Initialise RTL8125 hardware
++ *
++ * @v rtl		Realtek device
++ */
++static void realtek_hw_start_8125 ( struct realtek_nic *rtl ) {
++	const struct realtek_ephy_init *ephy = NULL;
++	unsigned int count = 0;
++	unsigned int i;
++
++	/* Configure EPHY registers, as applicable */
++	switch ( rtl->mac_ver ) {
++	case 61:
++		ephy = realtek_8125a_ephy;
++		count = ( sizeof ( realtek_8125a_ephy ) /
++			  sizeof ( realtek_8125a_ephy[0] ) );
++		break;
++	case 63:
++		ephy = realtek_8125b_ephy;
++		count = ( sizeof ( realtek_8125b_ephy ) /
++			  sizeof ( realtek_8125b_ephy[0] ) );
++		break;
++	default:
++		break;
++	}
++	for ( i = 0 ; i < count ; i++ )
++		realtek_ephy_write ( rtl, ephy[i].reg, ephy[i].value );
++
++	/* Disable L2/L3 power state (work around an issue when a PCI
++	 * reset occurs during L2/L3 state)
++	 */
++	writeb ( ( readb ( rtl->regs + RTL_CONFIG3 ) & ~RTL_CONFIG3_RDY_TO_L23 ),
++		 rtl->regs + RTL_CONFIG3 );
++
++	/* Configure common registers */
++	writew ( 0x221b, rtl->regs + 0x382 );
++	writel ( 0, rtl->regs + RTL_RSS_CTRL_8125 );
++	writew ( 0, rtl->regs + RTL_Q_NUM_CTRL_8125 );
++
++	/* Disable UPS */
++	realtek_mac_ocp_modify ( rtl, 0xd40a, 0x0010, 0x0000 );
++
++	/* Disable PCIe clock request */
++	writeb ( ( readb ( rtl->regs + RTL_CONFIG1 ) & ~0x10 ),
++		 rtl->regs + RTL_CONFIG1 );
++
++	realtek_mac_ocp_write ( rtl, 0xc140, 0xffff );
++	realtek_mac_ocp_write ( rtl, 0xc142, 0xffff );
++	realtek_mac_ocp_modify ( rtl, 0xd3e2, 0x0fff, 0x03a9 );
++	realtek_mac_ocp_modify ( rtl, 0xd3e4, 0x00ff, 0x0000 );
++	realtek_mac_ocp_modify ( rtl, 0xe860, 0x0000, 0x0080 );
++
++	/* Disable new TX descriptor format */
++	realtek_mac_ocp_modify ( rtl, 0xeb58, 0x0001, 0x0000 );
++
 +	/* Disable ZRXDC timeout reporting (as does Linux
 +	 * rtl_hw_start_8125_common() for the RTL8126A)
 +	 */
@@ -229,30 +482,52 @@ index 8449f6cdd..f33fda22c 100644
 +		writeb ( ( readb ( rtl->regs + 0xd8 ) & ~0x02 ),
 +			 rtl->regs + 0xd8 );
 +
- 	/* Configure descriptor ring behaviour */
--	if ( rtl->mac_ver == 63 ) {
++	/* Configure descriptor ring behaviour */
 +	if ( rtl->mac_ver == 70 ) {
 +		realtek_mac_ocp_modify ( rtl, 0xe614, 0x0700, 0x0400 );
 +	} else if ( rtl->mac_ver == 63 ) {
- 		realtek_mac_ocp_modify ( rtl, 0xe614, 0x0700, 0x0200 );
- 		realtek_mac_ocp_modify ( rtl, 0xe63e, 0x0c30, 0x0000 );
- 	} else {
-@@ -620,7 +770,10 @@ static void realtek_hw_start_8125 ( struct realtek_nic *rtl ) {
- 	realtek_mac_ocp_modify ( rtl, 0xe056, 0x00f0, 0x0000 );
- 	realtek_mac_ocp_modify ( rtl, 0xe040, 0x1000, 0x0000 );
- 	realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0003, 0x0001 );
--	realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0004, 0x0000 );
++		realtek_mac_ocp_modify ( rtl, 0xe614, 0x0700, 0x0200 );
++		realtek_mac_ocp_modify ( rtl, 0xe63e, 0x0c30, 0x0000 );
++	} else {
++		realtek_mac_ocp_modify ( rtl, 0xe614, 0x0700, 0x0300 );
++		realtek_mac_ocp_modify ( rtl, 0xe63e, 0x0c30, 0x0020 );
++	}
++
++	realtek_mac_ocp_modify ( rtl, 0xc0b4, 0x0000, 0x000c );
++	realtek_mac_ocp_modify ( rtl, 0xeb6a, 0x00ff, 0x0033 );
++	realtek_mac_ocp_modify ( rtl, 0xeb50, 0x03e0, 0x0040 );
++	realtek_mac_ocp_modify ( rtl, 0xe056, 0x00f0, 0x0000 );
++	realtek_mac_ocp_modify ( rtl, 0xe040, 0x1000, 0x0000 );
++	realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0003, 0x0001 );
 +	if ( rtl->mac_ver == 70 )
 +		realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0300, 0x0000 );
 +	else
 +		realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0004, 0x0000 );
- 	realtek_mac_ocp_modify ( rtl, 0xe0c0, 0x4f0f, 0x4403 );
- 	realtek_mac_ocp_modify ( rtl, 0xe052, 0x0080, 0x0068 );
- 	realtek_mac_ocp_modify ( rtl, 0xd430, 0x0fff, 0x047f );
-@@ -646,6 +799,572 @@ static void realtek_hw_start_8125 ( struct realtek_nic *rtl ) {
- 		   ~RTL_MISC_RXDV_GATED_EN ), rtl->regs + RTL_MISC );
- }
- 
++	realtek_mac_ocp_modify ( rtl, 0xe0c0, 0x4f0f, 0x4403 );
++	realtek_mac_ocp_modify ( rtl, 0xe052, 0x0080, 0x0068 );
++	realtek_mac_ocp_modify ( rtl, 0xd430, 0x0fff, 0x047f );
++
++	realtek_mac_ocp_modify ( rtl, 0xea1c, 0x0004, 0x0000 );
++	realtek_mac_ocp_modify ( rtl, 0xeb54, 0x0000, 0x0001 );
++	udelay ( 1 );
++	realtek_mac_ocp_modify ( rtl, 0xeb54, 0x0001, 0x0000 );
++	writew ( ( readw ( rtl->regs + 0x1880 ) & ~0x0030 ),
++		 rtl->regs + 0x1880 );
++
++	realtek_mac_ocp_write ( rtl, 0xe098, 0xc302 );
++
++	/* Wait for MAC to complete initialisation */
++	for ( i = 0 ; i < 1000 ; i++ ) {
++		if ( realtek_mac_ocp_read ( rtl, 0xe00e ) & ( 1 << 13 ) )
++			break;
++		udelay ( 10 );
++	}
++
++	/* Disable RX descriptor gate */
++	writel ( ( readl ( rtl->regs + RTL_MISC ) &
++		   ~RTL_MISC_RXDV_GATED_EN ), rtl->regs + RTL_MISC );
++}
++
 +/******************************************************************************
 + *
 + * RTL8126 hardware initialisation
@@ -822,17 +1097,13 @@ index 8449f6cdd..f33fda22c 100644
  /******************************************************************************
   *
   * Device reset
-@@ -1014,11 +1733,16 @@ static int realtek_open ( struct net_device *netdev ) {
+@@ -695,6 +1733,17 @@ static int realtek_open ( struct net_device *netdev ) {
  	if ( ( rc = realtek_create_buffer ( rtl ) ) != 0 )
  		goto err_create_buffer;
  
--	/* Initialise RTL8125 hardware, if applicable (as does Linux
--	 * rtl_hw_start() on each open)
 +	/* Initialise RTL8125/RTL8126 hardware, if applicable (as does
 +	 * Linux rtl_hw_start() on each open)
- 	 */
--	if ( rtl->have_ocp )
--		realtek_hw_start_8125 ( rtl );
++	 */
 +	if ( rtl->have_ocp ) {
 +		if ( rtl->mac_ver == 70 ) {
 +			realtek_hw_start_8126 ( rtl );
@@ -840,25 +1111,102 @@ index 8449f6cdd..f33fda22c 100644
 +			realtek_hw_start_8125 ( rtl );
 +		}
 +	}
- 
++
  	/* Accept all packets */
  	writel ( 0xffffffffUL, rtl->regs + RTL_MAR0 );
-@@ -1401,10 +2125,11 @@ static void realtek_detect ( struct realtek_nic *rtl ) {
+ 	writel ( 0xffffffffUL, rtl->regs + RTL_MAR4 );
+@@ -717,6 +1766,12 @@ static int realtek_open ( struct net_device *netdev ) {
+ 	rcr |= ( RTL_RCR_RXFTH_DEFAULT | RTL_RCR_RBLEN_DEFAULT |
+ 		 RTL_RCR_MXDMA_DEFAULT | RTL_RCR_WRAP | RTL_RCR_AB |
+ 		 RTL_RCR_AM | RTL_RCR_APM | RTL_RCR_AAP );
++
++	/* Configure RTL8125-specific receive behaviour (as does Linux
++	 * rtl_set_rx_config())
++	 */
++	if ( rtl->have_ocp )
++		rcr |= ( RTL_RCR_FETCH_8125 | RTL_RCR_PAUSE_SLOT_8125 );
+ 	writel ( rcr, rtl->regs + RTL_RCR );
+ 
+ 	/* Fill receive ring */
+@@ -824,7 +1879,12 @@ static int realtek_transmit ( struct net_device *netdev,
+ 		wmb();
+ 
+ 		/* Notify card that there are packets ready to transmit */
+-		writeb ( RTL_TPPOLL_NPQ, rtl->regs + rtl->tppoll );
++		if ( rtl->have_ocp ) {
++			writew ( RTL_TPPOLL_8125_NPQ,
++				 rtl->regs + RTL_TPPOLL_8125 );
++		} else {
++			writeb ( RTL_TPPOLL_NPQ, rtl->regs + rtl->tppoll );
++		}
+ 	}
+ 
+ 	DBGC2 ( rtl, "REALTEK %p TX %d is [%lx,%lx)\n",
+@@ -987,13 +2047,20 @@ static void realtek_poll_rx ( struct net_device *netdev ) {
+  */
+ static void realtek_poll ( struct net_device *netdev ) {
+ 	struct realtek_nic *rtl = netdev->priv;
+-	uint16_t isr;
++	uint32_t isr;
+ 
+ 	/* Check for and acknowledge interrupts */
+-	isr = readw ( rtl->regs + RTL_ISR );
+-	if ( ! isr )
+-		return;
+-	writew ( isr, rtl->regs + RTL_ISR );
++	if ( rtl->have_ocp ) {
++		isr = readl ( rtl->regs + RTL_ISR_8125 );
++		if ( ! isr )
++			return;
++		writel ( isr, rtl->regs + RTL_ISR_8125 );
++	} else {
++		isr = readw ( rtl->regs + RTL_ISR );
++		if ( ! isr )
++			return;
++		writew ( isr, rtl->regs + RTL_ISR );
++	}
+ 
+ 	/* Poll for TX completions, if applicable */
+ 	if ( isr & ( RTL_IRQ_TER | RTL_IRQ_TOK ) )
+@@ -1019,12 +2086,16 @@ static void realtek_poll ( struct net_device *netdev ) {
+  */
+ static void realtek_irq ( struct net_device *netdev, int enable ) {
+ 	struct realtek_nic *rtl = netdev->priv;
+-	uint16_t imr;
++	uint32_t imr;
+ 
+ 	/* Set interrupt mask */
+ 	imr = ( enable ? ( RTL_IRQ_PUN_LINKCHG | RTL_IRQ_TER | RTL_IRQ_TOK |
+ 			   RTL_IRQ_RER | RTL_IRQ_ROK ) : 0 );
+-	writew ( imr, rtl->regs + RTL_IMR );
++	if ( rtl->have_ocp ) {
++		writel ( imr, rtl->regs + RTL_IMR_8125 );
++	} else {
++		writew ( imr, rtl->regs + RTL_IMR );
++	}
+ }
+ 
+ /** Realtek network device operations */
+@@ -1054,6 +2125,18 @@ static void realtek_detect ( struct realtek_nic *rtl ) {
  	uint16_t cpcr;
  	uint16_t check_cpcr;
  
--	/* Detect RTL8125 (which uses OCP register access instead of
--	 * PHYAR, and a different TPPoll register)
 +	/* Detect RTL8125/RTL8126 (which use OCP register access instead
 +	 * of PHYAR, and a different TPPoll register)
- 	 */
--	if ( realtek_detect_8125 ( rtl ) == 0 ) {
++	 */
 +	if ( ( realtek_detect_8126 ( rtl ) == 0 ) ||
 +	     ( realtek_detect_8125 ( rtl ) == 0 ) ) {
- 		rtl->have_phy_regs = 1;
- 		rtl->have_ocp = 1;
- 		rtl->tppoll = RTL_TPPOLL_8125;
-@@ -1498,6 +2223,9 @@ static int realtek_probe ( struct pci_device *pci ) {
++		rtl->have_phy_regs = 1;
++		rtl->have_ocp = 1;
++		rtl->tppoll = RTL_TPPOLL_8125;
++		dma_set_mask_64bit ( rtl->dma );
++		return;
++	}
++
+ 	/* The RX Packet Maximum Size register is present only on
+ 	 * 8169.  Try to set to our intended MTU.
+ 	 */
+@@ -1140,6 +2223,9 @@ static int realtek_probe ( struct pci_device *pci ) {
  	/* Configure DMA */
  	rtl->dma = &pci->dma;
  
@@ -868,13 +1216,10 @@ index 8449f6cdd..f33fda22c 100644
  	/* Reset the NIC */
  	if ( ( rc = realtek_reset ( rtl ) ) != 0 )
  		goto err_reset;
-@@ -1505,9 +2233,14 @@ static int realtek_probe ( struct pci_device *pci ) {
+@@ -1147,6 +2233,15 @@ static int realtek_probe ( struct pci_device *pci ) {
  	/* Detect device type */
  	realtek_detect ( rtl );
  
--	/* Initialise RTL8125 hardware, if applicable */
--	if ( rtl->have_ocp )
--		realtek_hw_start_8125 ( rtl );
 +	/* Initialise RTL8125/RTL8126 hardware, if applicable */
 +	if ( rtl->have_ocp ) {
 +		if ( rtl->mac_ver == 70 ) {
@@ -883,25 +1228,117 @@ index 8449f6cdd..f33fda22c 100644
 +			realtek_hw_start_8125 ( rtl );
 +		}
 +	}
- 
++
  	/* Initialise EEPROM */
  	if ( rtl->eeprom.bus &&
-@@ -1607,6 +2340,7 @@ static struct pci_device_id realtek_nics[] = {
+ 	     ( ( rc = realtek_init_eeprom ( netdev ) ) == 0 ) ) {
+@@ -1165,8 +2260,15 @@ static int realtek_probe ( struct pci_device *pci ) {
+ 		 * current ID register value, which will hopefully
+ 		 * have been programmed by the platform firmware.
+ 		 */
+-		for ( i = 0 ; i < ETH_ALEN ; i++ )
+-			netdev->hw_addr[i] = readb ( rtl->regs + RTL_IDR0 + i );
++		for ( i = 0 ; i < ETH_ALEN ; i++ ) {
++			if ( rtl->have_ocp ) {
++				netdev->hw_addr[i] =
++					readb ( rtl->regs + RTL_MAC0_BKP + i );
++			} else {
++				netdev->hw_addr[i] =
++					readb ( rtl->regs + RTL_IDR0 + i );
++			}
++		}
+ 	}
+ 
+ 	/* Initialise and reset MII interface */
+@@ -1238,6 +2340,8 @@ static struct pci_device_id realtek_nics[] = {
  	PCI_ROM ( 0x021b, 0x8139, "hne300",	"Compaq HNE-300", 0 ),
  	PCI_ROM ( 0x02ac, 0x1012, "s1012",	"SpeedStream 1012", 0 ),
  	PCI_ROM ( 0x0357, 0x000a, "ttpmon",	"TTTech TTP-Monitoring", 0 ),
 +	PCI_ROM ( 0x10ec, 0x8126, "rtl8126",	"RTL8126 5Gbps", 0 ),
- 	PCI_ROM ( 0x10ec, 0x8125, "rtl8125",	"RTL8125 2.5Gbps", 0 ),
++	PCI_ROM ( 0x10ec, 0x8125, "rtl8125",	"RTL8125 2.5Gbps", 0 ),
  	PCI_ROM ( 0x10ec, 0x8129, "rtl8129",	"RTL-8129", 0 ),
  	PCI_ROM ( 0x10ec, 0x8136, "rtl8136",	"RTL8101E/RTL8102E", 0 ),
+ 	PCI_ROM ( 0x10ec, 0x8138, "rtl8138",	"RT8139 (B/C)", 0 ),
 diff --git a/src/drivers/net/realtek.h b/src/drivers/net/realtek.h
-index 967a41e56..d5354b552 100644
+index 2047664a6..07af52763 100644
 --- a/src/drivers/net/realtek.h
 +++ b/src/drivers/net/realtek.h
-@@ -250,6 +250,23 @@ enum realtek_legacy_status {
- /** OCP standard PHY base address */
- #define RTL_OCP_STD_PHY_BASE 0xa400
+@@ -15,8 +15,12 @@ FILE_SECBOOT ( PERMITTED );
+ #include <ipxe/nvo.h>
+ #include <ipxe/if_ether.h>
  
+-/** PCI memory BAR size */
+-#define RTL_BAR_SIZE 0x100
++/** PCI memory BAR size
++ *
++ * RTL8125 uses registers at addresses up to 0x4808; older chips
++ * use only the first 0x100 bytes.
++ */
++#define RTL_BAR_SIZE 0x4808
+ 
+ /** A packet descriptor */
+ struct realtek_descriptor {
+@@ -122,6 +126,16 @@ enum realtek_legacy_status {
+ #define RTL_TPPOLL_8169 0x38
+ #define RTL_TPPOLL_NPQ		0x40	/**< Normal Priority Queue Polling */
+ 
++/** Transmit Priority Polling Register (word, 8125 only) */
++#define RTL_TPPOLL_8125 0x90
++#define RTL_TPPOLL_8125_NPQ	0x0001	/**< Normal Priority Queue Polling */
++
++/** Interrupt Mask Register (dword, 8125 only) */
++#define RTL_IMR_8125 0x38
++
++/** Interrupt Status Register (dword, 8125 only) */
++#define RTL_ISR_8125 0x3c
++
+ /** Interrupt Mask Register (word) */
+ #define RTL_IMR 0x3c
+ #define RTL_IRQ_PUN_LINKCHG	0x0020	/**< Packet underrun / link change */
+@@ -151,6 +165,8 @@ enum realtek_legacy_status {
+ #define RTL_RCR_MXDMA(x)	( (x) << 8 ) /**< Max DMA burst size */
+ #define RTL_RCR_MXDMA_MASK	RTL_RCR_MXDMA ( 0x7 )
+ #define RTL_RCR_MXDMA_DEFAULT	RTL_RCR_MXDMA ( 0x7 /* Unlimited */ )
++#define RTL_RCR_FETCH_8125	( 8 << 27 ) /**< RX fetch depth (8125) */
++#define RTL_RCR_PAUSE_SLOT_8125	( 1 << 11 ) /**< RX pause slot (8125B+) */
+ #define RTL_RCR_WRAP		0x00000080UL /**< Overrun receive buffer */
+ #define RTL_RCR_9356SEL		0x00000040UL /**< EEPROM is a 93C56 */
+ #define RTL_RCR_AB		0x00000008UL /**< Accept broadcast packets */
+@@ -187,6 +203,10 @@ enum realtek_legacy_status {
+ #define RTL_CONFIG1 0x52
+ #define RTL_CONFIG1_VPD		0x02	/**< Vital Product Data enabled */
+ 
++/** Configuration Register 3 (byte) */
++#define RTL_CONFIG3 0x54
++#define RTL_CONFIG3_RDY_TO_L23	0x02	/**< Ready to enter L23 state */
++
+ /** Media Status Register (byte, 8139 only) */
+ #define RTL_MSR 0x58
+ #define RTL_MSR_TXFCE		0x80	/**< TX flow control enabled */
+@@ -210,6 +230,56 @@ enum realtek_legacy_status {
+ /** Maximum time to wait for PHY access, in microseconds */
+ #define RTL_MII_MAX_WAIT_US 500
+ 
++/** EPHY Access Register (dword, 8168g and later) */
++#define RTL_EPHYAR 0x80
++#define RTL_EPHYAR_FLAG		0x80000000UL /**< Read/write flag */
++#define RTL_EPHYAR_REG_SHIFT	16
++#define RTL_EPHYAR_REG_MASK	0x1f	/**< Register address mask */
++#define RTL_EPHYAR_DATA_MASK	0xffff
++
++/** OCP Data Register (dword, 8168g and later) */
++#define RTL_OCPDR 0xb0
++
++/** OCP Address Register (dword, 8168g and later) */
++#define RTL_OCPAR 0xb4
++#define RTL_OCPAR_FLAG		0x80000000UL /**< Read/write flag */
++
++/** OCP GPHY access Register (dword, 8168g and later) */
++#define RTL_GPHY_OCP 0xb8
++
++/** OCP standard PHY base address */
++#define RTL_OCP_STD_PHY_BASE 0xa400
++
 +/** CSI Data Register (dword, 8126 only) */
 +#define RTL_CSIDR 0x64
 +
@@ -919,16 +1356,30 @@ index 967a41e56..d5354b552 100644
 +#define RTL_MCU_VER_8126A_2 0x0033
 +#define RTL_MCU_VER_8126A_3 0x0060
 +
- /** MISC Register (dword, 8168e and later) */
- #define RTL_MISC 0xf0
- #define RTL_MISC_RXDV_GATED_EN	( 1 << 19 ) /**< RX descriptor gate enable */
-@@ -362,8 +379,12 @@ struct realtek_nic {
++/** MISC Register (dword, 8168e and later) */
++#define RTL_MISC 0xf0
++#define RTL_MISC_RXDV_GATED_EN	( 1 << 19 ) /**< RX descriptor gate enable */
++
++/** RSS control Register (dword, 8125 only) */
++#define RTL_RSS_CTRL_8125 0x4500
++
++/** Queue number control Register (word, 8125 only) */
++#define RTL_Q_NUM_CTRL_8125 0x4800
++
++/** MAC address backup Register 0 (6 bytes, 8125 only) */
++#define RTL_MAC0_BKP 0x19e0
++
+ /** PHY (GMII, MII, or TBI) Status Register (byte, 8169 only) */
+ #define RTL_PHYSTATUS 0x6c
+ #define RTL_PHYSTATUS_ENTBI	0x80	/**< TBI / GMII mode */
+@@ -307,6 +377,14 @@ struct realtek_nic {
+ 	int legacy;
+ 	/** PHYAR and PHYSTATUS registers are present */
  	int have_phy_regs;
- 	/** OCP register access is present */
- 	int have_ocp;
--	/** RTL8125 MAC version (0 = not an RTL8125) */
++	/** OCP register access is present */
++	int have_ocp;
 +	/** RTL8125 MAC version (0 = not an RTL8125/RTL8126) */
- 	unsigned int mac_ver;
++	unsigned int mac_ver;
 +	/** RTL8126 PHY configuration method (0 = not an RTL8126) */
 +	unsigned int mcfg;
 +	/** PCI device (for CSI access) */

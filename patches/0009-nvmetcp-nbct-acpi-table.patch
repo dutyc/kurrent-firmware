@@ -1,5 +1,18 @@
+# kurrent-firmware 0009: NVMe boot credentials table (NBCT)
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The NBCT implementation (src/drivers/block/nbct.c,
+# src/include/ipxe/nbct.h) is original kurrent-firmware code carrying
+# FILE_LICENCE ( BSD2 ), aligned with the upstream iPXE ibft.c
+# ACPI-table precedent.  Modifications to the NVMe/TCP driver files
+# (FILE_LICENCE ( GPL2_ONLY )) are licensed under GPL-2.0 only and may
+# not be redistributed under UBDL.
+
 diff --git a/src/drivers/block/nbct.c b/src/drivers/block/nbct.c
 new file mode 100644
+index 000000000..0cdcce596
 --- /dev/null
 +++ b/src/drivers/block/nbct.c
 @@ -0,0 +1,182 @@
@@ -185,8 +198,21 @@ new file mode 100644
 +	.complete = nbct_complete,
 +	.install = nbct_install,
 +};
+diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
+index b62a2a0ae..bb442a81d 100644
+--- a/src/include/ipxe/errfile.h
++++ b/src/include/ipxe/errfile.h
+@@ -461,6 +461,7 @@ FILE_SECBOOT ( PERMITTED );
+ #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
+ #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
+ #define ERRFILE_devicekey_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
++#define ERRFILE_nbct		      ( ERRFILE_OTHER | 0x00700000 )
+ 
+ /** @} */
+ 
 diff --git a/src/include/ipxe/nbct.h b/src/include/ipxe/nbct.h
 new file mode 100644
+index 000000000..08a65b297
 --- /dev/null
 +++ b/src/include/ipxe/nbct.h
 @@ -0,0 +1,18 @@
@@ -208,21 +234,11 @@ new file mode 100644
 +extern struct acpi_model nbct_model __acpi_model;
 +
 +#endif /* _IPXE_NBCT_H */
-diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
---- a/src/include/ipxe/errfile.h
-+++ b/src/include/ipxe/errfile.h
-@@ -461,6 +461,7 @@
- #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
- #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
- #define ERRFILE_devicekey_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
-+#define ERRFILE_nbct		      ( ERRFILE_OTHER | 0x00700000 )
- 
- /** @} */
- 
 diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
+index 8607fcd3c..a9c67c7ea 100644
 --- a/src/include/ipxe/nvmetcp.h
 +++ b/src/include/ipxe/nvmetcp.h
-@@ -34,6 +34,7 @@
+@@ -34,6 +34,7 @@ FILE_LICENCE ( GPL2_ONLY );
  #include <ipxe/interface.h>
  #include <ipxe/process.h>
  #include <ipxe/blockdev.h>
@@ -230,7 +246,7 @@ diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
  
  /** Default NVMe/TCP port */
  #define NVMETCP_DEFAULT_PORT 4420
-@@ -805,6 +806,8 @@
+@@ -805,6 +806,8 @@ struct nvmetcp_session {
  	char *host_nqn;
  	/** Authentication secret */
  	char *secret;
@@ -240,9 +256,10 @@ diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
  	/* Protocol parameters (from ICResp) */
  	/** Protocol version format */
 diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
+index fa64bb2a6..7cc6c8bb2 100644
 --- a/src/net/tcp/nvmetcp.c
 +++ b/src/net/tcp/nvmetcp.c
-@@ -45,6 +45,7 @@
+@@ -45,6 +45,7 @@ FILE_LICENCE ( GPL2_ONLY );
  #define ERRFILE ERRFILE_nvmetcp
  
  #include <ipxe/nvmetcp.h>
@@ -250,7 +267,7 @@ diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
  
  /** Default host NQN prefix (uuid suffix appended) */
  #define NVMETCP_DEFAULT_HOST_NQN "nqn.2014-08.org.ipxe:"
-@@ -1184,6 +1185,18 @@
+@@ -1184,6 +1185,18 @@ nvmetcp_describe ( struct nvmetcp_session *nvmetcp ) {
  	return efi_uri_path ( nvmetcp->uri );
  }
  
@@ -269,7 +286,7 @@ diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
  /** NVMe/TCP control interface operations */
  static struct interface_operation nvmetcp_control_operations[] = {
  	INTF_OP ( block_read_capacity, struct nvmetcp_session *,
-@@ -1191,6 +1204,8 @@
+@@ -1191,6 +1204,8 @@ static struct interface_operation nvmetcp_control_operations[] = {
  	INTF_OP ( block_read, struct nvmetcp_session *, nvmetcp_block_read ),
  	INTF_OP ( block_write, struct nvmetcp_session *, nvmetcp_block_write ),
  	INTF_OP ( intf_close, struct nvmetcp_session *, nvmetcp_close ),
@@ -278,7 +295,7 @@ diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
  	EFI_INTF_OP ( efi_describe, struct nvmetcp_session *, nvmetcp_describe ),
  };
  
-@@ -1396,6 +1411,7 @@
+@@ -1396,6 +1411,7 @@ static int nvmetcp_open ( struct interface *parent, struct uri *uri ) {
  		    &nvmetcp->refcnt );
  	process_init_stopped ( &nvmetcp->process, &nvmetcp_process_desc,
  			       &nvmetcp->refcnt );

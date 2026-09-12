@@ -1,3 +1,25 @@
+# kurrent-firmware 0007: TOFU TLS fingerprint chain
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The TOFU implementation (src/net/tofu.c, src/include/ipxe/tofu.h) is
+# original kurrent-firmware code carrying
+# FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ).  Modifications to
+# src/net/tls.c inherit the upstream licence (GPL-2.0-or-later / UBDL).
+
+diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
+index 5b82b9891..a2927a8fc 100644
+--- a/src/include/ipxe/errfile.h
++++ b/src/include/ipxe/errfile.h
+@@ -459,6 +459,7 @@ FILE_SECBOOT ( PERMITTED );
+ #define ERRFILE_ffdhe		      ( ERRFILE_OTHER | 0x006b0000 )
+ #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
+ #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
++#define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
+ 
+ /** @} */
+ 
 diff --git a/src/include/ipxe/tofu.h b/src/include/ipxe/tofu.h
 new file mode 100644
 index 000000000..c948e667d
@@ -23,9 +45,55 @@ index 000000000..c948e667d
 +extern int tofu_store ( struct x509_certificate *cert );
 +
 +#endif /* _IPXE_TOFU_H */
+diff --git a/src/net/tls.c b/src/net/tls.c
+index f50d22591..b8587165c 100644
+--- a/src/net/tls.c
++++ b/src/net/tls.c
+@@ -45,6 +45,7 @@ FILE_SECBOOT ( PERMITTED );
+ #include <ipxe/xfer.h>
+ #include <ipxe/open.h>
+ #include <ipxe/x509.h>
++#include <ipxe/tofu.h>
+ #include <ipxe/privkey.h>
+ #include <ipxe/certstore.h>
+ #include <ipxe/rootcert.h>
+@@ -4165,12 +4166,32 @@ static void tls_validator_done ( struct tls_connection *tls, int rc ) {
+ 
+ 	/* Check for validation failure */
+ 	if ( rc != 0 ) {
++		struct x509_certificate *cert;
++
++		/* Accept the handshake on first contact with an
++		 * otherwise-untrusted server, and record the leaf
++		 * certificate fingerprint in non-volatile storage
++		 * (TOFU, registration window).  Once a fingerprint is
++		 * present, any subsequent validation failure is fatal.
++		 */
++		if ( ! tofu_fingerprint_present() ) {
++			cert = x509_first ( tls->server.chain );
++			if ( ( rc = tofu_store ( cert ) ) == 0 ) {
++				x509_set_valid ( cert, NULL,
++						 tls->server.root );
++				DBGC ( tls, "TLS %p TOFU accepted %s\n",
++				       tls, x509_name ( cert ) );
++				goto validated;
++			}
++			DBGC ( tls, "TLS %p TOFU store failed: %s\n",
++			       tls, strerror ( rc ) );
++		}
+ 		DBGC ( tls, "TLS %p certificate validation failed: %s\n",
+ 		       tls, strerror ( rc ) );
+ 		goto err;
+ 	}
+ 	DBGC ( tls, "TLS %p certificate validation succeeded\n", tls );
+-
++ validated:
+ 	/* Schedule transmission of applicable handshake messages */
+ 	tls->tx.pending |= ( TLS_TX_CLIENT_KEY_EXCHANGE |
+ 			     TLS_TX_CHANGE_CIPHER |
 diff --git a/src/net/tofu.c b/src/net/tofu.c
 new file mode 100644
-index 000000000..10cefe9c0
+index 000000000..bd168f7d3
 --- /dev/null
 +++ b/src/net/tofu.c
 @@ -0,0 +1,113 @@
@@ -142,62 +210,3 @@ index 000000000..10cefe9c0
 +
 +	return 0;
 +}
-diff --git a/src/net/tls.c b/src/net/tls.c
-index f50d22591..b8587165c 100644
---- a/src/net/tls.c
-+++ b/src/net/tls.c
-@@ -45,6 +45,7 @@ FILE_SECBOOT ( PERMITTED );
- #include <ipxe/xfer.h>
- #include <ipxe/open.h>
- #include <ipxe/x509.h>
-+#include <ipxe/tofu.h>
- #include <ipxe/privkey.h>
- #include <ipxe/certstore.h>
- #include <ipxe/rootcert.h>
-@@ -4165,12 +4166,32 @@ static void tls_validator_done ( struct tls_connection *tls, int rc ) {
- 
- 	/* Check for validation failure */
- 	if ( rc != 0 ) {
-+		struct x509_certificate *cert;
-+
-+		/* Accept the handshake on first contact with an
-+		 * otherwise-untrusted server, and record the leaf
-+		 * certificate fingerprint in non-volatile storage
-+		 * (TOFU, registration window).  Once a fingerprint is
-+		 * present, any subsequent validation failure is fatal.
-+		 */
-+		if ( ! tofu_fingerprint_present() ) {
-+			cert = x509_first ( tls->server.chain );
-+			if ( ( rc = tofu_store ( cert ) ) == 0 ) {
-+				x509_set_valid ( cert, NULL,
-+						 tls->server.root );
-+				DBGC ( tls, "TLS %p TOFU accepted %s\n",
-+				       tls, x509_name ( cert ) );
-+				goto validated;
-+			}
-+			DBGC ( tls, "TLS %p TOFU store failed: %s\n",
-+			       tls, strerror ( rc ) );
-+		}
- 		DBGC ( tls, "TLS %p certificate validation failed: %s\n",
- 		       tls, strerror ( rc ) );
- 		goto err;
- 	}
- 	DBGC ( tls, "TLS %p certificate validation succeeded\n", tls );
--
-+ validated:
- 	/* Schedule transmission of applicable handshake messages */
- 	tls->tx.pending |= ( TLS_TX_CLIENT_KEY_EXCHANGE |
- 			     TLS_TX_CHANGE_CIPHER |
-diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
-index 6faf79d32..a2927a8fc 100644
---- a/src/include/ipxe/errfile.h
-+++ b/src/include/ipxe/errfile.h
-@@ -458,6 +458,7 @@ FILE_SECBOOT ( PERMITTED );
- #define ERRFILE_crypto_null	      ( ERRFILE_OTHER | 0x006a0000 )
- #define ERRFILE_ffdhe		      ( ERRFILE_OTHER | 0x006b0000 )
- #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
- #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
-+#define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
- 
- /** @} */
- 

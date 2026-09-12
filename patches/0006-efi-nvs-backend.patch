@@ -1,5 +1,16 @@
+# kurrent-firmware 0006: EFI variable NVS backend
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The new settings backend (src/interface/efi/efi_nvs.c) is an original
+# kurrent-firmware implementation carrying
+# FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ), consistent with the upstream
+# dual licence.  Modifications to the iPXE configuration and headers
+# inherit the upstream licence (GPL-2.0-or-later / UBDL).
+
 diff --git a/src/config/config_efi.c b/src/config/config_efi.c
-index 1278bf5bb..7e9002165 100644
+index 1278bf5bb..f691d7210 100644
 --- a/src/config/config_efi.c
 +++ b/src/config/config_efi.c
 @@ -54,3 +54,11 @@ REQUIRE_OBJECT ( efi_disklog );
@@ -31,9 +42,21 @@ index bdbe3b741..e1fea7cbd 100644
  /** Skip PXE DHCP protocol extensions such as ProxyDHCP
   *
   * If set to a non-zero value, iPXE will not wait for ProxyDHCP offers
+diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
+index e177ca2b8..5b82b9891 100644
+--- a/src/include/ipxe/errfile.h
++++ b/src/include/ipxe/errfile.h
+@@ -458,6 +458,7 @@ FILE_SECBOOT ( PERMITTED );
+ #define ERRFILE_crypto_null	      ( ERRFILE_OTHER | 0x006a0000 )
+ #define ERRFILE_ffdhe		      ( ERRFILE_OTHER | 0x006b0000 )
+ #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
++#define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
+ 
+ /** @} */
+ 
 diff --git a/src/interface/efi/efi_nvs.c b/src/interface/efi/efi_nvs.c
 new file mode 100644
-index 000000000..7bd4a7ca8
+index 000000000..69780f602
 --- /dev/null
 +++ b/src/interface/efi/efi_nvs.c
 @@ -0,0 +1,233 @@
@@ -270,15 +293,3 @@ index 000000000..7bd4a7ca8
 +	.name = "efi_nvs",
 +	.startup = efi_nvs_startup,
 +};
-diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
-index 6faf79d32..5b82b9891 100644
---- a/src/include/ipxe/errfile.h
-+++ b/src/include/ipxe/errfile.h
-@@ -455,6 +458,7 @@ FILE_SECBOOT ( PERMITTED );
- #define ERRFILE_crypto_null	      ( ERRFILE_OTHER | 0x006a0000 )
- #define ERRFILE_ffdhe		      ( ERRFILE_OTHER | 0x006b0000 )
- #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
-+#define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
- 
- /** @} */
- 

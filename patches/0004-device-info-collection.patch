@@ -1,3 +1,12 @@
+# kurrent-firmware 0004: device information collection
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Modifications to iPXE src/include/ipxe/smbios.h,
+# src/interface/smbios/smbios_settings.c and src/drivers/bus/pci.c
+# inherit the upstream licence (GPL-2.0-or-later / UBDL).
+
 diff --git a/src/drivers/bus/pci.c b/src/drivers/bus/pci.c
 index 9e47dd93c..bb68a5bc8 100644
 --- a/src/drivers/bus/pci.c

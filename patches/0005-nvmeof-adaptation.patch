@@ -1,3 +1,19 @@
+# kurrent-firmware 0005: NVMe-oF (NVMe over TCP) SAN adaptation
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The NVMe/TCP driver files (src/net/tcp/nvmetcp.c,
+# src/net/tcp/nvmetcp_auth.c, src/include/ipxe/nvmetcp.h and
+# src/tests/nvmetcp_test.c) are original kurrent-firmware
+# implementations carrying FILE_LICENCE ( GPL2_ONLY ); they are
+# licensed under GPL-2.0 only and may not be redistributed under UBDL.
+# This patch includes the DH-HMAC-CHAP authentication state machine,
+# its fixes (transient -EAGAIN handling, idempotent AuthReceive with
+# unified step advancement, completion gating via completed/rx_complete
+# plus rx_cid command-id matching, Identify Namespace LBAF offset fix)
+# and the hostnqn setting override.  See ../docs/nvmeof-auth-debug-log.md.
+
 diff --git a/src/config/config.c b/src/config/config.c
 index 1995b8cd4..568508d89 100644
 --- a/src/config/config.c
@@ -40,10 +56,10 @@ index 6faf79d32..e177ca2b8 100644
  #define ERRFILE_elf		      ( ERRFILE_IMAGE | 0x00010000 )
 diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
 new file mode 100644
-index 000000000..64abad322
+index 000000000..8607fcd3c
 --- /dev/null
 +++ b/src/include/ipxe/nvmetcp.h
-@@ -0,0 +1,880 @@
+@@ -0,0 +1,916 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -114,6 +130,9 @@ index 000000000..64abad322
 +/** Connect response authentication-required flags (result field) */
 +#define NVMF_CONNECT_AUTHREQ_ATR ( 1U << 17 )
 +#define NVMF_CONNECT_AUTHREQ_ASCR ( 1U << 18 )
++
++/** Authentication required status code (NVMe base spec) */
++#define NVME_SC_AUTH_REQUIRED 0x0c
 +
 +/** NVMe/TCP PDU types (TP 8000) */
 +#define NVMETCP_PDU_ICREQ 0x00
@@ -732,6 +751,20 @@ index 000000000..64abad322
 +	return 0;
 +}
 +
++/** DH-HMAC-CHAP authentication steps */
++enum nvmetcp_auth_steps {
++        /** Awaiting start: send AuthSend(Negotiate) */
++        NVMETCP_AUTH_STEP_START = 0,
++        /** AuthSend(Negotiate) in flight: send AuthReceive on completion */
++        NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE,
++        /** AuthReceive(challenge) in flight: process data on arrival */
++        NVMETCP_AUTH_STEP_CHALLENGE,
++        /** AuthSend(Reply) in flight: send AuthReceive on completion */
++        NVMETCP_AUTH_STEP_COMPLETE_REPLY,
++        /** AuthReceive(success1) in flight: process data on arrival */
++        NVMETCP_AUTH_STEP_SUCCESS1,
++};
++
 +/** NVMe/TCP session phases */
 +enum nvmetcp_phase {
 +	/** TCP connection established */
@@ -760,6 +793,12 @@ index 000000000..64abad322
 +struct nvmetcp_auth {
 +	/** Authentication message step */
 +	uint8_t step;
++	/** Success1 data validated (authentication succeeded) */
++	uint8_t completed;
++	/** AuthReceive completion received */
++	uint8_t rx_complete;
++	/** Command identifier of the final AuthReceive */
++	uint16_t rx_cid;
 +	/** Transaction identifier */
 +	uint16_t transaction;
 +	/** Sequence number */
@@ -923,13 +962,26 @@ index 000000000..64abad322
 + */
 +extern int nvmetcp_auth_rx_data ( struct nvmetcp_session *nvmetcp );
 +
++/**
++ * Complete the authentication phase if possible
++ *
++ * @v nvmetcp		NVMe/TCP session
++ *
++ * The authentication phase ends only once both the success1 data and
++ * the AuthReceive completion have been received.  These may arrive in
++ * either order (possibly within the same TCP segment); completing
++ * early would cause the AuthReceive completion to be misprocessed as
++ * the Property Set completion, skipping the Property Set entirely.
++ */
++extern void nvmetcp_auth_try_complete ( struct nvmetcp_session *nvmetcp );
++
 +#endif /* _IPXE_NVMETCP_H */
 diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
 new file mode 100644
-index 000000000..a281ce81e
+index 000000000..fa64bb2a6
 --- /dev/null
 +++ b/src/net/tcp/nvmetcp.c
-@@ -0,0 +1,1386 @@
+@@ -0,0 +1,1443 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -1542,6 +1594,24 @@ index 000000000..a281ce81e
 +}
 +
 +/**
++ * Handle authentication-required Connect completion
++ *
++ * @v nvmetcp		NVMe/TCP session
++ * @ret rc		Return status code
++ */
++static int nvmetcp_auth_required ( struct nvmetcp_session *nvmetcp ) {
++	if ( ! nvmetcp->secret ) {
++		DBGC ( nvmetcp, "authentication required but no secret\n" );
++		return -EPERM;
++	}
++	DBGC ( nvmetcp, "authentication required\n" );
++	nvmetcp->phase = NVMETCP_PHASE_AUTH;
++	/* Resume stepping to send the first authentication message */
++	process_add ( &nvmetcp->process );
++	return 0;
++}
++
++/**
 + * Process complete command (completion received)
 + *
 + * @v nvmetcp		NVMe/TCP session
@@ -1557,6 +1627,15 @@ index 000000000..a281ce81e
 +
 +	/* Check command status */
 +	if ( status != 0 ) {
++		/* Authentication required is not an error: enter the
++		 * authentication phase instead.  The Connect completion status
++		 * NVME_SC_AUTH_REQUIRED alone is the trigger: nvmet (kernel
++		 * 7.x) does not set the ATR bit in the result field for this
++		 * status, only the spec-compliant path does.
++		 */
++		if ( ( status == NVME_SC_AUTH_REQUIRED ) &&
++		     ( nvmetcp->phase == NVMETCP_PHASE_CONNECT_ADMIN ) )
++			return nvmetcp_auth_required ( nvmetcp );
 +		DBGC ( nvmetcp, "command failed: status %#x\n", status );
 +		/* Fail the session if an authentication command failed */
 +		if ( nvmetcp->phase == NVMETCP_PHASE_AUTH )
@@ -1579,13 +1658,8 @@ index 000000000..a281ce81e
 +		nvmetcp->cntlid = ( result & 0xffff );
 +		/* Check whether authentication is required */
 +		if ( result & NVMF_CONNECT_AUTHREQ_ATR ) {
-+			if ( ! nvmetcp->secret ) {
-+				DBGC ( nvmetcp,
-+				       "authentication required but no secret\n" );
-+				return -EPERM;
-+			}
-+			DBGC ( nvmetcp, "authentication required\n" );
-+			nvmetcp->phase = NVMETCP_PHASE_AUTH;
++			if ( ( rc = nvmetcp_auth_required ( nvmetcp ) ) != 0 )
++				return rc;
 +		} else {
 +			nvmetcp->phase = NVMETCP_PHASE_PROP_SET;
 +		}
@@ -1613,7 +1687,18 @@ index 000000000..a281ce81e
 +		return 0;
 +	case NVMETCP_PHASE_AUTH:
 +		/* Authentication progress is handled by the auth module */
-+		return nvmetcp_auth_rx_complete ( nvmetcp );
++		if ( ( rc = nvmetcp_auth_rx_complete ( nvmetcp ) ) != 0 )
++			return rc;
++		/* End the authentication phase once both the success1 data
++		 * and this completion have been received (they may arrive in
++		 * either order within the same TCP segment; completing early
++		 * would misprocess this completion as the Property Set
++		 * completion and skip the Property Set entirely)
++		 */
++		nvmetcp_auth_try_complete ( nvmetcp );
++		if ( nvmetcp->phase != NVMETCP_PHASE_AUTH )
++			process_add ( &nvmetcp->process );
++		return 0;
 +	case NVMETCP_PHASE_CONNECT_IO:
 +		DBGC ( nvmetcp, "I/O queue established\n" );
 +		nvmetcp->phase = NVMETCP_PHASE_READY;
@@ -1656,6 +1741,11 @@ index 000000000..a281ce81e
 +		/* Authentication data is handled by the auth module */
 +		if ( ( rc = nvmetcp_auth_rx_data ( nvmetcp ) ) != 0 )
 +			return rc;
++		/* End the authentication phase once both the success1 data
++		 * and the AuthReceive completion have been received; they
++		 * may arrive in either order
++		 */
++		nvmetcp_auth_try_complete ( nvmetcp );
 +		/* Resume stepping if authentication has completed */
 +		if ( nvmetcp->phase != NVMETCP_PHASE_AUTH )
 +			process_add ( &nvmetcp->process );
@@ -2178,16 +2268,35 @@ index 000000000..a281ce81e
 +	return nvmetcp_parse_secret ( nvmetcp, uri );
 +}
 +
++/** NVMe host NQN setting (overrides the UUID-derived default) */
++static struct setting hostnqn_setting __setting ( SETTING_HOST_EXTRA,
++						  hostnqn ) = {
++	.name = "hostnqn",
++	.description = "NVMe host NQN",
++	.type = &setting_type_string,
++};
++
 +/**
-+ * Construct default host NQN
++ * Construct host NQN
 + *
 + * @v nvmetcp		NVMe/TCP session
 + * @ret rc		Return status code
++ *
++ * Prefer the explicitly configured host NQN (e.g. injected by the
++ * boot server per MAC address), falling back to the UUID-derived
++ * default so plain nvme:// URIs stay self-contained.
 + */
 +static int nvmetcp_set_host_nqn ( struct nvmetcp_session *nvmetcp ) {
 +	union uuid uuid;
 +	char *nqn;
 +	size_t len;
++
++	nqn = NULL;
++	fetch_string_setting_copy ( NULL, &hostnqn_setting, &nqn );
++	if ( nqn ) {
++		nvmetcp->host_nqn = nqn;
++		return 0;
++	}
 +
 +	len = ( sizeof ( NVMETCP_DEFAULT_HOST_NQN ) - 1 +
 +		sizeof ( uuid ) * 2 );
@@ -2318,10 +2427,10 @@ index 000000000..a281ce81e
 +};
 diff --git a/src/net/tcp/nvmetcp_auth.c b/src/net/tcp/nvmetcp_auth.c
 new file mode 100644
-index 000000000..090ec0295
+index 000000000..a9765494f
 --- /dev/null
 +++ b/src/net/tcp/nvmetcp_auth.c
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,809 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -2367,20 +2476,6 @@ index 000000000..090ec0295
 +
 +/** Maximum length of returned authentication data */
 +#define NVMETCP_AUTH_RECV_LEN 4096
-+
-+/** Authentication steps */
-+enum nvmetcp_auth_steps {
-+	/** Awaiting start: send AuthSend(Negotiate) */
-+	NVMETCP_AUTH_STEP_START = 0,
-+	/** AuthSend(Negotiate) in flight: send AuthReceive on completion */
-+	NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE,
-+	/** AuthReceive(challenge) in flight: process data on arrival */
-+	NVMETCP_AUTH_STEP_CHALLENGE,
-+	/** AuthSend(Reply) in flight: send AuthReceive on completion */
-+	NVMETCP_AUTH_STEP_COMPLETE_REPLY,
-+	/** AuthReceive(success1) in flight: process data on arrival */
-+	NVMETCP_AUTH_STEP_SUCCESS1,
-+};
 +
 +/**
 + * Get digest algorithm for a hash identifier
@@ -2683,7 +2778,12 @@ index 000000000..090ec0295
 +	cmd->auth.secp = NVME_AUTH_DHCHAP_PROTOCOL_IDENTIFIER;
 +	cmd->auth.spsp0 = 0x01;
 +	cmd->auth.spsp1 = 0x01;
-+	cmd->auth.al_tl = cpu_to_le32 ( data_len );
++	/* For AuthSend, al_tl is the length of the data being sent; for
++	 * AuthReceive, it is the allocation length of the receive buffer.
++	 * nvmet rejects an AuthReceive with a zero al_tl (INVALID_FIELD |
++	 * DNR, Ubuntu 7.0) and requires al_tl >= transfer length.
++	 */
++	cmd->auth.al_tl = cpu_to_le32 ( data_len ? data_len : recv_len );
 +
 +	return nvmetcp_tx_command ( nvmetcp, &nvmetcp->socket, cmd, data,
 +				 data_len, recv_len );
@@ -2714,6 +2814,37 @@ index 000000000..090ec0295
 +
 +	return nvmetcp_auth_tx_command ( nvmetcp, NVMF_FCTYPE_AUTH_RECEIVE,
 +					 NULL, 0, NVMETCP_AUTH_RECV_LEN );
++}
++
++/**
++ * Send AuthReceive command and advance the authentication step
++ *
++ * @v nvmetcp		NVMe/TCP session
++ * @v next_step		Step to enter once the command is sent
++ * @ret rc		Return status code
++ *
++ * The step is advanced to @c next_step only if the command is sent
++ * successfully.  If the send fails (e.g. the TCP window is closed),
++ * the step is reset to the corresponding COMPLETE step so that the
++ * command can be retried from nvmetcp_auth_step() when the window
++ * opens again.
++ */
++static int nvmetcp_auth_tx_receive_step ( struct nvmetcp_session *nvmetcp,
++					  unsigned int next_step ) {
++	struct nvmetcp_auth *auth = &nvmetcp->auth;
++	int rc;
++
++	auth->step = next_step;
++	if ( ( rc = nvmetcp_auth_tx_receive ( nvmetcp ) ) != 0 ) {
++		/* Command not sent: reset the step for retry */
++		auth->step = ( next_step == NVMETCP_AUTH_STEP_CHALLENGE ) ?
++			     NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE :
++			     NVMETCP_AUTH_STEP_COMPLETE_REPLY;
++		return rc;
++	}
++	/* Record the command identifier of the AuthReceive now on the wire */
++	auth->rx_cid = nvmetcp->cid;
++	return 0;
 +}
 +
 +/**
@@ -2814,13 +2945,19 @@ index 000000000..090ec0295
 +	reply->t_id = cpu_to_le16 ( auth->transaction );
 +	reply->hl = auth->hl;
 +	reply->dhvlen = cpu_to_le16 ( exchange ? auth->dhvlen : 0 );
-+	if ( ( rc = get_random_nz ( &reply->seqnum,
-+				    sizeof ( reply->seqnum ) ) ) != 0 )
-+		return rc;
++	/* One-way authentication: s2 is zero, per NVMe base spec */
++	reply->seqnum = cpu_to_le32 ( 0 );
 +	memcpy ( reply->rval, response, auth->hl );
 +	len += auth->hl;
 +	if ( exchange ) {
-+		memcpy ( reply->rval + auth->hl, auth->pub_key,
++		/* The reply layout is rval || cval || dhvalue; the cval
++		 * field must be present even when no C2 challenge is
++		 * carried (cvalid clear), since the controller always
++		 * parses the DH value at a fixed offset.
++		 */
++		memcpy ( reply->rval + auth->hl, auth->cval, auth->hl );
++		len += auth->hl;
++		memcpy ( reply->rval + 2 * auth->hl, auth->pub_key,
 +			 auth->dhvlen );
 +		len += auth->dhvlen;
 +	}
@@ -2970,8 +3107,24 @@ index 000000000..090ec0295
 +	}
 +
 +	DBGC ( nvmetcp, "authentication succeeded\n" );
-+	nvmetcp->phase = NVMETCP_PHASE_PROP_SET;
++	auth->completed = 1;
 +	return 0;
++}
++
++/**
++ * Complete the authentication phase if possible
++ *
++ * @v nvmetcp		NVMe/TCP session
++ *
++ * The authentication phase ends only once both the success1 data and
++ * the AuthReceive completion have been received, since they may
++ * arrive in either order (possibly within the same TCP segment).
++ */
++void nvmetcp_auth_try_complete ( struct nvmetcp_session *nvmetcp ) {
++	struct nvmetcp_auth *auth = &nvmetcp->auth;
++
++	if ( auth->completed && auth->rx_complete )
++		nvmetcp->phase = NVMETCP_PHASE_PROP_SET;
 +}
 +
 +/**
@@ -2986,12 +3139,30 @@ index 000000000..090ec0295
 +
 +	switch ( auth->step ) {
 +	case NVMETCP_AUTH_STEP_START:
++		/* Do not restart authentication once the success1 data has
++		 * been validated: the session is only awaiting the final
++		 * AuthReceive completion (or the phase advancement)
++		 */
++		if ( auth->completed )
++			return 0;
 +		/* Start authentication: send Negotiate */
 +		if ( ( rc = get_random_nz ( &auth->transaction,
 +					    sizeof ( auth->transaction ) ) ) != 0 )
 +			return rc;
 +		auth->step = NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE;
 +		return nvmetcp_auth_tx_negotiate ( nvmetcp );
++	case NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE:
++	case NVMETCP_AUTH_STEP_COMPLETE_REPLY:
++		/* AuthReceive deferred while the TCP window was closed:
++		 * retry now that the window is available.  (The command is
++		 * not in flight: the failed send did not reach the wire.)
++		 */
++		if ( ! nvmetcp->tx_in_flight )
++			return nvmetcp_auth_tx_receive_step ( nvmetcp,
++					( auth->step == NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE ) ?
++					NVMETCP_AUTH_STEP_CHALLENGE :
++					NVMETCP_AUTH_STEP_SUCCESS1 );
++		return 0;
 +	default:
 +		/* Command in flight: wait for completion */
 +		return 0;
@@ -3010,16 +3181,30 @@ index 000000000..090ec0295
 +	switch ( auth->step ) {
 +	case NVMETCP_AUTH_STEP_COMPLETE_NEGOTIATE:
 +		/* Negotiate complete: receive challenge */
-+		auth->step = NVMETCP_AUTH_STEP_CHALLENGE;
-+		return nvmetcp_auth_tx_receive ( nvmetcp );
++		return nvmetcp_auth_tx_receive_step ( nvmetcp,
++						      NVMETCP_AUTH_STEP_CHALLENGE );
 +	case NVMETCP_AUTH_STEP_CHALLENGE:
-+	case NVMETCP_AUTH_STEP_SUCCESS1:
 +		/* AuthReceive complete: wait for data */
++		return 0;
++	case NVMETCP_AUTH_STEP_SUCCESS1:
++	case NVMETCP_AUTH_STEP_START:
++		/* Final AuthReceive complete, identified by its command
++		 * identifier: a Reply completion may be processed after the
++		 * AuthReceive has been sent (following a TCP window retry),
++		 * and must not be mistaken for the AuthReceive completion.
++		 */
++		if ( le16_to_cpu ( nvmetcp->cqe.command_id ) != auth->rx_cid )
++			return 0;
++		/* This completion ends the authentication phase (the phase
++		 * is advanced by nvmetcp_auth_try_complete() once the
++		 * success1 data has also been validated)
++		 */
++		auth->rx_complete = 1;
 +		return 0;
 +	case NVMETCP_AUTH_STEP_COMPLETE_REPLY:
 +		/* Reply complete: receive success1 */
-+		auth->step = NVMETCP_AUTH_STEP_SUCCESS1;
-+		return nvmetcp_auth_tx_receive ( nvmetcp );
++		return nvmetcp_auth_tx_receive_step ( nvmetcp,
++						      NVMETCP_AUTH_STEP_SUCCESS1 );
 +	default:
 +		DBGC ( nvmetcp, "unexpected completion in step %d\n",
 +		       auth->step );
@@ -3057,10 +3242,10 @@ index 000000000..090ec0295
 +}
 diff --git a/src/tests/nvmetcp_test.c b/src/tests/nvmetcp_test.c
 new file mode 100644
-index 000000000..d9c734b43
+index 000000000..c23012411
 --- /dev/null
 +++ b/src/tests/nvmetcp_test.c
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,341 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -3125,8 +3310,8 @@ index 000000000..d9c734b43
 +		data[i] = ( nsze >> ( 8 * i ) );
 +	/* FLBAS (format index in low nibble, at offset 26) */
 +	data[26] = flbas;
-+	/* LBAF[fmt].ds (at offset 64 + fmt*4 + 2) */
-+	data[64 + ( ( flbas & 0x0f ) * 4 ) + 2] = lbads;
++	/* LBAF[fmt].ds (at offset 128 + fmt*4 + 2) */
++	data[128 + ( ( flbas & 0x0f ) * 4 ) + 2] = lbads;
 +
 +	/* Parse and validate */
 +	ok ( nvmetcp_identify_ns ( data, &capacity ) == 0 );
@@ -3152,7 +3337,7 @@ index 000000000..d9c734b43
 +	for ( i = 0; i < sizeof ( nsze ); i++ )
 +		data[i] = ( nsze >> ( 8 * i ) );
 +	data[26] = flbas;
-+	data[64 + ( ( flbas & 0x0f ) * 4 ) + 2] = lbads;
++	data[128 + ( ( flbas & 0x0f ) * 4 ) + 2] = lbads;
 +
 +	/* Parsing should fail */
 +	ok ( nvmetcp_identify_ns ( data, &capacity ) != 0 );
@@ -3285,6 +3470,99 @@ index 000000000..d9c734b43
 +}
 +
 +/**
++ * Report an authentication phase completion test
++ */
++static void nvmetcp_auth_try_complete_test ( void ) {
++	struct nvmetcp_session nvmetcp;
++	struct nvmetcp_auth *auth = &nvmetcp.auth;
++
++	/* Neither the success1 data nor the AuthReceive completion
++	 * received: no phase advancement */
++	memset ( &nvmetcp, 0, sizeof ( nvmetcp ) );
++	nvmetcp.phase = NVMETCP_PHASE_AUTH;
++	auth->completed = 0;
++	auth->rx_complete = 0;
++	nvmetcp_auth_try_complete ( &nvmetcp );
++	ok ( nvmetcp.phase == NVMETCP_PHASE_AUTH );
++
++	/* Success1 data validated but the AuthReceive completion still
++	 * pending: must not advance (the Property Set phase would be
++	 * skipped, and the subsequent Identify would be rejected) */
++	auth->completed = 1;
++	nvmetcp_auth_try_complete ( &nvmetcp );
++	ok ( nvmetcp.phase == NVMETCP_PHASE_AUTH );
++
++	/* AuthReceive completion received but success1 data still
++	 * pending: likewise */
++	auth->completed = 0;
++	auth->rx_complete = 1;
++	nvmetcp_auth_try_complete ( &nvmetcp );
++	ok ( nvmetcp.phase == NVMETCP_PHASE_AUTH );
++
++	/* Both received (in either order): advance to the Property Set
++	 * phase */
++	auth->completed = 1;
++	nvmetcp_auth_try_complete ( &nvmetcp );
++	ok ( nvmetcp.phase == NVMETCP_PHASE_PROP_SET );
++
++	/* Idempotent: repeated calls keep the advanced phase */
++	nvmetcp_auth_try_complete ( &nvmetcp );
++	ok ( nvmetcp.phase == NVMETCP_PHASE_PROP_SET );
++}
++
++/**
++ * Report an AuthReceive completion identification test
++ */
++static void nvmetcp_auth_rx_complete_test ( void ) {
++	struct nvmetcp_session nvmetcp;
++	struct nvmetcp_auth *auth = &nvmetcp.auth;
++
++	/* A Reply completion (different command id) processed after the
++	 * AuthReceive has been sent must not be mistaken for the final
++	 * AuthReceive completion */
++	memset ( &nvmetcp, 0, sizeof ( nvmetcp ) );
++	nvmetcp.phase = NVMETCP_PHASE_AUTH;
++	auth->step = NVMETCP_AUTH_STEP_SUCCESS1;
++	auth->rx_cid = 6;
++	nvmetcp.cqe.command_id = cpu_to_le16 ( 4 );
++	ok ( nvmetcp_auth_rx_complete ( &nvmetcp ) == 0 );
++	ok ( auth->rx_complete == 0 );
++
++	/* The matching command id completes the phase */
++	nvmetcp.cqe.command_id = cpu_to_le16 ( auth->rx_cid );
++	ok ( nvmetcp_auth_rx_complete ( &nvmetcp ) == 0 );
++	ok ( auth->rx_complete == 1 );
++
++	/* Data-first ordering: a completion processed in the START step
++	 * with the matching id still completes the phase */
++	memset ( &nvmetcp, 0, sizeof ( nvmetcp ) );
++	nvmetcp.phase = NVMETCP_PHASE_AUTH;
++	auth->step = NVMETCP_AUTH_STEP_START;
++	auth->rx_cid = 6;
++	nvmetcp.cqe.command_id = cpu_to_le16 ( 6 );
++	ok ( nvmetcp_auth_rx_complete ( &nvmetcp ) == 0 );
++	ok ( auth->rx_complete == 1 );
++}
++
++/**
++ * Report an authentication step guard test
++ */
++static void nvmetcp_auth_step_test ( void ) {
++	struct nvmetcp_session nvmetcp;
++	struct nvmetcp_auth *auth = &nvmetcp.auth;
++
++	/* Once the success1 data has been validated, the START step must
++	 * not re-send the Negotiate: the session is only awaiting the
++	 * final AuthReceive completion */
++	memset ( &nvmetcp, 0, sizeof ( nvmetcp ) );
++	nvmetcp.phase = NVMETCP_PHASE_AUTH;
++	auth->step = NVMETCP_AUTH_STEP_START;
++	auth->completed = 1;
++	ok ( nvmetcp_auth_step ( &nvmetcp ) == 0 );
++	ok ( auth->step == NVMETCP_AUTH_STEP_START );
++}
++
++/**
 + * Report an NVMe/TCP self-test result
 + */
 +static void nvmetcp_test_exec ( void ) {
@@ -3297,6 +3575,11 @@ index 000000000..d9c734b43
 +
 +	/* Identify Namespace data parsing */
 +	nvmetcp_identify_ns_test ();
++
++	/* Authentication state machine */
++	nvmetcp_auth_try_complete_test ();
++	nvmetcp_auth_rx_complete_test ();
++	nvmetcp_auth_step_test ();
 +}
 +
 +/** NVMe/TCP self-test */
