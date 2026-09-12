@@ -4,11 +4,11 @@
 >
 > 适用范围：刚刚新装完成 Debian 12 的母盘（虚拟机或物理机镜像），定制后可作为无状态引导母盘克隆分发——客户端零本地介质、盘内零身份硬编码，身份与凭据由引导链外部注入。
 >
-> 关联文档：[initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子模块组件说明）、[production-boot-verification.md](production-boot-verification.md)（全链路验证记录）、[customizations.md](customizations.md)（固件补丁设计）。
+> 关联文档：[initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子模块组件说明）、[golden-image-matrix.md](golden-image-matrix.md)（各发行版矩阵与脚本位置）、[production-boot-verification.md](production-boot-verification.md)（全链路验证记录）、[customizations.md](customizations.md)（固件补丁设计）。
 >
 > **支持基线（2026-08-27 裁定）**：Debian 12（+backports 6.12）及以上、Ubuntu 24.04 LTS 及以上、RHEL 9 及以上、SLES 15 及以上、openSUSE Leap 16 及以上、Fedora 44 及以上、Arch rolling。**低于基线的发行版不做适配**（明细见第 10 节）。
 >
-> **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/golden-image-setup-debian12.sh](../test/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：A–D+F 经 chroot 实测通过（2026-09-02），本地可引导性经 QEMU 实测通过（2026-09-02，见 8.1）。
+> **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/debian12/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：**2026-09-08 起以单文件自包含形态在目标母盘 VM 内端到端实测通过（A–F 全程含 E，随后 SAN 冷启动验收至 GDM）**；早期轨迹：A–D+F 经 chroot（2026-09-02）、本地可引导性经 QEMU（2026-09-02，见 8.1）。
 
 ## 1. 定制总览
 
@@ -30,20 +30,47 @@
 A–F 全部阶段已自动化，**在母盘系统内以 root 运行**：
 
 ```bash
-# 脚本与 initramfs-nbft 组件需位于同一仓库目录（默认取脚本上一级的 initramfs-nbft）
-sudo bash test/golden-image-setup-debian12.sh          # 全流程（E 阶段交互确认）
-sudo bash test/golden-image-setup-debian12.sh --yes    # E 阶段不交互
-sudo bash test/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 E（仅 A-D+F）
-sudo bash test/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # 注入宿主 2.14 预构建 GRUB（见 6.3）
-sudo bash test/golden-image-setup-debian12.sh -d /path/to/initramfs-nbft -k 6.12.95+deb12-amd64
+# 脚本与 initramfs-nbft 组件需位于同一仓库目录（默认取仓库根的 initramfs-nbft（test/<distro>/ 上两级））
+sudo bash test/debian12/golden-image-setup-debian12.sh          # 全流程（E 阶段交互确认）
+sudo bash test/debian12/golden-image-setup-debian12.sh --yes    # E 阶段不交互
+sudo bash test/debian12/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 E（仅 A-D+F）
+sudo bash test/debian12/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # 注入宿主 2.14 预构建 GRUB（见 6.3）
+sudo bash test/debian12/golden-image-setup-debian12.sh -d /path/to/initramfs-nbft -k 6.12.95+deb12-amd64
 ```
 
-脚本行为与下方手工步骤一一对应，另含两类自动处理：
+脚本行为与下方手工步骤一一对应，另含三类自动处理：
 
 - 注释安装器残留的 `deb cdrom:` apt 源（无光驱环境 `apt-get update` 硬失败）；
-- `GRUB_CMDLINE_LINUX_DEFAULT` 追加 SAN 参数时**同步移除 `quiet`**（见第 5 节）。
+- `GRUB_CMDLINE_LINUX_DEFAULT` 追加 SAN 参数时**同步移除 `quiet`**（见第 5 节）；
+- 默认切换 apt 源为阿里云（含 backports，security 同前缀推导；`--mirror` 自定义、`--keep-sources` 保留原源）并强制 IPv4——宿主无 IPv6 的环境 apt 大文件下载会卡死（实测）。
 
-验证边界：脚本 A–D+F 已在 chroot 环境实测通过（幂等重跑安全）；**E 阶段（磁盘格式）必须在真实目标盘上运行**，chroot/容器内不可执行，其转换逻辑经离线单测验证。
+**单文件分发（推荐用于 VM 内直接运行，免 chroot）**：脚本已内嵌 `initramfs-nbft` 三组件与 GRUB 2.14 BOOTX64 产物（base64）——**零宿主依赖**，单个 `.sh` 拷入母盘（共享目录 / scp / 任意途径）即可运行：
+
+```bash
+# 宿主: 组件更新后重新内嵌
+python3 test/shared/embed-components.py
+
+# 母盘内: 单文件直接跑（GRUB 产物默认用内嵌版; --grub-efi 可显式覆盖; 仓库组件目录存在时优先用仓库组件）
+sudo bash golden-image-setup-debian12.sh --yes
+```
+
+验证边界：**E 阶段（磁盘格式）必须在目标盘上运行**（4K 转换后 512 环境不再可读，SAN 形态的预期结果）；2026-09-08 已在目标母盘 VM 内以单文件形态端到端实测（A–F 全程含 E，随后 PXE 冷启动验收到 GDM）。
+
+### 1.2 辅助脚本包（test/shared/，各发行版通用，均经实测）
+
+母盘定制与验收的宿主侧辅助脚本：
+
+| 脚本 | 用途 |
+|---|---|
+| `golden-vm-run.sh <raw>` | 启动定制阶段 VM（OVMF UEFI + slirp + 2222→22 转发 + QMP） |
+| `golden-vm-sendkey.py` | QMP→HMP 键盘注入（VM 无 sshd 时的登录/装包通道） |
+| `golden-net-rebuild.sh` | 宿主重启后网络重建（br0/tap0 + NAT，出口自动探测） |
+| `golden-nvmet-enable.sh <raw>` | nvmet namespace 启用（必须宿主 mount ns 执行，容器 ns 会 -2） |
+| `golden-esp-verify.sh <raw>` | 4K ESP 内容校验（512 逻辑扇区 + 偏移 loop 挂载；4096 逻辑扇区 loop 上 vfat 会误报空目录） |
+| `embed-components.py` | 单文件脚本组件/GRUB 产物打包器（扫描 test/*/golden-image-setup-*.sh） |
+| `assets/BOOTX64-2.14-generic.EFI` | 内嵌的 GRUB 2.14 产物（实测引导基线） |
+
+验收（PXE 冷启动）复用全链路测试脚本 `run-kurrent-e2e.sh`。
 
 ## 2. A. 系统与内核
 
@@ -221,7 +248,7 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 - 判据：GRUB 菜单出现 → 6.12 内核引导 → 系统启动（VGA 出现 `debian login:`，`Ctrl+Alt+F2` 可确认 tty2 登录提示）；
 - 注意：cmdline 的 `systemd.mask=NetworkManager/networkd` 生效后，本地引导场景网络不会自动配置（SAN 场景由 initramfs NBFT 流程接管，不受影响）；tty1 可能被模板遗留程序占用，不影响系统。
 
-2026-09-02 已对 chroot 定制后的 VMware Debian 12 镜像执行过一轮：引导链完整（OVMF → GRUB → 6.12 → initramfs → systemd → getty），随后 cmdline 刷新（移除 quiet）后再未复测引导。
+2026-09-02 已对 chroot 定制后的 VMware Debian 12 镜像执行过一轮：引导链完整（OVMF → GRUB → 6.12 → initramfs → systemd → getty）。2026-09-08 起可直接用 `test/shared/golden-vm-run.sh`（OVMF + slirp + SSH 转发）引导 raw 镜像做同样预检，并配合 `golden-vm-sendkey.py` / SSH 通道全自动跑定制脚本（见 1.1/1.2）。
 
 ### 8.2 SAN 冷启动验收（交付主项目前的最后一轮）
 
@@ -232,9 +259,11 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 - 判据 3：无 keep-alive 错误、无 emergency mode；
 - pcap 级判据：双 ATR（Connect RSP result bit17 `0x20000`）+ 两轮 AuthSend/AuthReceive 各 4 PDU，全部 status=0。
 
-**给主项目使用的交付前置**：定制（A–F）完成、且 8.2 这轮 SAN 冷启动验收通过后，母盘即可克隆分发交主项目使用。其中 E 阶段（4K 转换 + ESP 重建）是 SAN 可引导的必要步骤，且需在真实目标盘上执行——截至 2026-09-02，脚本 A–D+F 已实测，E 尚未在真实盘端到端运行（离线单测已过），首次真机执行建议伴随 8.2 验收一并完成。
+**给主项目使用的交付前置**：定制（A–F）完成、且 8.2 这轮 SAN 冷启动验收通过后，母盘即可克隆分发交主项目使用。其中 E 阶段（4K 转换 + ESP 重建）是 SAN 可引导的必要步骤，需在目标盘上执行——**2026-09-08 已完成全流程端到端实测：VM 内单文件脚本 A–F 全程含 E，随后 SAN 冷启动验收至 GDM**（详见下方更新记录）。
 
 > **2026-09-04 更新**：E 阶段核心产物形态已实战验证——4K GPT + 4K FAT32 ESP + GRUB 2.14 定制 BOOTX64.EFI 经 nvmet 严格模式（AUTH=1）完整引导到 Debian 12 GDM（带密钥与明文各一轮）；同盘换回发行版 2.06 产物即卡死，确证 6.3 节版本要求。
+>
+> **2026-09-08 更新**：一键脚本（单文件自包含形态，含内嵌组件/GRUB 产物、阿里云源、volid 0x43 修复）已在目标母盘 VM 内端到端实测——A–F 全程含 E，随后 PXE 冷启动验收到 GDM。
 
 ## 9. 常见问题速查（对应三个历史阻塞点）
 
@@ -264,14 +293,14 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 | **SLES** 16 | 16.x | **6.16** | ✓ | ✓ 同源 | **开箱即用** |
 | **openSUSE** Leap 16 | 16.x | 6.16（可更新至 7.0） | ✓ | ✓ 与 SLES 同源 | **开箱即用** |
 | **openSUSE** Tumbleweed | rolling | 7.x | ✓ | ✓ | **开箱即用** |
-| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 95nvmf 存在 | 部分 |
+| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf（dracut-network 子包）+ 自建 95nbft 模块 | ✅ 已实测（2026-09-12 冷启动验收，见 [发行版矩阵](golden-image-matrix.md)） |
 | **Arch** | rolling | 7.x | ✓ | nvme-cli 2.16 `nvmf-autoconnect` | 部分 |
 
 ### 生态层事实（2026-08 时点）
 
 - **内核认证**：主线自 6.0 内置 `CONFIG_NVME_AUTH`；全部 LTS（5.10/5.15/6.1/6.6/6.12）2023-09 起 backport——**发行版是否启用才是变量**（Debian 12 的 6.1 即未启用的反例）；
 - **NBFT 消费生态**：SUSE 主导（nvme-stas 2.3 起把 NBFT 作为配置源；dracut 95nvmf 含 NBFT 解析）；nvme-cli 2.5+ 提供 `nvme nbft show`；systemd initrd 的 NBFT 支持仍是未合并的 RFE（systemd #36443）；
-- **对本项目**：种子模块（initramfs-nbft）在**所有非 SUSE 系**上都是必需件；Debian 13 / Ubuntu 26.04 可直接复用现有 `nbft-connect`，无需 6.12 backports 环节。
+- **对本项目**：种子模块（initramfs-nbft）在**所有非 SUSE 系**上都是必需件；Debian 13 / Ubuntu 26.04 可直接复用现有 `nbft-connect`，无需 6.12 backports 环节；Fedora 44 变体已实测——自建 dracut `95nbft` 模块包装同一 `nbft-connect`（需 `dracut-network` / `systemd-networkd` 包；XFS 母盘须以 4K 逻辑块盘安装）。
 
 ## 11. 参考资料
 
