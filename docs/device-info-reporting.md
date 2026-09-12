@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Device information collection = four categories of settings: identity (SMBIOS type 1/2/3), CPU (CPUID), memory (SMBIOS type 17), and network adapter (netdev settings), reported via HTTP GET query string. Official capabilities are prioritized: identity, CPU, and network adapter fields (except chip name) are already available officially; memory parameters and the network adapter chip name are the only gaps, filled by patch `0005` (see [customizations.zh-CN.md](customizations.zh-CN.md)).
+Device information collection = four categories of settings: identity (SMBIOS type 1/2/3), CPU (CPUID), memory (SMBIOS type 17), and network adapter (netdev settings), reported via HTTP GET query string. Official capabilities are prioritized: identity, CPU, and network adapter fields (except chip name) are already available officially; memory parameters and the network adapter chip name are the only gaps, filled by patch `0004` (see [customizations.zh-CN.md](customizations.zh-CN.md)).
 
 ## Settings List
 
@@ -26,7 +26,7 @@ Device information collection = four categories of settings: identity (SMBIOS ty
 | `${cpuvendor}` | CPUID leaf 0 | string | `GenuineIntel` / `AuthenticAMD` |
 | `${cpumodel}` | CPUID 0x80000002-4 (48-byte brand string) | string | `Intel(R) Core(TM) Ultra 7 155H` |
 
-### Memory Fields (SMBIOS type 17, added by patch `0005`)
+### Memory Fields (SMBIOS type 17, added by patch `0004`)
 
 | Setting | Source | Format | Example |
 |---|---|---|---|
@@ -38,7 +38,7 @@ Numeric settings expand in hexadecimal with a `0x` prefix, following the uniform
 
 Aggregation rules: `0xFFFF` (unknown) is skipped; when `0x7FFF` and structure length ≥0x20, read Extended Size (for >32GB scenarios); otherwise, convert units based on bit15 (0=MB, 1=GB×1024). The `mem-type` mapping covers 18 items including SDRAM / DDR~DDR5 / LPDDR~LPDDR5X / HBM~HBM3; unknown names fall back to `Unknown`.
 
-### Network Adapter Fields (netdev settings; `chip` enabled by patch `0005`)
+### Network Adapter Fields (netdev settings; `chip` enabled by patch `0004`)
 
 | Setting | Content | Format | Example |
 |---|---|---|---|

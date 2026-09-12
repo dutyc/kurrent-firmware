@@ -1,6 +1,6 @@
 # RTL8126 移植来源对照审计
 
-**审计对象**：`patches/0004-realtek-8126-adaptation.patch`（RTL8126A 适配）
+**审计对象**：`patches/0001-realtek-adaptation.patch`（RTL8126A 适配部分；2026-09-12 由原 `0004-realtek-8126-adaptation.patch` 并入 `0001`）
 **参考源码**：`thirdparty/kernel/rtl8126-official/`（Realtek 官方 r8126 驱动，OpenWrt 镜像）与 `thirdparty/kernel/linux-7.1.7/`（Linux r8169）
 **审计日期**：2026-08-12
 **审计方法**：函数级逐项对照 + 多重集（multiset）差异分析，忽略顺序干扰，精确到缺失/新增项

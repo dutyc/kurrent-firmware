@@ -4,7 +4,7 @@
 
 ## 定位
 
-设备信息采集 = 身份（SMBIOS type 1/2/3）、CPU（CPUID）、内存（SMBIOS type 17）、网卡（netdev 设置）四组设置项，经 HTTP GET query string 上报。官方能力优先：身份、CPU、网卡（除芯片名）字段官方已有；内存参数与网卡芯片名为唯一缺口，由补丁 `0005` 补齐（见 [customizations.zh-CN.md](customizations.zh-CN.md)）。
+设备信息采集 = 身份（SMBIOS type 1/2/3）、CPU（CPUID）、内存（SMBIOS type 17）、网卡（netdev 设置）四组设置项，经 HTTP GET query string 上报。官方能力优先：身份、CPU、网卡（除芯片名）字段官方已有；内存参数与网卡芯片名为唯一缺口，由补丁 `0004` 补齐（见 [customizations.zh-CN.md](customizations.zh-CN.md)）。
 
 ## 设置项清单
 
@@ -26,7 +26,7 @@
 | `${cpuvendor}` | CPUID leaf 0 | 字符串 | `GenuineIntel` / `AuthenticAMD` |
 | `${cpumodel}` | CPUID 0x80000002-4（48B 品牌串） | 字符串 | `Intel(R) Core(TM) Ultra 7 155H` |
 
-### 内存字段（SMBIOS type 17，补丁 `0005` 新增）
+### 内存字段（SMBIOS type 17，补丁 `0004` 新增）
 
 | 设置 | 来源 | 格式 | 示例 |
 |---|---|---|---|
@@ -38,7 +38,7 @@
 
 数值设置按 iPXE 统一约定以十六进制展开（带 `0x` 前缀，`${net0/mtu}` 同理）；服务端需同时兼容 hex 与十进制解析（如 PHP `intval($v, 0)`）。
 
-### 网卡字段（netdev 设置；`chip` 由补丁 `0005` 启用）
+### 网卡字段（netdev 设置；`chip` 由补丁 `0004` 启用）
 
 | 设置 | 内容 | 格式 | 示例 |
 |---|---|---|---|

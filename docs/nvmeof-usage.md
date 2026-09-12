@@ -1,14 +1,14 @@
 # NVMe-OF（NVMe over TCP）SAN 引导固件使用指南
 
-> 本文档仅中文。适用范围：补丁链 `0001-0007`（基线 `e6e51ccb`）构建的固件。
-> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0006/0007）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
+> 本文档仅中文。适用范围：补丁链 `0001-0009`（基线 `e6e51ccb`）构建的固件。
+> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
 
 ## 1. 能力概述
 
-固件内置自研 `nvmetcp` 驱动（补丁 0006），提供 NVMe over TCP 的 SAN 引导能力：
+固件内置自研 `nvmetcp` 驱动（补丁 0005），提供 NVMe over TCP 的 SAN 引导能力：
 
 - **协议流程**：ICReq/ICResp 参数协商 → Connect（Admin 队列）→ Property Set（CC.EN=1）→ Identify（控制器/命名空间）→ I/O 队列 Connect → 块读写（R2T 流控）
-- **认证**：DH-HMAC-CHAP（SHA-256，DH 群 0/2048/3072/4096，补丁 0007 修复认证完成时序与状态机竞态）
+- **认证**：DH-HMAC-CHAP（SHA-256，DH 群 0/2048/3072/4096，补丁 0005 内含认证完成时序与状态机竞态修复）
 - **已验证环境**：客户端 QEMU/OVMF（x86_64 UEFI）+ 服务端 Ubuntu 26.04（内核 7.0.0-14）nvmet TCP target + GRUB 2.14 接力引导，全链路通过（wire 层全部命令 `status=0x0000`）
 
 **边界**：仅支持 TCP 传输（无 RDMA/FC）；认证固定 DH-HMAC-CHAP；单控制器单命名空间的引导路径（Identify 解析 512B/4K 块）。
@@ -128,7 +128,7 @@ sanboot nvme://<traddr>:<trsvcid>/<nqn>[?secret=<DHHC-1 key>]
 服务端要求认证时，iPXE 从 Connect 完成中识别（两种均支持）：
 
 1. **ATR 位**：Connect 响应 `result` 字段 bit 17 置位（nvmet 7.0.0-14 实测路径：`status=0x0000, result=0x00020001`）
-2. **状态码**：Connect 完成状态 `0x0c`（`NVME_SC_AUTH_REQUIRED`）且无 ATR 位（兼容路径，补丁 0007）
+2. **状态码**：Connect 完成状态 `0x0c`（`NVME_SC_AUTH_REQUIRED`）且无 ATR 位（兼容路径，补丁 0005）
 
 识别后若无 `secret` 参数，固件报 `authentication required but no secret` 并拒绝引导。
 
@@ -187,7 +187,7 @@ bash test/run-qemu-auth.sh                    # timeout 150s；日志 qemu-auth.
 sending Connect (qid 0)
 completion: cid 1 status 0x0          # Connect 完成，ATR 位已置位
 authentication required
-sending Property Set (CC)             # ← 认证成功 → 启用控制器（补丁 0007 修复点）
+sending Property Set (CC)             # ← 认证成功 → 启用控制器（补丁 0005 修复点）
 ...
 namespace 1: 131072 blocks of 4096 bytes
 I/O queue established
@@ -200,16 +200,16 @@ I/O queue established
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
-| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0007 |
+| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0005 |
 | 日志始终无 `sending Property Set (CC)` | 认证未完成或 phase 竞态 | 同上；检查服务端认证配置与密钥 |
-| 认证后 `Connection reset` | AuthReceive 被重复发送（固件不含补丁 0007 的发送幂等修复） | 重建含 0007 的固件 |
+| 认证后 `Connection reset` | AuthReceive 被重复发送（固件不含补丁 0005 的发送幂等修复） | 重建含 0005 的固件 |
 | `authentication required but no secret` | 服务端要求认证但未提供 secret | 检查 URI `?secret=` 参数与 `${nbft-secret}` 注入 |
-| `waiting for window (...)` 后重试 | 瞬态发送失败（-EAGAIN），0007 修复后自动等待窗口恢复 | 正常路径，无需干预 |
+| `waiting for window (...)` 后重试 | 瞬态发送失败（-EAGAIN），0005 修复后自动等待窗口恢复 | 正常路径，无需干预 |
 | `command failed`（Connect 阶段） | 服务端拒绝连接（NQN/端口/认证不匹配） | 核对 3.2/3.3 配置；`ss -tln` 确认监听 |
 
 ## 6. 限制与注意事项
 
-- 固件必须包含**完整补丁链 0001-0007**：0007 是认证修复补丁，缺失时认证流程会跳过 Property Set 导致 0x8018
+- 固件必须包含**完整补丁链 0001-0009**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
 - `nvmetcp` 驱动无编译期默认调试输出；需要认证/状态机日志（含 `authentication succeeded`）时以 `DEBUG=nvmetcp,nvmetcp_auth:3` 手动构建（仅 `DEBUG=nvmetcp:3` 看不到 `nvmetcp_auth.c` 的打印）
 - 认证仅支持 DH-HMAC-CHAP（SHA-256），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
 - Host NQN 依赖 SMBIOS UUID；无 UUID 平台（如 QEMU+OVMF）回退固定 NQN，服务端需按实际值配置
@@ -219,7 +219,7 @@ I/O queue established
 
 | 文档 | 定位 |
 |---|---|
-| [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0006/0007 设计与实现（结果性文档） |
+| [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现（结果性文档） |
 | [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
 | [network-support.zh-CN.md](network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
 | [build-artifacts.zh-CN.md](build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |

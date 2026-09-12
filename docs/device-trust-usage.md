@@ -1,9 +1,9 @@
 # 设备信任根能力使用文档（主仓库参考）
 
 > 面向 Kurrent 主仓库的固件侧能力使用说明：设备身份密钥命令、TOFU
-> HTTPS 信任、NVRAM 持久化设置与签名接口契约。对应固件补丁 0008/0009/0010
+> HTTPS 信任、NVRAM 持久化设置与签名接口契约。对应固件补丁 0006/0007/0008
 > （见 [patches/README.md](../patches/README.md) 与
-> [customizations.md](customizations.md) 的 ## 8/9/10）。
+> [customizations.md](customizations.md) 的 ## 6/7/8）。
 
 ## 1. 能力总览
 
@@ -101,8 +101,8 @@ MEQCIHgtBUiiwEqaAE8XGNlDdfmZvM/kxuio7p2F341rDupuAiAoa4Gd8tfI3JV6tqoU4M0+Xijj65IK
 
 | 设置名 | 类型 | 标签 | 持久性 | 来源 |
 |---|---|---|---|---|
-| `device-key` | hexraw | DHCP 0x5e | **NVRAM（重启保留）** | 0008 定义，`keygen` 写入 |
-| `server-fingerprint` | hexraw | DHCP 0x5f | **NVRAM（重启保留）** | 0008 定义，TOFU 写入 |
+| `device-key` | hexraw | DHCP 0x5e | **NVRAM（重启保留）** | 0006 定义，`keygen` 写入 |
+| `server-fingerprint` | hexraw | DHCP 0x5f | **NVRAM（重启保留）** | 0006 定义，TOFU 写入 |
 | `trust` | hexraw | DHCP 0x5a | 上游既有（NVRAM 覆盖根证书表） | TOFU 镜像 |
 | `pubkey` | hexraw | DHCP 0x60 | 内存（临时） | `pubkey` 命令 |
 | `sig` | string | DHCP 0x61 | 内存（临时） | `sign` 命令 |

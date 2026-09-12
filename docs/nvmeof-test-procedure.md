@@ -97,7 +97,7 @@ sending Connect (qid 0)          → Connect(admin) 完成
 completion: cid 1 status 0x0     → Connect 成功（ATR 路径）
 authentication required          → 服务端要求认证
 sent Negotiate / authentication succeeded → 认证四消息完成
-sending Property Set (CC)        → 认证阶段正确收尾（0007 修复核心）
+sending Property Set (CC)        → 认证阶段正确收尾（0005 修复核心）
 namespace 1: N blocks of 4096 bytes → Identify 完成
 I/O queue established            → I/O 连接就绪
 == GRUB BOOTED FROM NVME/TCP SAN DISK == → 盘上引导成功
@@ -127,7 +127,7 @@ make -C .cache/ipxe-upstream/src bin-x86_64-linux/tests.linux
 | `base64 key decoding error -1` | DHHC-1 前缀非 `DHHC-1:XX:` 两位类型（内核按 10 字节前缀跳过）；密钥自检在 `nvmet-setup.sh` 内 |
 | `Failed to setup authentication, dhchap status 2` | CRC32 非 zlib 终值小端；用脚本内 `python3 -c '...'` 行重新生成 |
 | 日志无 `authentication succeeded` | 固件未含 `nvmetcp_auth` 调试（`DEBUG=nvmetcp,nvmetcp_auth:3` 而非仅 `nvmetcp`） |
-| 日志出现 `command failed: status 0x8018` | 认证阶段被跳过（Property Set 未发）——固件缺 0007 补丁或使用旧固件 |
+| 日志出现 `command failed: status 0x8018` | 认证阶段被跳过（Property Set 未发）——固件缺 0005 补丁或使用旧固件 |
 | 解析器把 Identify 标成 PropSet | 使用旧版解析器；`test/` 版本已按 opcode==0x7f 判断 |
 | QEMU 未启动（KVM 错误） | 需在沙箱外执行（/dev/kvm 不可见） |
 
@@ -146,4 +146,4 @@ DHHC-1 密钥（`DHHC-1:01:...`）在三个脚本中各自硬编码，**必须�
 - [nbft-boot-verification.md](nbft-boot-verification.md) — NBFT 整机引导六环链路验证（NBFT 消费 → rootfs 挂载 → 登录提示符）
 - [nvmeof-usage.md](nvmeof-usage.md) — 固件 NVMe-OF 端到端用法（部署、sanboot、验证方法）
 - [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) — 认证排障历程（0x8018 根因、状态机修复、遗留项状态）
-- [customizations.md](customizations.md) — 定制清单（0006/0007 补丁说明）
+- [customizations.md](customizations.md) — 定制清单（0005 补丁说明）

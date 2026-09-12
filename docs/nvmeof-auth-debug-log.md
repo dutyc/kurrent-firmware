@@ -160,7 +160,7 @@ sed 's/\x1b\[[0-9;]*m//g' diag/qemu-auth.log | grep -E "sending|completion|names
 
 ## 7. 边界与遗留（状态截至 2026-08-19）
 
-1. **修复尚未固化进补丁**：本次改动在 `.cache/ipxe-upstream/` 工作树（gitignore，`build.sh` 每次 `git clean -fdxq` 重置）。需更新 `patches/0006-nvmeof-adaptation.patch`（或新增补丁）持久化，否则重新构建后丢失。 **[2026-08-18 已解决]**：新增 `patches/0007-nvmetcp-auth-fix.patch` 固化，`build.sh` 全量验证通过。
+1. **修复尚未固化进补丁**：本次改动在 `.cache/ipxe-upstream/` 工作树（gitignore，`build.sh` 每次 `git clean -fdxq` 重置）。需更新 `patches/0006-nvmeof-adaptation.patch`（或新增补丁）持久化，否则重新构建后丢失。 **[2026-08-18 已解决]**：新增 `patches/0007-nvmetcp-auth-fix.patch` 固化，`build.sh` 全量验证通过。 **[2026-09-12 补丁整理]**：补丁集合并重排后，0007 已并入 `patches/0005-nvmeof-adaptation.patch`。
 2. **auth.c 调试打印不可见**：`nvmetcp_auth.c` 无 DEBUG 级别配置，`authentication succeeded` 等 DBGC 被裁剪。可后续补 `DEBUG=nvmetcp_auth:3` 支持，便于独立观测认证模块。 **[2026-08-19 已解决]**：iPXE 的 `DEBUG=` 参数按源文件名生效（`src/Makefile.housekeeping`），构建时传 `DEBUG=nvmetcp,nvmetcp_auth:3` 即可使 `nvmetcp_auth.c` 的 DBGC 可见，无需改代码；2026-08-19 已用该参数构建验证 `authentication succeeded` 字符串进入固件。
 3. **解析器 fctype 误判**：`parse-pcap-stream.py` 对 COMMAND PDU 无条件读 `p[8+4]` 作 fctype，Identify（opcode 0x06）的 nsid 低字节=0 被误标为 PropSet（fctype 0x00）。已知缺陷，分析时需人工甄别（opcode==0x7f 才读 fctype）。 **[2026-08-19 已修复]**：`parse-pcap-stream.py` 与 `parse-pcap-auth.py`（两脚本均有此问题）已加 `p[8]==0x7f` 判断，非 Fabrics 命令按 opcode 标注（Identify/Read/Write）；用 `netdump-auth.pcap` 验证 `cid=8 Identify`、`cid=11+ Read` 不再误标。
 4. **单元测试缺口**：`tests/nvmetcp_test.c` 仅覆盖结构布局与 Identify 解析，认证状态机的 completed/rx_complete/rx_cid 竞态逻辑无单测覆盖（依赖 QEMU 集成验证）。 **[2026-08-19 已解决]**：新增 3 组状态机单测（`nvmetcp_auth_try_complete_test` 阶段完成门控、`nvmetcp_auth_rx_complete_test` 命令 id 匹配、`nvmetcp_auth_step_test` START 步守卫），`enum nvmetcp_auth_steps` 上移至 `nvmetcp.h` 供测试引用；`tests.linux` 全量 11625 个断言通过。

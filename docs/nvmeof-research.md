@@ -228,7 +228,7 @@ TCP 连接 → ICReq/ICResp → Connect(admin) → Identify(Ctrl+NS) → Connect
 ## 7. 风险与注意
 
 - **协议复杂度**：digest、capsule 边界、R2T 流程是易错点 → M2/M3 分段落地，每段单独编译验证。
-- **许可**：若参考 Linux `nvme-tcp.c`（GPL-2.0 only），补丁头部须声明 GPL-2.0 only（与 0004 补丁同类处理）；仅参考 iPXE 内部代码则沿用 `GPL2_OR_LATER_OR_UBDL`。
+- **许可**：若参考 Linux `nvme-tcp.c`（GPL-2.0 only），补丁头部须声明 GPL-2.0 only（与 0001 补丁的 Realtek 派生部分同类处理）；仅参考 iPXE 内部代码则沿用 `GPL2_OR_LATER_OR_UBDL`。
 - **实机验证进展**：QEMU + nvmet 的 SAN 引导链路（nvmetcp → EFI BlockIo → PartitionDxe → FatDxe → GRUB 2.14）已于 2026-08-18 验证通过，详见 [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md)；真实网卡 + NVMe SSD 主机侧的协议细节仍依赖规范对照与代码审查。
 - **上游跟踪**：持续关注 ipxe/ipxe#556，若上游合入实现，评估替换为上游方案。
 

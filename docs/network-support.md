@@ -27,7 +27,7 @@ Status legend:
 | Intel E810 / E823 (25G / 100G) | ice.c | Newer driver |
 | Realtek RTL8136 / 8139 / 8129 / 8167 / 8168 / 8169 | realtek.c | Baseline native |
 | **Realtek RTL8125 series** (2.5G) | realtek.c (patch 0001) | **Field-tested DHCP**; native driver adaptation |
-| **Realtek RTL8126** (5G, 2024 NIC) | realtek.c (patch 0004) | **Build-verified** (GPHY OCP/CSI mechanisms, 3 PHY static configuration tables); hardware field test pending |
+| **Realtek RTL8126** (5G, 2024 NIC) | realtek.c (patch 0001) | **Build-verified** (GPHY OCP/CSI mechanisms, 3 PHY static configuration tables); hardware field test pending |
 | Marvell/Aquantia AQC100 / 107 / 108 / 109 / 111 / 112 / 113 / 114 (10G / 5G / 2.5G) | aqc1xx.c | Full device-table coverage incl. AQC113 (Atlantic 2); common on high-end mainboards / industrial boards |
 | Broadcom BCM57xx gigabit (tg3, 82 devices) | tg3 | Wide coverage |
 | Broadcom BNX2 (BCM5706/5708 etc.) | bnx2 | Older 1G/10G family |

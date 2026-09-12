@@ -27,7 +27,7 @@
 | Intel E810 / E823（25G / 100G） | ice.c | 新驱动 |
 | Realtek RTL8136 / 8139 / 8129 / 8167 / 8168 / 8169 | realtek.c | 基线原生 |
 | **Realtek RTL8125 全系**（2.5G） | realtek.c（0001 补丁） | **物理机实测 DHCP 通过**；原生驱动适配 |
-| **Realtek RTL8126**（5G，2024 新卡） | realtek.c（0004 补丁） | **编译验证通过**（含 GPHY OCP/CSI 机制、PHY 静态配置表 ×3）；待硬件实测 |
+| **Realtek RTL8126**（5G，2024 新卡） | realtek.c（0001 补丁） | **编译验证通过**（含 GPHY OCP/CSI 机制、PHY 静态配置表 ×3）；待硬件实测 |
 | Marvell/Aquantia AQC100 / 107 / 108 / 109 / 111 / 112 / 113 / 114（10G / 5G / 2.5G） | aqc1xx.c | 设备表全系覆盖（含 AQC113，Atlantic 2）；高端主板 / 工控常见 |
 | Broadcom BCM57xx 千兆（tg3，82 设备） | tg3 | 覆盖广 |
 | Broadcom BNX2（BCM5706/5708 等） | bnx2 | 1G/10G 旧系 |

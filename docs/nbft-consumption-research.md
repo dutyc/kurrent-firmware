@@ -1,6 +1,6 @@
 # 内核侧 NBFT 消费与认证现状研究（前置验证）
 
-> 本文档仅中文。定位：为"iPXE 侧生成 NBFT"方案（补丁 0008 候选）做的前置验证记录——内核侧消费生态（libnvme / nvme-cli / dracut）对 NBFT 认证密钥的处理现状，以及方案路径修正。
+> 本文档仅中文。定位：为"iPXE 侧生成 NBFT"方案（补丁 0009 候选；编写时编号为 0008）做的前置验证记录——内核侧消费生态（libnvme / nvme-cli / dracut）对 NBFT 认证密钥的处理现状，以及方案路径修正。
 > 所有结论均来自 `thirdparty/` 本地源码实证（`thirdparty/` 不入库，路径相对仓库根）。
 
 ## 1. 结论摘要
@@ -131,7 +131,7 @@
    - 母盘改造（对齐 3.5 母盘配方）：`test/make-grub-bootdisk.sh` 的 GRUB 菜单从验证入口改为**真实引导**（`linux` / `initrd` / `root=PARTUUID`）；SAN 盘装入最小系统（内核 + initrd + rootfs）；GRUB 参数 `ip=dhcp nbft_auto`；initramfs 含 nvme-cli 与种子模块；确认 BOOTX64.EFI 契约
    - QEMU 外部注入手工 NBFT（HFI+SS）→ 内核 ACPI 导出 → 种子模块消费 → `connect-all --nbft` → rootfs 挂载 → **系统启动成功**
 2. **认证补齐**（路径 B）：种子模块改为逐条 `nvme connect` + 密钥注入通道（内核 cmdline / initramfs 配置，密钥与 `/boot-vars` 控制面同源）；同一验收标准（认证场景整机引导成功）
-3. **iPXE 侧生成表**（补丁 0008 候选）：`include/ipxe/nbft.h` + `drivers/block/nbft.c`（对齐上游 iBFT 的 `ibft.c`/`acpi_init` 描述符机制）+ nvmetcp 会话 READY 后挂接 + 单测；验收改为**不经外部注入、iPXE 生成表后整机引导成功**
+3. **iPXE 侧生成表**（补丁 0009 候选，编写时编号为 0008；实际落地为 NBCT 方案）：`include/ipxe/nbft.h` + `drivers/block/nbft.c`（对齐上游 iBFT 的 `ibft.c`/`acpi_init` 描述符机制）+ nvmetcp 会话 READY 后挂接 + 单测；验收改为**不经外部注入、iPXE 生成表后整机引导成功**
 
 **关键依赖与风险**：
 
