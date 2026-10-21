@@ -1,0 +1,40 @@
+#!ipxe
+# NVS clear phase: exercised with a single image across three rounds on
+# the same OVMF_VARS.fd.  `isset ${trust}` selects the round, so that the
+# third round doubles as the persistence check for the second.
+#
+#   round 1 (no trust):  store the three settings and read them back
+#   round 2 (trust set): read back (persistence of round 1) then nvclear
+#   round 3 (no trust):  proves that round 2's clear reached storage
+#
+# If the clear did not reach storage, round 3 finds trust still present
+# and re-enters the clear branch.  A trailing `||` on each line keeps a
+# missing setting from terminating the script (iPXE aborts the script at
+# the first failing line).
+echo ===== NVS TEST BEGIN =====
+isset ${trust} && goto phase2 || goto phase1
+
+:phase1
+echo [PHASE1 SET]
+set nvo/device-key 1111111111111111111111111111111111111111111111111111111111111111 ||
+set nvo/server-fingerprint 2222222222222222222222222222222222222222222222222222222222222222 ||
+set nvo/trust 33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33 ||
+show nvo/device-key ||
+show nvo/server-fingerprint ||
+show nvo/trust ||
+goto end
+
+:phase2
+echo [PHASE2 BEFORE]
+show nvo/device-key ||
+show nvo/server-fingerprint ||
+show nvo/trust ||
+echo [PHASE2 NVCLEAR]
+nvclear ||
+echo [PHASE2 AFTER]
+show nvo/device-key ||
+show nvo/server-fingerprint ||
+show nvo/trust ||
+
+:end
+echo ===== NVS TEST END =====

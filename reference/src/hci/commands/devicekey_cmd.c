@@ -26,7 +26,7 @@ FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
- * Device identity key commands (keygen, pubkey, sign)
+ * Device identity key commands (keygen, pubkey, sign, nvclear)
  *
  * These commands manage the device identity key stored in non-volatile
  * storage (the "device-key" setting, backed by the EFI variable NVS
@@ -45,6 +45,10 @@ FILE_SECBOOT ( PERMITTED );
  *    device key and displays the base64-encoded DER signature, also
  *    storing it in the "sig" setting for use by scripts.
  *
+ *  - "nvclear" clears the device's non-volatile storage: the device
+ *    identity private key, the TOFU server fingerprint, and the TOFU
+ *    trust anchor, returning the device to its factory state.
+ *
  */
 
 #include <stdint.h>
@@ -54,6 +58,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <errno.h>
 #include <ipxe/command.h>
 #include <ipxe/settings.h>
+#include <ipxe/parseopt.h>
 #include <ipxe/nvo.h>
 #include <ipxe/dhcp.h>
 #include <ipxe/drbg.h>
@@ -339,6 +344,90 @@ static int sign_exec ( int argc, char **argv ) {
 	return rc;
 }
 
+/** Non-volatile settings cleared by "nvclear", in order */
+static const char *nvclear_settings[] = {
+	"device-key",
+	"server-fingerprint",
+	"trust",
+};
+
+/**
+ * The "nvclear" command
+ *
+ * @v argc		Argument count
+ * @v argv		Argument list
+ * @ret rc		Return status code
+ *
+ * Clears the settings stored in the non-volatile options block.  Each
+ * setting is addressed by name and deleted from the "nvo" settings
+ * block, so that the deletion reaches the underlying non-volatile
+ * storage: deleting a bare setting name would only remove it from the
+ * generic in-memory block, leaving the stored copy in place.
+ */
+static int nvclear_exec ( int argc, char **argv ) {
+	struct settings *settings;
+	struct named_setting setting;
+	char name[32];
+	unsigned int i;
+	int rcx;
+	int rc = 0;
+
+	( void ) argc;
+	( void ) argv;
+
+	/* Locate non-volatile options block */
+	settings = find_settings ( NVO_SETTINGS_NAME );
+	if ( ! settings ) {
+		printf ( "nvclear: no non-volatile settings\n" );
+		return -ENODEV;
+	}
+
+	/* Clear each setting */
+	for ( i = 0 ; i < ( sizeof ( nvclear_settings ) /
+			    sizeof ( nvclear_settings[0] ) ) ; i++ ) {
+
+		/* Parse setting name */
+		snprintf ( name, sizeof ( name ), "%s", nvclear_settings[i] );
+		if ( ( rcx = parse_setting_name ( name, NULL, &setting.settings,
+						  &setting.setting ) ) != 0 ) {
+			printf ( "nvclear: %s: %s\n", nvclear_settings[i],
+				 strerror ( rcx ) );
+			if ( ! rc )
+				rc = rcx;
+			continue;
+		}
+
+		/* Report absent settings, rather than claiming to clear them */
+		if ( ! setting_exists ( settings, &setting.setting ) ) {
+			printf ( "nvclear: %s: not present\n",
+				 nvclear_settings[i] );
+			continue;
+		}
+
+		/* Delete setting from non-volatile storage */
+		if ( ( rcx = delete_setting ( settings,
+					      &setting.setting ) ) != 0 ) {
+			printf ( "nvclear: %s: could not clear: %s\n",
+				 nvclear_settings[i], strerror ( rcx ) );
+			if ( ! rc )
+				rc = rcx;
+			continue;
+		}
+
+		printf ( "nvclear: %s: cleared\n", nvclear_settings[i] );
+	}
+
+	/* Report result */
+	if ( rc ) {
+		printf ( "nvclear: incomplete\n" );
+		return rc;
+	}
+	printf ( "nvclear: device NVRAM cleared\n" );
+
+	return 0;
+}
+
 COMMAND ( keygen, keygen_exec );
 COMMAND ( pubkey, pubkey_exec );
 COMMAND ( sign, sign_exec );
+COMMAND ( nvclear, nvclear_exec );

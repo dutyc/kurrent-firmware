@@ -97,13 +97,38 @@ iPXE> sign 0123456789abcdef52:54:00:12:34:56host123
 MEQCIHgtBUiiwEqaAE8XGNlDdfmZvM/kxuio7p2F341rDupuAiAoa4Gd8tfI3JV6tqoU4M0+Xijj65IKzVEUCmO3Qb9eqg==
 ```
 
+### 2.4 `nvclear` —— 清空设备 NVRAM
+
+一条命令清空本项目在非易失存储里的全部设置（`device-key`、
+`server-fingerprint`、`trust`），把设备还原到出厂态。
+
+```
+iPXE> nvclear
+nvclear: device-key: cleared
+nvclear: server-fingerprint: not present
+nvclear: trust: cleared
+nvclear: device NVRAM cleared
+```
+
+- 逐项报告三种结果：`cleared` / `not present`（本就为空）/ `could not
+  clear: <errno>`；任一项失败时末行输出 `nvclear: incomplete` 并返回
+  非零，供脚本判定。
+- 清理效果**重启后仍然成立**（补丁 0006 让长度归零的选项块也真正下发
+  写操作，见 [customizations.md](customizations.md) 的 §6）。
+- 只动本项目这三个设置，不触碰其它 UEFI 变量。
+- 等价的手工写法是逐项 `clear nvo/<设置名>`——**必须带 `nvo/` 块前缀**；
+  裸 `clear device-key` 只清掉内存影子，见 §3 与 §7。
+- 敏感操作：清掉私钥需重新注册、解除 TOFU pin 会重开注册窗口，应只由
+  管理面授权流程触发（见 §9）。
+- 验收：`test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh`（§8）。
+
 ## 3. 设置项参考
 
 | 设置名 | 类型 | 标签 | 持久性 | 来源 |
 |---|---|---|---|---|
 | `device-key` | hexraw | DHCP 0x5e | **NVRAM（重启保留）** | 0006 定义，`keygen` 写入 |
 | `server-fingerprint` | hexraw | DHCP 0x5f | **NVRAM（重启保留）** | 0006 定义，TOFU 写入 |
-| `trust` | hexraw | DHCP 0x5a | 上游既有（NVRAM 覆盖根证书表） | TOFU 镜像 |
+| `trust` | hex | DHCP 0x5a | 上游既有（NVRAM 覆盖根证书表） | TOFU 镜像 |
 | `pubkey` | hexraw | DHCP 0x60 | 内存（临时） | `pubkey` 命令 |
 | `sig` | string | DHCP 0x61 | 内存（临时） | `sign` 命令 |
 
@@ -117,6 +142,9 @@ MEQCIHgtBUiiwEqaAE8XGNlDdfmZvM/kxuio7p2F341rDupuAiAoa4Gd8tfI3JV6tqoU4M0+Xijj65IK
   tag，从根路由不匹配）：`clear nvo/device-key` 删除密钥、
   `clear nvo/server-fingerprint` 删除指纹。裸 `clear device-key`
   或 `set device-key`（无值）对 NVS 后端**无效**（实测），见 §7。
+  一次清空三项用 `nvclear`（§2.4）。
+- 手工给 `trust` 赋值时要注意类型是 `hex`（`33:33:…` 冒号分隔），
+  不是 `hexraw`；写成无分隔的 `3333…` 会被拒（`Invalid argument`）。
 
 ## 4. TOFU（HTTPS 信任）行为
 
@@ -284,11 +312,11 @@ isset ${server-fingerprint} && echo "tofu: pinned" \
 show server-fingerprint
 
 # ---- 重置操作（敏感，需管理面授权流程，见 §9） ----
-# 重置设备身份：删除私钥，下次启动 keygen 生成新密钥（需重新注册）
-# 注意：NVO 设置是封装 tag，必须带 nvo/ 块前缀；裸 clear 无效
-clear nvo/device-key
-# 解除 TOFU pin：下次 https 连接重新进入注册窗口
-clear nvo/server-fingerprint
+# 一键清空三项（device-key + server-fingerprint + trust）
+nvclear
+# 或按需单项：NVO 设置是封装 tag，必须带 nvo/ 块前缀；裸 clear 无效
+# clear nvo/device-key         # 重置设备身份：下次启动 keygen 生成新密钥（需重新注册）
+# clear nvo/server-fingerprint # 解除 TOFU pin：下次 https 连接重新进入注册窗口
 ```
 
 ### 6.5 完整引导链参考模板
@@ -337,7 +365,10 @@ echo TRUSTROOT-BOOT-FAILED
 | 访问第二个 HTTPS 主机被拒 | pin 为全局单锚：固件只信任首个 https 连接被 pin 的证书 | 统一 HTTPS 入口/证书，其余流量走 TFTP/HTTP（见 §4） |
 | TLS 握手失败 | 服务端 TLS > 1.2 或密码套件不受支持 | 服务端限制 `TLS ≤ 1.2`（见 [test/https-server.py](../test/https-server.py) 的套件清单） |
 | 脚本中 `${pubkey}` / `${sig}` 为空 | 命令失败或设置未写入 | 检查命令输出；`pubkey`/`sig` 仅同次启动内有效 |
-| `clear device-key` 后密钥仍在 | 裸 `clear`/`set` 对 NVS 封装 tag 无效 | 必须用 `clear nvo/device-key`（块前缀，见 §6.4） |
+| `clear device-key` 后密钥仍在 | 裸 `clear`/`set` 对 NVS 封装 tag 无效 | 必须用 `clear nvo/device-key`（块前缀，见 §6.4）或 `nvclear`（§2.4） |
+| `nvclear` 报 `not present` | 该项本就为空 | 正常，无需处理 |
+| `nvclear` 报 `could not clear` / 末行 `incomplete` | 后端写失败（EFI `SetVariable` 出错） | 抓串口日志看具体 errno；检查 NVRAM 空间与只读策略 |
+| 清空后重启，设置又回来了 | 旧固件在选项块长度归零时不下发写操作（`nvo_save` 空转） | 升级到含补丁 0006 该修复的固件；验收 `test/run-qemu-nvclear.sh` |
 
 ## 8. 验证与测试资产（固件仓库内）
 
@@ -350,6 +381,9 @@ echo TRUSTROOT-BOOT-FAILED
   密码套件与 iPXE 兼容）。
 - `test/dump-nvram.py`：OVMF NVRAM 变量内容检查（验证指纹/密钥落盘
   字节与 openssl 独立计算结果一致）。
+- `test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh`：`nvclear` 三轮
+  验证（写入三项 → 清理 → 复读；第 3 轮开机三项都不存在即证明清理
+  已落盘）。
 
 ## 9. 安全边界
 
@@ -360,6 +394,7 @@ echo TRUSTROOT-BOOT-FAILED
   网络隔离承担；pin 之后具备完整性校验。
 - **生产端点约束**：`/challenge`、`/register` 等控制面端点应置于强
   认证之后（TLS/mTLS + 客户端身份校验）；固件侧无额外加密层。
-- **重置操作授权**：`clear nvo/device-key`（身份重置，需重新注册）与
+- **重置操作授权**：`nvclear`（一次清空身份密钥 + TOFU pin）与单顶
+  `clear nvo/device-key`（身份重置，需重新注册）、
   `clear nvo/server-fingerprint`（解除 pin，重开注册窗口）均为敏感
   操作，应只由管理面授权流程触发（如控制面下发专用重置脚本）。

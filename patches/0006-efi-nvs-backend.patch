@@ -8,6 +8,12 @@
 # FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ), consistent with the upstream
 # dual licence.  Modifications to the iPXE configuration and headers
 # inherit the upstream licence (GPL-2.0-or-later / UBDL).
+#
+# src/core/nvo.c is also patched: an EFI variable is erased by a
+# zero-length SetVariable(), so storing an empty options block must reach
+# the device.  nvs_write() performs no write at all for a zero length,
+# which would leave the previously stored (non-empty) block in place and
+# resurrect those options on the next load.
 
 diff --git a/src/config/config_efi.c b/src/config/config_efi.c
 index 1278bf5bb..f691d7210 100644
@@ -25,6 +31,47 @@ index 1278bf5bb..f691d7210 100644
 + */
 +
 +REQUIRE_OBJECT ( efi_nvs );
+
+diff --git a/src/core/nvo.c b/src/core/nvo.c
+index 8e500f816..1fb5e40d0 100644
+--- a/src/core/nvo.c
++++ b/src/core/nvo.c
+@@ -178,12 +178,28 @@ static int nvo_save ( struct nvo_block *nvo ) {
+ 	if ( nvo->len > 0 )
+ 		*checksum -= nvo_checksum ( nvo );
+ 
+-	/* Write data */
+-	if ( ( rc = nvs_write ( nvo->nvs, nvo->address, nvo->data,
+-				nvo->len ) ) != 0 ) {
+-		DBGC ( nvo, "NVO %p could not write %zd bytes at %#04x: %s\n",
+-		       nvo, nvo->len, nvo->address, strerror ( rc ) );
+-		return rc;
++	/* Write data.  A zero-length block means that no options remain,
++	 * so issue a zero-length write to let the underlying device
++	 * erase whatever it has stored (e.g. by deleting a backing EFI
++	 * variable).  nvs_write() would perform no write at all for a
++	 * zero length, leaving the previously saved (non-empty) block in
++	 * place and resurrecting the options on the next load.
++	 */
++	if ( nvo->len ) {
++		if ( ( rc = nvs_write ( nvo->nvs, nvo->address, nvo->data,
++					nvo->len ) ) != 0 ) {
++			DBGC ( nvo, "NVO %p could not write %zd bytes at "
++			       "%#04x: %s\n", nvo, nvo->len, nvo->address,
++			       strerror ( rc ) );
++			return rc;
++		}
++	} else {
++		if ( ( rc = nvo->nvs->write ( nvo->nvs, nvo->address, NULL,
++					      0 ) ) != 0 ) {
++			DBGC ( nvo, "NVO %p could not erase: %s\n",
++			       nvo, strerror ( rc ) );
++			return rc;
++		}
+ 	}
+ 
+ 	DBGC ( nvo, "NVO %p saved to non-volatile storage\n", nvo );
+
 diff --git a/src/include/ipxe/dhcp.h b/src/include/ipxe/dhcp.h
 index bdbe3b741..e1fea7cbd 100644
 --- a/src/include/ipxe/dhcp.h
