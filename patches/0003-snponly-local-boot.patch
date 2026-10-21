@@ -5,15 +5,42 @@
 #
 # Modifications to iPXE src/drivers/net/efi/snponly.c inherit the
 # upstream licence (GPL-2.0-or-later / UBDL).
+#
+# Local boot (e.g. snponly.efi started directly from an ESP) has no
+# chainloaded device, so accept any SNP/NII/MNP device.  Such devices
+# must exclude handles installed by efi_snp_probe() for our own
+# network devices: without this guard the fallback binds to the SNP
+# handle that iPXE itself has just installed, creating an endless
+# chain of nested net devices (net0..netN) until the 4MB heap is
+# exhausted and every subsequent TLS/HTTPS allocation fails.
 
 diff --git a/src/drivers/net/efi/snponly.c b/src/drivers/net/efi/snponly.c
-index b7231ce01..0af409ae9 100644
+index b7231ce01..cc7edb578 100644
 --- a/src/drivers/net/efi/snponly.c
 +++ b/src/drivers/net/efi/snponly.c
-@@ -164,6 +164,17 @@ static int chained_supported ( EFI_HANDLE device,
+@@ -29,6 +29,7 @@ FILE_SECBOOT ( PERMITTED );
+ #include <ipxe/init.h>
+ #include <ipxe/efi/efi.h>
+ #include <ipxe/efi/efi_driver.h>
++#include <ipxe/efi/efi_snp.h>
+ #include <ipxe/efi/efi_utils.h>
+ #include <ipxe/efi/mnpnet.h>
+ #include <ipxe/efi/Protocol/SimpleNetwork.h>
+@@ -164,6 +165,28 @@ static int chained_supported ( EFI_HANDLE device,
  		return rc;
  	}
  
++	/* Never bind to a device provided by this binary.  When booted
++	 * locally, the fallback below would otherwise accept the SNP
++	 * handles installed by efi_snp_probe() for our own network
++	 * devices, creating an endless chain of nested devices.
++	 */
++	if ( find_snpdev ( device ) != NULL ) {
++		DBGC ( device, "CHAINED %s is provided by this binary\n",
++		       efi_handle_name ( device ) );
++		return -ENOTTY;
++	}
++
 +	/* If we were not chainloaded from a device supporting this
 +	 * protocol (e.g. when booting locally from a disk), then
 +	 * accept any device providing the protocol

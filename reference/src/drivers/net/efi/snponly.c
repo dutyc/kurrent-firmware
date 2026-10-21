@@ -29,6 +29,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <ipxe/init.h>
 #include <ipxe/efi/efi.h>
 #include <ipxe/efi/efi_driver.h>
+#include <ipxe/efi/efi_snp.h>
 #include <ipxe/efi/efi_utils.h>
 #include <ipxe/efi/mnpnet.h>
 #include <ipxe/efi/Protocol/SimpleNetwork.h>
@@ -162,6 +163,17 @@ static int chained_supported ( EFI_HANDLE device,
 			efi_handle_name ( device ),
 			efi_guid_ntoa ( chained->protocol ) );
 		return rc;
+	}
+
+	/* Never bind to a device provided by this binary.  When booted
+	 * locally, the fallback below would otherwise accept the SNP
+	 * handles installed by efi_snp_probe() for our own network
+	 * devices, creating an endless chain of nested devices.
+	 */
+	if ( find_snpdev ( device ) != NULL ) {
+		DBGC ( device, "CHAINED %s is provided by this binary\n",
+		       efi_handle_name ( device ) );
+		return -ENOTTY;
 	}
 
 	/* If we were not chainloaded from a device supporting this
