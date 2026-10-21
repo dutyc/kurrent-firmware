@@ -13,5 +13,9 @@ diag/
 thirdparty/
 
 .qoderignore
+
+
+AGENTS.md
+
 # Python 缓存
 __pycache__/

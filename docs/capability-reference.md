@@ -25,7 +25,7 @@
 | 4 | 设备信息采集（SMBIOS 内存、PCI 驱动名 → `${net0/chip}` 等） | 补丁 0004 | 已验证 |
 | 5 | 网卡适配（RTL8125/8126 驱动、snponly 接管回退、UNDI） | 补丁 0001-0003 | 已验证 |
 | 6 | 多形态固件产物（PXE-UEFI/直接 UEFI/BIOS/USB） | `build/build.sh` → `dist/` | 可复现构建 |
-| 7 | 测试体系（单测 11625 断言、QEMU 全链路、pcap 分析） | `tests/`（补丁内）、`test/` 目录 | 回归护栏 |
+| 7 | 测试体系（单测 11762 断言、QEMU 全链路、pcap 分析） | `tests/`（补丁内）、`test/` 目录 | 回归护栏 |
 
 ## 2. 引导链与接口边界
 
@@ -85,7 +85,7 @@ ICREQ → CONNECT_ADMIN → AUTH → PROP_SET → IDENTIFY_CTRL → IDENTIFY_NS
 2. **AuthReceive 重复发送**：窗口重试路径与正常推进路径重叠 → 发送幂等 + step 统一推进
 3. **认证完成竞态（0x8018）**：Success1 数据与最终 AuthReceive 完成可能乱序到达（同一 TCP 段内），仅凭 step 会把 Reply 的完成误判为 AuthReceive 完成，导致 Property Set 被跳过、Identify 被 `0x8018` 拒绝 → **双标志门控**（`completed` + `rx_complete`）+ **命令 id 匹配**（`rx_cid`），两者齐备才推进到 PROP_SET
 
-单测覆盖（`tests/nvmetcp_test.c`，随补丁 0005 交付）：阶段完成门控、命令 id 匹配、START 步守卫，全量 11625 断言通过。
+单测覆盖（`tests/nvmetcp_test.c`，随补丁 0005 交付）：阶段完成门控、命令 id 匹配、START 步守卫，全量 11762 断言通过（`tests.efi`）。
 
 ### 3.3 认证消息流程（DH-HMAC-CHAP，四消息）
 
@@ -177,16 +177,19 @@ sanboot nvme://10.0.2.2:4420/nqn.2026-08.org.ipxe-stateless:test?secret=${nbft-s
 |---|---|---|
 | 协议头 | `nvme://` | 固定写法 |
 | 服务器地址 | `10.0.2.2` | 存储服务器 IP（QEMU 虚拟机内 `10.0.2.2` 即宿主机；真实网络填服务器地址） |
-| 端口 | `4420` | NVMe/TCP 标准端口 |
+| 端口 | `4421` | 数据面端口（NVMe/TCP TLS 1.3）。`:4420` 是 NVMe/TCP 标准端口，仅用于本地联调/历史样例（`test/*.ipxe` 指向明文测试靶） |
 | 子系统 NQN | `nqn.2026-08.org.ipxe-stateless:test` | 门牌号，必须与服务端 configfs 创建的 NQN 完全一致 |
 | `?secret=` | `DHHC-1:01:...` | 可选；服务端要求认证时必须带，否则报 `authentication required but no secret` 拒绝引导 |
+| `&tls_psk=` | 64 位十六进制 | TLS 预共享密钥（段 1.3c/2.2）。既随 NBCT 表交 initramfs 在内核段重连用，也在**固件自身连接端口 == `tls_trsvcid`** 时用于固件段握手 |
+| `&tls_trsvcid=` | `4421` | TLS 数据面端口，与 `tls_psk` 成对下发（两者均必需）。它同时是固件段是否加密的判据：URI 端口等于此值 → 固件对该连接做 TLS；不等 → 固件明文连接（仅兼容联调靶）。控制面已默认把端口切到 `tls_trsvcid`（见 §4.4） |
 
 **注意事项**：
 
 - `?` 前不能有空格；`secret=` 后直接跟密钥，密钥内的 `:` 与 base64 字符无需转义
 - 交互式 shell 可直接输入：`iPXE> sanboot nvme://10.0.2.2:4420/nqn.2026-08.org.ipxe-stateless:test?secret=...`
 - 方式 A 的密钥会出现在脚本/菜单/日志可见范围，生产环境优先方式 B（4.4 控制面注入）
-- 固件侧 URI 解析实现：`nvmetcp.c` 的 `nvmetcp_parse_secret()`（解析 `secret=` 查询参数存入 session）
+- `tls_psk`/`tls_trsvcid` 双职责：**内核段**用它随 NBCT 表交 initramfs 在 TLS 端口重连；**固件段**当 URI 端口 == `tls_trsvcid` 时（`nvmetcp_use_tls()`）对自身连接做 TLS 1.3 PSK 握手。控制面默认全链路加密——`nbft-tls-port` 即数据面端口（`tls_trsvcid`），`menu.ipxe` 的 sanboot 端口取自它；端口或密钥缺失即拒绝引导，不再回落 `:4420`。判据保留端口比较，是为了对本地明文联调靶（`test/nvmet-setup.sh`）仍走明文路径
+- 固件侧 URI 解析实现：`nvmetcp.c` 的 `nvmetcp_parse_secret()` 与 `nvmetcp_parse_tls()`（解析 `secret=` / `tls_psk=` / `tls_trsvcid=` 查询参数存入 session）；是否加密由 `nvmetcp_use_tls()` 判定，握手与记录层由 `net/tls13.c` 的 `add_tls13_psk()` 过滤接口完成
 
 ### 4.4 传入方式 B：控制面 `/boot-vars` 注入（推荐，完整时序）
 
@@ -303,12 +306,12 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 ### 5.2 网卡适配（补丁 0001-0003）
 
 - RTL8125（2.5GbE）与 RTL8126（5GbE，ICVerID 检测 + PHY 配置分派）驱动定制
-- `snponly.efi`：链加载失败时回退接管全部 SNP/NII/MNP 设备（补丁 0003）
+- `snponly.efi`：链加载失败时回退接管全部 SNP/NII/MNP 设备，并排除 iPXE 自安装的 SNP 句柄（补丁 0003；避免本地引导时递归建网卡耗尽堆）
 - 支持矩阵见 [network-support.zh-CN.md](network-support.zh-CN.md)
 
 ### 5.3 构建与部署
 
-- 补丁链 `0001-0009`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
+- 补丁链 `0001-0010`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
 - 产物形态：`pxe-uefi/*.efi`、`direct-uefi/*.efi`（内置 auto.ipxe）、`grub-bios/ipxe.lkrn`、`undionly.kpxe`、`usb/ipxe.usb`、`*-debug.efi`
 - 调试构建：`DEBUG=nvmetcp,nvmetcp_auth:3`（认证日志）、`DEBUG=realtek:3`（网卡）
 - `embed/auto.ipxe` 是配置资产（非源码补丁），修改无需重新生成补丁
@@ -317,7 +320,7 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 
 | 手段 | 命令/位置 | 验证内容 |
 |---|---|---|
-| 单元测试 | `make -C .cache/ipxe-upstream/src bin-x86_64-linux/tests.linux` → 运行 | 全量 11625 断言（含认证状态机） |
+| 单元测试 | `make bin-x86_64-efi/tests.efi` → QEMU/OVMF 引导读串口 | 全量 11762 断言（含认证状态机、TLS 1.3 原语与连接层） |
 | 目标端配置 | `sudo [AUTH=1] bash test/nvmet-setup.sh` | 幂等、密钥自检、`==> LISTENING on 4420` |
 | 凭证端点 | `python3 test/cred-server.py` | `/boot-vars` 注入 |
 | 引导盘 | `bash test/make-grub-bootdisk.sh` | 可引导 NVMe/TCP 后端盘 |
@@ -339,7 +342,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 - [ ] 引导链脚本（boot.ipxe 链）在 `sanboot` 前先 `chain` `/boot-vars` 拉取变量，`sanboot` 使用 `${nbft-secret}`
 - [ ] 密钥库与 `nvmet-setup.sh` 的 `DHHCP_KEY` 一致；格式 `DHHC-1:XX:`（两位类型）+ CRC32 终值小端；复用自检逻辑
 - [ ] 服务端 `hosts/<HostNQN>/` 与客户端实际 NQN 匹配（SMBIOS UUID 或回退 NQN）
-- [ ] 固件包含完整补丁链 0001-0009（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
+- [ ] 固件包含完整补丁链 0001-0010（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
 - [ ] 认证链路验证：QEMU 轮次 + pcap 证据链（第 6 章）
 - [ ] 内核 NBFT 路径（initramfs-nbft）的认证密钥注入按 4.8 缺口规划
 
@@ -350,7 +353,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | [nvmeof-usage.md](nvmeof-usage.md) | 使用指南（服务端配置、sanboot 用法、QEMU 验证） |
 | [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | test/ 脚本完整测试流程 |
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现 |
-| [device-trust-usage.md](device-trust-usage.md) | 设备信任根能力使用说明（0006-0008：keygen/pubkey/sign、TOFU、NVRAM 设置） |
+| [device-trust-usage.md](device-trust-usage.md) | 设备信任根能力使用说明（0006-0008：keygen/pubkey/sign/nvclear、TOFU、NVRAM 设置） |
 | [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
 | [nvmeof-research.md](nvmeof-research.md) | 协议研究与设计 |
 | [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |
