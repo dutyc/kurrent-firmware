@@ -53,8 +53,845 @@ FILE_SECBOOT ( PERMITTED );
 #include <ipxe/validator.h>
 #include <ipxe/job.h>
 #include <ipxe/ffdhe.h>
+#include <ipxe/x25519.h>
 #include <ipxe/tls.h>
 #include <config/crypto.h>
+
+/*
+ * TLS 1.3 key schedule (RFC 8446 section 7.1)
+ *
+ * These primitives are deliberately independent of the TLS 1.2 key
+ * derivation machinery (which uses the legacy tls_prf() construction).
+ * A TLS 1.3 handshake uses HKDF throughout, and the labelled variants
+ * below are the building blocks of the 1.3 schedule.
+ *
+ * They are exposed (non-static) so that the RFC 8448 test vectors can
+ * be checked directly from the self-test suite.
+ */
+
+/** TLS 1.3 label prefix */
+#define TLS13_LABEL_PREFIX "tls13 "
+
+/**
+ * Construct a TLS 1.3 HkdfLabel structure
+ *
+ * @v info		Buffer for HkdfLabel
+ * @v len		Output length
+ * @v label		Label
+ * @v context		Context
+ * @v context_len	Length of context
+ * @ret info_len	Length of HkdfLabel
+ */
+static size_t tls13_hkdf_label ( void *info, size_t len, const char *label,
+				 const void *context, size_t context_len ) {
+	static const char prefix[] = TLS13_LABEL_PREFIX;
+	size_t prefix_len = ( sizeof ( prefix ) - 1 );
+	size_t label_len = strlen ( label );
+	uint8_t *bytes = info;
+
+	assert ( len <= 0xffff );
+	assert ( ( prefix_len + label_len ) <= 255 );
+	assert ( context_len <= 255 );
+
+	/* struct {
+	 *   uint16 length;
+	 *   opaque label<7..255>;	("tls13 " + Label)
+	 *   opaque context<0..255>;
+	 * } HkdfLabel;
+	 */
+	bytes[0] = ( len >> 8 );
+	bytes[1] = ( len & 0xff );
+	bytes[2] = ( prefix_len + label_len );
+	memcpy ( &bytes[3], prefix, prefix_len );
+	memcpy ( &bytes[3 + prefix_len], label, label_len );
+	bytes[3 + prefix_len + label_len] = context_len;
+	memcpy ( &bytes[4 + prefix_len + label_len], context, context_len );
+
+	return ( 4 + prefix_len + label_len + context_len );
+}
+
+/**
+ * Expand a TLS 1.3 secret using HKDF-Expand-Label
+ *
+ * @v digest		Digest algorithm
+ * @v secret		Secret (used directly as the HKDF PRK)
+ * @v label		Label (without the "tls13 " prefix)
+ * @v context		Context
+ * @v context_len	Length of context
+ * @v out		Output buffer
+ * @v len		Output length
+ */
+void tls13_expand_label ( struct digest_algorithm *digest,
+			  const void *secret, const char *label,
+			  const void *context, size_t context_len,
+			  void *out, size_t len ) {
+	uint8_t info[ 2 + 1 + ( sizeof ( TLS13_LABEL_PREFIX ) - 1 + 255 )
+		     + 1 + 255 ];
+	size_t info_len;
+
+	info_len = tls13_hkdf_label ( info, len, label, context, context_len );
+	hkdf_expand ( digest, secret, info, info_len, out, len );
+}
+
+/**
+ * Derive a TLS 1.3 secret using Derive-Secret
+ *
+ * @v digest		Digest algorithm
+ * @v secret		Secret
+ * @v label		Label
+ * @v transcript	Handshake transcript
+ * @v transcript_len	Length of handshake transcript
+ * @v out		Output buffer (digest size)
+ */
+void tls13_derive_secret ( struct digest_algorithm *digest,
+			   const void *secret, const char *label,
+			   const void *transcript, size_t transcript_len,
+			   void *out ) {
+	uint8_t ctx[ digest->ctxsize ];
+	uint8_t hash[ digest->digestsize ];
+
+	/* Derive-Secret( Secret, Label, Messages )
+	 *   = HKDF-Expand-Label( Secret, Label,
+	 *                        Transcript-Hash( Messages ), Hash.length )
+	 */
+	digest->init ( digest, ctx );
+	digest->update ( digest, ctx, transcript, transcript_len );
+	digest->final ( digest, ctx, hash );
+	tls13_expand_label ( digest, secret, label, hash, sizeof ( hash ),
+			     out, sizeof ( hash ) );
+}
+
+/**
+ * Calculate the TLS 1.3 Early Secret
+ *
+ * @v digest		Digest algorithm
+ * @v psk		Pre-shared key (or NULL for no PSK)
+ * @v psk_len		Length of pre-shared key
+ * @v out		Output buffer (digest size)
+ */
+void tls13_early_secret ( struct digest_algorithm *digest, const void *psk,
+			  size_t psk_len, void *out ) {
+	uint8_t zero[ digest->digestsize ];
+
+	/* Early Secret = HKDF-Extract( 0, PSK ) */
+	if ( ! psk ) {
+		memset ( zero, 0, sizeof ( zero ) );
+		psk = zero;
+		psk_len = sizeof ( zero );
+	}
+	hkdf_extract ( digest, NULL, 0, psk, psk_len, out );
+}
+
+/**
+ * Calculate the TLS 1.3 Handshake Secret
+ *
+ * @v digest		Digest algorithm
+ * @v early		Early Secret
+ * @v ecdhe		(EC)DHE shared secret
+ * @v ecdhe_len	Length of (EC)DHE shared secret
+ * @v out		Output buffer (digest size)
+ */
+void tls13_handshake_secret ( struct digest_algorithm *digest,
+			      const void *early, const void *ecdhe,
+			      size_t ecdhe_len, void *out ) {
+	uint8_t derived[ digest->digestsize ];
+
+	/* Handshake Secret = HKDF-Extract(
+	 *   Derive-Secret( Early Secret, "derived", "" ), (EC)DHE ) */
+	tls13_derive_secret ( digest, early, "derived", NULL, 0, derived );
+	hkdf_extract ( digest, derived, sizeof ( derived ), ecdhe, ecdhe_len,
+		       out );
+}
+
+/**
+ * Calculate the TLS 1.3 Master Secret
+ *
+ * @v digest		Digest algorithm
+ * @v handshake		Handshake Secret
+ * @v out		Output buffer (digest size)
+ */
+void tls13_master_secret ( struct digest_algorithm *digest,
+			   const void *handshake, void *out ) {
+	uint8_t derived[ digest->digestsize ];
+	uint8_t zero[ digest->digestsize ];
+
+	/* Master Secret = HKDF-Extract(
+	 *   Derive-Secret( Handshake Secret, "derived", "" ), 0 ) */
+	tls13_derive_secret ( digest, handshake, "derived", NULL, 0, derived );
+	memset ( zero, 0, sizeof ( zero ) );
+	hkdf_extract ( digest, derived, sizeof ( derived ), zero,
+		       sizeof ( zero ), out );
+}
+
+/**
+ * Derive a TLS 1.3 traffic key and IV from a traffic secret
+ *
+ * @v digest		Digest algorithm
+ * @v secret		Traffic secret (e.g. a handshake or application traffic secret)
+ * @v key		Buffer for traffic key
+ * @v key_len		Length of traffic key
+ * @v iv		Buffer for traffic IV
+ * @v iv_len		Length of traffic IV
+ */
+void tls13_traffic_key ( struct digest_algorithm *digest, const void *secret,
+			 void *key, size_t key_len, void *iv, size_t iv_len ) {
+
+	/* key = HKDF-Expand-Label( secret, "key", "", key_len ) */
+	tls13_expand_label ( digest, secret, "key", NULL, 0, key, key_len );
+	/* iv = HKDF-Expand-Label( secret, "iv", "", iv_len ) */
+	tls13_expand_label ( digest, secret, "iv", NULL, 0, iv, iv_len );
+}
+
+/**
+ * Calculate a TLS 1.3 Finished verify_data
+ *
+ * @v digest		Digest algorithm
+ * @v secret		Traffic secret
+ * @v transcript	Handshake transcript
+ * @v transcript_len	Length of handshake transcript
+ * @v out		Output buffer (digest size)
+ *
+ * The Finished message and the pre-shared key binder use the same
+ * construction, differing only in the secret from which the finished
+ * key is derived.
+ */
+void tls13_finished ( struct digest_algorithm *digest, const void *secret,
+		      const void *transcript, size_t transcript_len,
+		      void *out ) {
+	uint8_t finished_key[ digest->digestsize ];
+	uint8_t dctx[ digest->ctxsize ];
+	uint8_t hctx[ hmac_ctxsize ( digest ) ];
+	uint8_t hash[ digest->digestsize ];
+
+	/* finished_key = HKDF-Expand-Label( secret, "finished", "",
+	 *                                   Hash.length ) */
+	tls13_expand_label ( digest, secret, "finished", NULL, 0,
+			     finished_key, sizeof ( finished_key ) );
+
+	/* verify_data = HMAC( finished_key,
+	 *                     Transcript-Hash( Handshake Context ) ) */
+	digest->init ( digest, dctx );
+	digest->update ( digest, dctx, transcript, transcript_len );
+	digest->final ( digest, dctx, hash );
+	hmac_init ( digest, hctx, finished_key, sizeof ( finished_key ) );
+	hmac_update ( digest, hctx, hash, sizeof ( hash ) );
+	hmac_final ( digest, hctx, out );
+}
+
+/**
+ * Calculate a TLS 1.3 pre-shared key binder
+ *
+ * @v digest		Digest algorithm
+ * @v early_secret	Early Secret
+ * @v label		Binder label ("ext binder" or "res binder")
+ * @v transcript	Handshake transcript (the truncated ClientHello)
+ * @v transcript_len	Length of handshake transcript
+ * @v out		Output buffer (digest size)
+ */
+void tls13_binder ( struct digest_algorithm *digest, const void *early_secret,
+		    const char *label, const void *transcript,
+		    size_t transcript_len, void *out ) {
+	uint8_t binder_key[ digest->digestsize ];
+
+	/* binder_key = Derive-Secret( Early Secret, label, "" ) */
+	tls13_derive_secret ( digest, early_secret, label, NULL, 0,
+			      binder_key );
+
+	/* binder = Finished( binder_key, Truncate( ClientHello ) ) */
+	tls13_finished ( digest, binder_key, transcript, transcript_len, out );
+}
+
+/**
+ * Construct a TLS 1.3 ClientHello offering a pre-shared key
+ *
+ * @v buf		Buffer for ClientHello handshake message
+ * @v max_len		Length of buffer
+ * @v random		Client random (32 bytes)
+ * @v public_key	X25519 key share public key (32 bytes)
+ * @v psk		Pre-shared key
+ * @v psk_len		Length of pre-shared key
+ * @v identity		PSK identity
+ * @v identity_len	Length of PSK identity
+ * @v binder_label	Binder label ("ext binder" or "res binder")
+ * @ret len		Length of ClientHello, or 0 on error
+ *
+ * The ClientHello offers a single cipher suite (TLS_AES_128_GCM_SHA256)
+ * and the psk_dhe_ke key exchange mode, with the pre_shared_key
+ * extension placed last as required by RFC 8446.  The PSK binder is
+ * calculated over the truncated ClientHello (i.e. with the binders list
+ * omitted) and appended to the message.
+ */
+size_t tls13_client_hello ( void *buf, size_t max_len, const void *random,
+			    const void *public_key, const void *psk,
+			    size_t psk_len, const char *identity,
+			    size_t identity_len, const char *binder_label ) {
+	struct digest_algorithm *digest = &sha256_algorithm;
+	size_t digestsize = digest->digestsize;
+	size_t binder_list_len = ( 2 + 1 + digestsize );
+	size_t entry_len = ( 2 + identity_len + 4 );
+	size_t needed = ( 4 /* handshake header */
+			  + 2 /* legacy_version */
+			  + 32 /* random */
+			  + 1 /* session_id length */
+			  + 2 + 2 /* cipher_suites */
+			  + 1 + 1 /* compression methods */
+			  + 2 /* extensions length */
+			  + 7 /* supported_versions */
+			  + 8 /* supported_groups */
+			  + 38 /* key_share */
+			  + 6 /* psk_key_exchange_modes */
+			  + 4 /* pre_shared_key extension header */
+			  + 2 /* PskIdentity vector length */
+			  + entry_len
+			  + binder_list_len );
+	uint8_t *ch = buf;
+	uint8_t early[ digestsize ];
+	uint8_t binder[ digestsize ];
+	size_t psk_ext_off;
+	size_t ext_len_off;
+	size_t ident_end;
+	size_t msg_len;
+	uint16_t identities_len;
+	uint16_t ext_len;
+	uint16_t exts_len;
+	size_t off;
+
+	/* Check for sufficient space and valid identity length */
+	if ( ( identity_len > 0xffff ) || ( max_len < needed ) )
+		return 0;
+
+	off = 0;
+
+	/* Handshake header (length filled in later) */
+	ch[off++] = TLS_CLIENT_HELLO;
+	ch[off++] = 0; ch[off++] = 0; ch[off++] = 0;
+
+	/* legacy_version, random, legacy_session_id */
+	ch[off++] = ( TLS_VERSION_TLS_1_2 >> 8 );
+	ch[off++] = ( TLS_VERSION_TLS_1_2 & 0xff );
+	memcpy ( &ch[off], random, 32 ); off += 32;
+	ch[off++] = 0;
+
+	/* cipher_suites = { TLS_AES_128_GCM_SHA256 } */
+	ch[off++] = 0x00; ch[off++] = 0x02;
+	ch[off++] = ( TLS_AES_128_GCM_SHA256 >> 8 );
+	ch[off++] = ( TLS_AES_128_GCM_SHA256 & 0xff );
+
+	/* legacy_compression_methods = { null } */
+	ch[off++] = 0x01; ch[off++] = 0x00;
+
+	/* extensions (length filled in later) */
+	ext_len_off = off;
+	ch[off++] = 0; ch[off++] = 0;
+
+	/* supported_versions = { TLS 1.3 }
+	 *
+	 * Note that the extension data holds a ProtocolVersion list, which
+	 * itself carries a one-byte length prefix (RFC 8446 section 4.2.1).
+	 */
+	ch[off++] = 0x00; ch[off++] = TLS_SUPPORTED_VERSIONS;	/* 43 */
+	ch[off++] = 0x00; ch[off++] = 0x03;
+	ch[off++] = 0x02;	/* versions list length */
+	ch[off++] = ( TLS_VERSION_TLS_1_3 >> 8 );
+	ch[off++] = ( TLS_VERSION_TLS_1_3 & 0xff );
+
+	/* supported_groups = { x25519 }
+	 *
+	 * The extension data holds a NamedGroup list, which carries a
+	 * two-byte length prefix (RFC 8446 section 4.2.7).
+	 */
+	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP;		/* 10 */
+	ch[off++] = 0x00; ch[off++] = 0x04;
+	ch[off++] = 0x00; ch[off++] = 0x02;	/* named_group_list length */
+	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP_X25519;	/* 29 */
+
+	/* key_share = { x25519: public_key } */
+	ch[off++] = 0x00; ch[off++] = TLS_KEY_SHARE;		/* 51 */
+	ch[off++] = 0x00; ch[off++] = 0x26;	/* extension length = 38 */
+	ch[off++] = 0x00; ch[off++] = 0x24;	/* client_shares length = 36 */
+	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP_X25519;
+	ch[off++] = 0x00; ch[off++] = 0x20;	/* key_exchange length = 32 */
+	memcpy ( &ch[off], public_key, 32 ); off += 32;
+
+	/* psk_key_exchange_modes = { psk_dhe_ke } */
+	ch[off++] = 0x00; ch[off++] = TLS_PSK_KEY_EXCHANGE_MODES;	/* 45 */
+	ch[off++] = 0x00; ch[off++] = 0x02;
+	ch[off++] = 0x01;	/* vector length */
+	ch[off++] = TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE;
+
+	/* pre_shared_key (must be last) */
+	psk_ext_off = off;
+	ch[off++] = 0x00; ch[off++] = TLS_PRE_SHARED_KEY;	/* 41 */
+	ch[off++] = 0; ch[off++] = 0;	/* extension length (filled in later) */
+	ch[off++] = 0; ch[off++] = 0;	/* PskIdentity vector length (later) */
+	ch[off++] = ( identity_len >> 8 );
+	ch[off++] = ( identity_len & 0xff );
+	memcpy ( &ch[off], identity, identity_len ); off += identity_len;
+	ch[off++] = 0; ch[off++] = 0; ch[off++] = 0; ch[off++] = 0;	/* age */
+	ident_end = off;
+
+	/* Fill in the lengths (all of which include the binders list) */
+	msg_len = ( ident_end - 4 + binder_list_len );
+	ch[1] = ( msg_len >> 16 );
+	ch[2] = ( msg_len >> 8 );
+	ch[3] = ( msg_len & 0xff );
+	identities_len = ( uint16_t ) ( entry_len );
+	ch[psk_ext_off + 4] = ( identities_len >> 8 );
+	ch[psk_ext_off + 5] = ( identities_len & 0xff );
+	ext_len = ( uint16_t ) ( 2 + entry_len + binder_list_len );
+	ch[psk_ext_off + 2] = ( ext_len >> 8 );
+	ch[psk_ext_off + 3] = ( ext_len & 0xff );
+	exts_len = ( uint16_t ) ( ident_end - ( ext_len_off + 2 )
+				  + binder_list_len );
+	ch[ext_len_off] = ( exts_len >> 8 );
+	ch[ext_len_off + 1] = ( exts_len & 0xff );
+
+	/* Calculate PSK binder over the truncated ClientHello */
+	tls13_early_secret ( digest, psk, psk_len, early );
+	tls13_binder ( digest, early, binder_label, ch, ident_end, binder );
+
+	/* Append the binders list */
+	ch[ident_end] = 0x00;
+	ch[ident_end + 1] = ( uint8_t ) ( 1 + digestsize );
+	ch[ident_end + 2] = ( uint8_t ) digestsize;
+	memcpy ( &ch[ident_end + 3], binder, digestsize );
+
+	return ( ident_end + binder_list_len );
+}
+
+/**
+ * Parse a TLS 1.3 ServerHello
+ *
+ * @v msg		ServerHello handshake message
+ * @v len		Length of handshake message
+ * @v out		Parsed ServerHello parameters
+ * @ret rc		Return status code
+ *
+ * The caller must check that the negotiated version, cipher suite and
+ * (if a pre-shared key was offered) the selected identity are
+ * acceptable.
+ */
+int tls13_parse_server_hello ( const void *msg, size_t len,
+			       struct tls13_server_hello *out ) {
+	const uint8_t *sh = msg;
+	size_t exts_len;
+	size_t end;
+	size_t pos;
+	size_t body_len;
+	size_t session_id_len;
+	uint16_t ext_type;
+	uint16_t ext_len;
+
+	/* Initialise (absent extensions are reported as such) */
+	memset ( out, 0, sizeof ( *out ) );
+
+	/* Handshake header */
+	if ( len < 4 )
+		return -EINVAL;
+	if ( sh[0] != TLS_SERVER_HELLO )
+		return -EINVAL;
+	body_len = ( ( ( size_t ) sh[1] << 16 ) | ( ( size_t ) sh[2] << 8 )
+		     | sh[3] );
+	if ( ( 4 + body_len ) > len )
+		return -EINVAL;
+	end = ( 4 + body_len );
+	pos = 4;
+
+	/* legacy_version and random */
+	if ( ( pos + 2 + 32 ) > end )
+		return -EINVAL;
+	pos += ( 2 + 32 );
+
+	/* legacy_session_id_echo */
+	if ( ( pos + 1 ) > end )
+		return -EINVAL;
+	session_id_len = sh[pos++];
+	if ( ( pos + session_id_len ) > end )
+		return -EINVAL;
+	pos += session_id_len;
+
+	/* cipher_suite and legacy_compression_method */
+	if ( ( pos + 3 ) > end )
+		return -EINVAL;
+	out->cipher_suite = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
+	pos += 3;
+
+	/* extensions */
+	if ( ( pos + 2 ) > end )
+		return -EINVAL;
+	exts_len = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
+	pos += 2;
+	if ( ( pos + exts_len ) > end )
+		return -EINVAL;
+
+	/* Parse each extension */
+	while ( exts_len > 0 ) {
+
+		/* Extension header */
+		if ( exts_len < 4 )
+			return -EINVAL;
+		ext_type = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
+		ext_len = ( ( ( uint16_t ) sh[pos + 2] << 8 ) | sh[pos + 3] );
+		pos += 4;
+		exts_len -= 4;
+		if ( ( ( size_t ) ext_len ) > exts_len )
+			return -EINVAL;
+
+		switch ( ext_type ) {
+
+		case TLS_SUPPORTED_VERSIONS:
+			if ( ext_len != 2 )
+				return -EINVAL;
+			out->version = ( ( ( uint16_t ) sh[pos] << 8 )
+					 | sh[pos + 1] );
+			break;
+
+		case TLS_PRE_SHARED_KEY:
+			if ( ext_len != 2 )
+				return -EINVAL;
+			out->selected_identity = ( ( ( uint16_t ) sh[pos] << 8 )
+						   | sh[pos + 1] );
+			out->has_psk = 1;
+			break;
+
+		case TLS_KEY_SHARE:
+			if ( ext_len !=
+			     ( 4 + sizeof ( out->public_key ) ) )
+				return -EINVAL;
+			if ( ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] )
+			     != TLS_NAMED_GROUP_X25519 )
+				return -EINVAL;
+			if ( ( ( ( uint16_t ) sh[pos + 2] << 8 )
+			       | sh[pos + 3] )
+			     != sizeof ( out->public_key ) )
+				return -EINVAL;
+			memcpy ( out->public_key, &sh[pos + 4],
+				 sizeof ( out->public_key ) );
+			out->has_key_share = 1;
+			break;
+
+		default:
+			break;
+		}
+
+		pos += ext_len;
+		exts_len -= ext_len;
+	}
+
+	return 0;
+}
+
+/*
+ * TLS 1.3 record protection (RFC 8446 section 5.2/5.3)
+ *
+ * TLS 1.3 protects each record with an AEAD using a per-record nonce
+ * formed by XORing the write IV with the record sequence number.  The
+ * inner content type is appended to the plaintext before encryption,
+ * and the record header (with the outer content type of
+ * application_data) is passed as additional data.
+ */
+
+/**
+ * Construct a TLS 1.3 record nonce
+ *
+ * @v iv		Initialisation vector (TLS13_NONCE_LEN bytes)
+ * @v seq		Record sequence number
+ * @v nonce		Buffer for nonce (TLS13_NONCE_LEN bytes)
+ *
+ * The nonce is the write IV XORed with the 64-bit record sequence
+ * number, left-padded with zeros to the nonce length.
+ */
+void tls13_nonce ( const void *iv, uint64_t seq, void *nonce ) {
+	const uint8_t *iv_bytes = iv;
+	uint8_t *nonce_bytes = nonce;
+	unsigned int i;
+
+	memcpy ( nonce_bytes, iv_bytes,
+		 ( TLS13_NONCE_LEN - sizeof ( seq ) ) );
+	for ( i = 0 ; i < sizeof ( seq ) ; i++ ) {
+		nonce_bytes[ TLS13_NONCE_LEN - sizeof ( seq ) + i ] =
+			( iv_bytes[ TLS13_NONCE_LEN - sizeof ( seq ) + i ] ^
+			  ( seq >> ( 8 * ( sizeof ( seq ) - 1 - i ) ) ) );
+	}
+}
+
+/**
+ * Seal a TLS 1.3 record
+ *
+ * @v cipher		Cipher algorithm (AEAD)
+ * @v key		Write key
+ * @v key_len		Length of write key
+ * @v iv		Write IV
+ * @v seq		Record sequence number
+ * @v aad		Additional data (record header)
+ * @v aad_len		Length of additional data
+ * @v data		Plaintext data
+ * @v len		Length of plaintext data
+ * @v content_type	Inner content type
+ * @v out		Buffer for ciphertext and authentication tag
+ * @ret len		Total length of ciphertext and authentication tag
+ *
+ * The output buffer must be large enough for @c len plus one byte (the
+ * inner content type) plus the cipher's authentication tag.  The
+ * sequence number must not be reused with the same key and IV.
+ */
+size_t tls13_seal ( struct cipher_algorithm *cipher, const void *key,
+		    size_t key_len, const void *iv, uint64_t seq,
+		    const void *aad, size_t aad_len,
+		    const void *data, size_t len,
+		    unsigned int content_type, void *out ) {
+	uint8_t cipher_ctx[ cipher->ctxsize ];
+	uint8_t nonce[ TLS13_NONCE_LEN ];
+	uint8_t *ciphertext = out;
+	size_t plaintext_len = ( len + 1 );
+
+	/* Construct nonce */
+	tls13_nonce ( iv, seq, nonce );
+
+	/* Assemble plaintext (data plus trailing inner content type) */
+	memcpy ( ciphertext, data, len );
+	ciphertext[len] = content_type;
+
+	/* Set key and nonce */
+	if ( ( cipher_setkey ( cipher, cipher_ctx, key, key_len ) != 0 ) ||
+	     ( cipher_setiv ( cipher, cipher_ctx, nonce,
+			      sizeof ( nonce ) ) != 0 ) )
+		return 0;
+
+	/* Process additional data */
+	cipher_encrypt ( cipher, cipher_ctx, aad, NULL, aad_len );
+
+	/* Encrypt plaintext in place */
+	cipher_encrypt ( cipher, cipher_ctx, ciphertext, ciphertext,
+			 plaintext_len );
+
+	/* Append authentication tag */
+	cipher_auth ( cipher, cipher_ctx, &ciphertext[plaintext_len] );
+
+	return ( plaintext_len + cipher->authsize );
+}
+
+/**
+ * Open a TLS 1.3 record
+ *
+ * @v cipher		Cipher algorithm (AEAD)
+ * @v key		Read key
+ * @v key_len		Length of read key
+ * @v iv		Read IV
+ * @v seq		Record sequence number
+ * @v aad		Additional data (record header)
+ * @v aad_len		Length of additional data
+ * @v record		Ciphertext and authentication tag
+ * @v record_len	Total length of ciphertext and authentication tag
+ * @v out		Buffer for plaintext data
+ * @v len		Length of plaintext data (excluding content type)
+ * @ret content_type	Inner content type, or negative error
+ *
+ * On a failed authentication tag verification, the output buffer is
+ * zeroed and a negative error is returned.
+ */
+int tls13_open ( struct cipher_algorithm *cipher, const void *key,
+		 size_t key_len, const void *iv, uint64_t seq,
+		 const void *aad, size_t aad_len,
+		 const void *record, size_t record_len,
+		 void *out, size_t *len ) {
+	uint8_t cipher_ctx[ cipher->ctxsize ];
+	uint8_t nonce[ TLS13_NONCE_LEN ];
+	uint8_t verify_auth[ cipher->authsize ];
+	const uint8_t *ciphertext = record;
+	uint8_t *plaintext = out;
+	size_t plaintext_len;
+	uint8_t diff = 0;
+	unsigned int i;
+
+	/* Sanity check */
+	if ( record_len < ( 1 + cipher->authsize ) )
+		return -EINVAL;
+
+	/* Construct nonce */
+	tls13_nonce ( iv, seq, nonce );
+
+	/* Set key and nonce */
+	if ( ( cipher_setkey ( cipher, cipher_ctx, key, key_len ) != 0 ) ||
+	     ( cipher_setiv ( cipher, cipher_ctx, nonce,
+			      sizeof ( nonce ) ) != 0 ) ) {
+		return -EINVAL;
+	}
+
+	/* Process additional data */
+	cipher_decrypt ( cipher, cipher_ctx, aad, NULL, aad_len );
+
+	/* Decrypt ciphertext (excluding authentication tag) */
+	plaintext_len = ( record_len - cipher->authsize );
+	cipher_decrypt ( cipher, cipher_ctx, ciphertext, plaintext,
+			 plaintext_len );
+
+	/* Generate expected authentication tag */
+	cipher_auth ( cipher, cipher_ctx, verify_auth );
+
+	/* Verify authentication tag (in constant time) */
+	for ( i = 0 ; i < cipher->authsize ; i++ ) {
+		diff |= ( verify_auth[i] ^
+			  ciphertext[ plaintext_len + i ] );
+	}
+	if ( diff != 0 ) {
+		memset ( plaintext, 0, plaintext_len );
+		return -EINVAL;
+	}
+
+	/* Strip trailing inner content type */
+	*len = ( plaintext_len - 1 );
+	return plaintext[ plaintext_len - 1 ];
+}
+
+/*
+ * TLS 1.3 pre-shared key handshake context (RFC 8446 section 4.2.11)
+ *
+ * A NQN-based pre-shared key handshake requires only the key schedule
+ * plus the handshake transcript: there are no certificates and no
+ * session resumption.  The context below accumulates the transcript and
+ * holds the intermediate secrets, so that a caller (e.g. the NVMe/TCP
+ * driver) can perform the handshake without duplicating the schedule.
+ */
+
+/**
+ * Generate an ephemeral key pair
+ *
+ * @v key		Key pair to fill in
+ * @ret rc		Return status code
+ */
+int tls13_generate_key ( struct tls13_key_pair *key ) {
+	int rc;
+
+	/* Generate random private key */
+	if ( ( rc = rbg_generate ( NULL, 0, 0, key->private_key,
+				   sizeof ( key->private_key ) ) ) != 0 )
+		return rc;
+
+	/* Derive public key */
+	return exchange_share ( &x25519_algorithm, key->private_key,
+				key->public_key );
+}
+
+/**
+ * Calculate an ephemeral shared secret
+ *
+ * @v private_key	Local private key
+ * @v partner_key	Partner public key
+ * @v shared		Shared secret to fill in
+ * @ret rc		Return status code
+ */
+int tls13_shared_secret ( const void *private_key, const void *partner_key,
+			  void *shared ) {
+
+	return exchange_agree ( &x25519_algorithm, private_key, partner_key,
+				shared );
+}
+
+/**
+ * Initialise a TLS 1.3 handshake context
+ *
+ * @v hs		Handshake context
+ * @v digest		Digest algorithm
+ * @v psk		Pre-shared key (or NULL for an ephemeral handshake)
+ * @v psk_len		Length of pre-shared key
+ * @v binder_label	Binder label ("ext binder" or "res binder")
+ */
+void tls13_handshake_init ( struct tls13_handshake *hs,
+			    struct digest_algorithm *digest,
+			    const void *psk, size_t psk_len,
+			    const char *binder_label ) {
+
+	memset ( hs, 0, sizeof ( *hs ) );
+	hs->digest = digest;
+	hs->binder_label = binder_label;
+	tls13_early_secret ( digest, psk, psk_len, hs->early );
+}
+
+/**
+ * Append a handshake message to the transcript
+ *
+ * @v hs		Handshake context
+ * @v msg		Handshake message
+ * @v len		Length of handshake message
+ * @ret rc		Return status code
+ */
+int tls13_handshake_update ( struct tls13_handshake *hs, const void *msg,
+			     size_t len ) {
+
+	if ( ( hs->transcript_len + len ) > sizeof ( hs->transcript ) )
+		return -ENOSPC;
+	memcpy ( &hs->transcript[ hs->transcript_len ], msg, len );
+	hs->transcript_len += len;
+	return 0;
+}
+
+/**
+ * Derive a secret from the current handshake transcript
+ *
+ * @v hs		Handshake context
+ * @v secret		Base secret
+ * @v label		Label
+ * @v out		Output buffer (digest size)
+ */
+void tls13_handshake_derive ( struct tls13_handshake *hs, const void *secret,
+			      const char *label, void *out ) {
+
+	tls13_derive_secret ( hs->digest, secret, label, hs->transcript,
+			      hs->transcript_len, out );
+}
+
+/**
+ * Perform an ephemeral key exchange
+ *
+ * @v hs		Handshake context
+ * @v partner_key	Partner public key
+ * @ret rc		Return status code
+ *
+ * The Handshake Secret is derived from the Early Secret and the
+ * ephemeral shared secret.  The context's ephemeral private key must
+ * have been set beforehand.
+ */
+int tls13_handshake_exchange ( struct tls13_handshake *hs,
+			       const void *partner_key ) {
+	uint8_t shared[32];
+	int rc;
+
+	/* shared = X25519( private key, partner public key ) */
+	if ( ( rc = tls13_shared_secret ( hs->key.private_key, partner_key,
+					  shared ) ) != 0 )
+		return rc;
+
+	/* Handshake Secret = HKDF-Extract(
+	 *   Derive-Secret( Early Secret, "derived", "" ), shared ) */
+	tls13_handshake_secret ( hs->digest, hs->early, shared,
+				 sizeof ( shared ), hs->handshake );
+	return 0;
+}
+
+/**
+ * Calculate a Finished message from the current handshake transcript
+ *
+ * @v hs		Handshake context
+ * @v secret		Traffic secret (handshake or application)
+ * @v out		Output buffer (digest size)
+ */
+void tls13_handshake_finished ( struct tls13_handshake *hs, const void *secret,
+				void *out ) {
+
+	tls13_finished ( hs->digest, secret, hs->transcript,
+			 hs->transcript_len, out );
+}
+
+/**
+ * Calculate the Master Secret
+ *
+ * @v hs		Handshake context
+ */
+void tls13_handshake_master ( struct tls13_handshake *hs ) {
+
+	tls13_master_secret ( hs->digest, hs->handshake, hs->master );
+}
 
 /* Disambiguate the various error causes */
 #define EINVAL_CHANGE_CIPHER __einfo_error ( EINFO_EINVAL_CHANGE_CIPHER )

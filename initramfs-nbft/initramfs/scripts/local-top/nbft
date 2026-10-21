@@ -136,6 +136,26 @@ configure_networking
 modprobe -q nvme-tcp 2>/dev/null || modprobe -q nvme_tcp 2>/dev/null || \
         echo "nbft: WARNING: nvme-tcp module not found" >&2
 
+# 4b. Load kTLS and start tlshd.  The kernel runs the TLS 1.3 handshake for
+#     NVMe/TCP sessions via a generic-netlink upcall to tlshd, so it must be
+#     running before the first TLS connect.  The initramfs has no systemd, so
+#     tlshd is launched directly in the background; it resolves the PSK from
+#     the kernel's .nvme keyring and only needs its config file to exist
+#     (shipped by the hook -- without it tlshd exits at once and the upcall
+#     then fails with ESRCH).
+modprobe -q tls 2>/dev/null || echo "nbft: WARNING: tls module not found" >&2
+if [ -x /usr/sbin/tlshd ] ; then
+	/usr/sbin/tlshd >/dev/null 2>&1 &
+	TLSD_PID=$!
+	# Give tlshd a moment to bind its generic-netlink socket, and fail
+	# loudly if it died so a -3 handshake failure is not a mystery.
+	sleep 1
+	kill -0 "${TLSD_PID}" 2>/dev/null || \
+		echo "nbft: WARNING: tlshd exited, TLS sessions will fail" >&2
+else
+	echo "nbft: WARNING: tlshd not found, TLS sessions will fail" >&2
+fi
+
 # 5. Connect the NBFT-defined NVMe-oF subsystems.
 /usr/local/sbin/nbft-connect --connect
 

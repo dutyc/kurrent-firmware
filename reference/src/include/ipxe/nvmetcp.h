@@ -800,6 +800,10 @@ struct nvmetcp_session {
 	char *target_host;
 	/** Target port */
 	uint16_t target_port;
+	/** TLS pre-shared key (hex; empty if TLS not requested) */
+	char *tls_psk;
+	/** Kernel-side TLS port (NBCT handoff; empty if TLS not requested) */
+	char *tls_trsvcid;
 	/** Subsystem NQN */
 	char *subsystem_nqn;
 	/** Host NQN */

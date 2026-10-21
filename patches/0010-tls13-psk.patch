@@ -1,0 +1,4015 @@
+# kurrent-firmware 0010: TLS 1.3 pre-shared-key client (firmware segment)
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Adds a TLS 1.3 (RFC 8446) pre-shared-key client to the iPXE stack, so
+# that the firmware boot segment can encrypt its own NVMe/TCP connection.
+#
+# src/net/tls.c and src/include/ipxe/tls.h supply the client-side
+# handshake primitives: the RFC 8446 section 7.1 key schedule (labelled
+# HKDF expansion, Derive-Secret, the Early / Handshake / Master secrets,
+# traffic keys, the PSK binder and Finished), the ClientHello constructor
+# (psk_dhe_ke, a single cipher suite and an X25519 key share), ServerHello
+# parsing, the X25519 ephemeral key exchange, the handshake transcript
+# context, and the RFC 8446 section 5.3 record protection (AEAD nonce,
+# seal and open).  src/tests/tls13_test.c exercises all of this against
+# the RFC 8448 test vectors.
+#
+# src/net/tls13.c and src/include/ipxe/tls13.h add the client connection
+# itself: a filter interface inserted between a byte-stream consumer and
+# the underlying socket, which drives the handshake and protects every
+# subsequent record.  src/net/tcp/nvmetcp.c routes a session through it
+# when nvmetcp_use_tls() holds, i.e. when the boot URI carries a tls_psk=
+# parameter and the connection port equals tls_trsvcid (the handoff
+# parameter is delivered on every TLS-capable boot, so the port, rather
+# than the parameter's presence, decides whether the firmware connection
+# itself is encrypted), deriving the "NVMe0R01 <hostnqn> <subsysnqn>" PSK
+# identity.
+#
+# src/tests/tls13_conn_test.c exercises the connection layer in-process,
+# with a mock socket and a mock consumer and with the test itself playing
+# the server side of the handshake, so that the state machine, the record
+# layer and the flow-control contract are covered without a network
+# stack.  tls13_psk_open_socket() is the injection point for the mock
+# socket; production code never reassigns it.
+#
+# All modified files carry FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ); the new
+# self-tests (src/tests/tls13_test.c, src/tests/tls13_conn_test.c) follow
+# the upstream self-test licensing.
+#
+# See blueprint/nvme-tcp-tls-in-firmware.md.
+
+diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
+index bb442a81d..df3bb44bc 100644
+--- a/src/include/ipxe/errfile.h
++++ b/src/include/ipxe/errfile.h
+@@ -462,6 +462,8 @@ FILE_SECBOOT ( PERMITTED );
+ #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
+ #define ERRFILE_devicekey_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
+ #define ERRFILE_nbct		      ( ERRFILE_OTHER | 0x00700000 )
++#define ERRFILE_tls13		      ( ERRFILE_OTHER | 0x00710000 )
++#define ERRFILE_tls13_test	      ( ERRFILE_OTHER | 0x00720000 )
+ 
+ /** @} */
+ 
+diff --git a/src/include/ipxe/tls.h b/src/include/ipxe/tls.h
+index 4cd322d62..d8ad87872 100644
+--- a/src/include/ipxe/tls.h
++++ b/src/include/ipxe/tls.h
+@@ -48,6 +48,9 @@ struct tls_header {
+ /** TLS version 1.2 */
+ #define TLS_VERSION_TLS_1_2 0x0303
+ 
++/** TLS version 1.3 */
++#define TLS_VERSION_TLS_1_3 0x0304
++
+ /** Change cipher content type */
+ #define TLS_TYPE_CHANGE_CIPHER 20
+ 
+@@ -68,6 +71,8 @@ struct tls_header {
+ #define TLS_CLIENT_HELLO 1
+ #define TLS_SERVER_HELLO 2
+ #define TLS_NEW_SESSION_TICKET 4
++#define TLS_END_OF_EARLY_DATA 5
++#define TLS_ENCRYPTED_EXTENSIONS 8
+ #define TLS_CERTIFICATE 11
+ #define TLS_SERVER_KEY_EXCHANGE 12
+ #define TLS_CERTIFICATE_REQUEST 13
+@@ -111,6 +116,10 @@ struct tls_header {
+ #define TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 0xc02f
+ #define TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 0xc030
+ 
++/* TLS 1.3 cipher specifications (RFC 8446 section B.4) */
++#define TLS_AES_128_GCM_SHA256 0x1301
++#define TLS_AES_256_GCM_SHA384 0x1302
++
+ /* TLS signature hash algorithm identifiers */
+ #define TLS_RSA_SHA1_ALGORITHM 0x0201
+ #define TLS_RSA_SHA224_ALGORITHM 0x0301
+@@ -160,6 +169,16 @@ struct tls_header {
+ /* TLS renegotiation information extension */
+ #define TLS_RENEGOTIATION_INFO 0xff01
+ 
++/* TLS 1.3 extensions (RFC 8446 section 4.2) */
++#define TLS_PRE_SHARED_KEY 41
++#define TLS_SUPPORTED_VERSIONS 43
++#define TLS_PSK_KEY_EXCHANGE_MODES 45
++#define TLS_KEY_SHARE 51
++
++/* TLS 1.3 PSK key exchange modes (RFC 8446 section 4.2.9) */
++#define TLS_PSK_KEY_EXCHANGE_MODE_PSK 0
++#define TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE 1
++
+ /** TLS authentication header */
+ struct tls_auth_header {
+ 	/** Sequence number */
+@@ -601,6 +620,126 @@ extern struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm;
+ extern struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm;
+ extern struct tls_key_exchange_algorithm tls_ecdhe_exchange_algorithm;
+ 
++/* TLS 1.3 key schedule primitives (RFC 8446 section 7.1) */
++
++extern void tls13_expand_label ( struct digest_algorithm *digest,
++				 const void *secret, const char *label,
++				 const void *context, size_t context_len,
++				 void *out, size_t len );
++extern void tls13_derive_secret ( struct digest_algorithm *digest,
++				  const void *secret, const char *label,
++				  const void *transcript, size_t transcript_len,
++				  void *out );
++extern void tls13_early_secret ( struct digest_algorithm *digest,
++				 const void *psk, size_t psk_len, void *out );
++extern void tls13_handshake_secret ( struct digest_algorithm *digest,
++				     const void *early, const void *ecdhe,
++				     size_t ecdhe_len, void *out );
++extern void tls13_master_secret ( struct digest_algorithm *digest,
++				  const void *handshake, void *out );
++extern void tls13_traffic_key ( struct digest_algorithm *digest,
++				const void *secret, void *key, size_t key_len,
++				void *iv, size_t iv_len );
++extern void tls13_binder ( struct digest_algorithm *digest,
++			   const void *early_secret, const char *label,
++			   const void *transcript, size_t transcript_len,
++			   void *out );
++extern void tls13_finished ( struct digest_algorithm *digest,
++			     const void *secret, const void *transcript,
++			     size_t transcript_len, void *out );
++extern size_t tls13_client_hello ( void *buf, size_t max_len,
++				   const void *random, const void *public_key,
++				   const void *psk, size_t psk_len,
++				   const char *identity, size_t identity_len,
++				   const char *binder_label );
++
++/** TLS 1.3 ServerHello parsed parameters */
++struct tls13_server_hello {
++	/** Negotiated cipher suite */
++	uint16_t cipher_suite;
++	/** Negotiated version (from the supported_versions extension) */
++	uint16_t version;
++	/** Selected pre-shared key identity */
++	uint32_t selected_identity;
++	/** Pre-shared key was accepted */
++	int has_psk;
++	/** Server X25519 key share public key */
++	uint8_t public_key[32];
++	/** Key share extension was present */
++	int has_key_share;
++};
++
++extern int tls13_parse_server_hello ( const void *msg, size_t len,
++				      struct tls13_server_hello *out );
++
++/** TLS 1.3 record protection nonce length */
++#define TLS13_NONCE_LEN 12
++
++/* TLS 1.3 record protection (RFC 8446 section 5.3) */
++
++extern void tls13_nonce ( const void *iv, uint64_t seq, void *nonce );
++extern size_t tls13_seal ( struct cipher_algorithm *cipher,
++			   const void *key, size_t key_len,
++			   const void *iv, uint64_t seq,
++			   const void *aad, size_t aad_len,
++			   const void *data, size_t len,
++			   unsigned int content_type, void *out );
++extern int tls13_open ( struct cipher_algorithm *cipher,
++			const void *key, size_t key_len,
++			const void *iv, uint64_t seq,
++			const void *aad, size_t aad_len,
++			const void *record, size_t record_len,
++			void *out, size_t *len );
++
++/** TLS 1.3 handshake transcript buffer size */
++#define TLS13_TRANSCRIPT_SIZE 1024
++
++/** A TLS 1.3 ephemeral X25519 key pair */
++struct tls13_key_pair {
++	/** Private key */
++	uint8_t private_key[32];
++	/** Public key */
++	uint8_t public_key[32];
++};
++
++/** A TLS 1.3 pre-shared key handshake context */
++struct tls13_handshake {
++	/** Digest algorithm */
++	struct digest_algorithm *digest;
++	/** Binder label ("ext binder" or "res binder") */
++	const char *binder_label;
++	/** Handshake transcript */
++	uint8_t transcript[TLS13_TRANSCRIPT_SIZE];
++	/** Length of handshake transcript */
++	size_t transcript_len;
++	/** Ephemeral key pair */
++	struct tls13_key_pair key;
++	/** Early Secret */
++	uint8_t early[32];
++	/** Handshake Secret */
++	uint8_t handshake[32];
++	/** Master Secret */
++	uint8_t master[32];
++};
++
++extern int tls13_generate_key ( struct tls13_key_pair *key );
++extern int tls13_shared_secret ( const void *private_key,
++				 const void *partner_key, void *shared );
++extern void tls13_handshake_init ( struct tls13_handshake *hs,
++				   struct digest_algorithm *digest,
++				   const void *psk, size_t psk_len,
++				   const char *binder_label );
++extern int tls13_handshake_update ( struct tls13_handshake *hs,
++				    const void *msg, size_t len );
++extern int tls13_handshake_exchange ( struct tls13_handshake *hs,
++				      const void *partner_key );
++extern void tls13_handshake_derive ( struct tls13_handshake *hs,
++				     const void *secret, const char *label,
++				     void *out );
++extern void tls13_handshake_finished ( struct tls13_handshake *hs,
++				       const void *secret, void *out );
++extern void tls13_handshake_master ( struct tls13_handshake *hs );
++
+ extern int add_tls ( struct interface *xfer, const char *name,
+ 		     struct x509_root *root, struct private_key *key );
+ 
+diff --git a/src/include/ipxe/tls13.h b/src/include/ipxe/tls13.h
+new file mode 100644
+index 000000000..a107b011a
+--- /dev/null
++++ b/src/include/ipxe/tls13.h
+@@ -0,0 +1,33 @@
++#ifndef _IPXE_TLS13_H
++#define _IPXE_TLS13_H
++
++/** @file
++ *
++ * TLS 1.3 pre-shared key connection
++ *
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
++FILE_SECBOOT ( PERMITTED );
++
++#include <stdint.h>
++#include <stddef.h>
++#include <ipxe/socket.h>
++#include <ipxe/interface.h>
++
++extern int add_tls13_psk ( struct interface *xfer, const void *psk,
++			   size_t psk_len, const char *identity,
++			   struct sockaddr *peer, const char *name );
++
++/** Socket opener used to create a connection
++ *
++ * Assignment is reserved for the self-tests, which substitute a mock
++ * socket so that the connection layer can be driven without a network
++ * stack.
++ */
++extern int ( * tls13_psk_open_socket ) ( struct interface *xfer, int semantics,
++					 struct sockaddr *peer,
++					 const char *name,
++					 struct sockaddr *local );
++
++#endif /* _IPXE_TLS13_H */
+diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
+index 61ccac0bb..9fa4f565d 100644
+--- a/src/net/tcp/nvmetcp.c
++++ b/src/net/tcp/nvmetcp.c
+@@ -46,6 +46,7 @@ FILE_LICENCE ( GPL2_ONLY );
+ 
+ #include <ipxe/nvmetcp.h>
+ #include <ipxe/nbct.h>
++#include <ipxe/tls13.h>
+ 
+ /** Default host NQN prefix (uuid suffix appended) */
+ #define NVMETCP_DEFAULT_HOST_NQN "nqn.2014-08.org.ipxe:"
+@@ -1275,16 +1276,16 @@ static int nvmetcp_parse_secret ( struct nvmetcp_session *nvmetcp,
+ }
+ 
+ /**
+- * Parse TLS handoff parameters (query parameters "tls_psk=", "tls_trsvcid=")
++ * Parse TLS parameters (query parameters "tls_psk=", "tls_trsvcid=")
+  *
+  * @v nvmetcp		NVMe/TCP session
+  * @v uri		URI
+  * @ret rc		Return status code
+  *
+- * These carry the kernel/initramfs session parameters (TLS pre-shared key
+- * and the target's TLS port) into the NBCT handoff table.  The firmware
+- * itself keeps connecting in the clear; TLS is requested by the (non-empty)
+- * presence of tls_psk.
++ * These carry the TLS pre-shared key and the target's TLS port.  The
++ * port is the kernel/initramfs handoff destination (written into the
++ * NBCT table); the firmware encrypts its own connection only when it is
++ * told to connect to that same port (see nvmetcp_use_tls()).
+  */
+ static int nvmetcp_parse_tls ( struct nvmetcp_session *nvmetcp,
+ 			       struct uri *uri ) {
+@@ -1397,6 +1398,108 @@ static int nvmetcp_set_host_nqn ( struct nvmetcp_session *nvmetcp ) {
+ 	return 0;
+ }
+ 
++/** Maximum length of a TLS pre-shared key identity */
++#define NVMETCP_MAX_IDENTITY 512
++
++/** Maximum length of a TLS pre-shared key */
++#define NVMETCP_MAX_PSK 64
++
++/**
++ * Convert a hexadecimal digit to a nibble
++ *
++ * @v c			Character
++ * @ret nibble		Nibble value, or negative if invalid
++ */
++static int nvmetcp_hex_nibble ( char c ) {
++
++	if ( ( c >= '0' ) && ( c <= '9' ) )
++		return ( c - '0' );
++	if ( ( c >= 'a' ) && ( c <= 'f' ) )
++		return ( c - 'a' + 10 );
++	if ( ( c >= 'A' ) && ( c <= 'F' ) )
++		return ( c - 'A' + 10 );
++	return -1;
++}
++
++/**
++ * Construct TLS pre-shared key parameters
++ *
++ * @v nvmetcp		NVMe/TCP session
++ * @v psk		Buffer for decoded pre-shared key
++ * @v psk_len		Length of decoded pre-shared key
++ * @v identity		Buffer for pre-shared key identity
++ * @v identity_len	Length of identity buffer
++ * @ret rc		Return status code
++ *
++ * The pre-shared key identity is "NVMe0R01 <hostnqn> <subsysnqn>", as
++ * used by the kernel's NVMe/TCP TLS implementation.
++ */
++static int nvmetcp_tls_params ( struct nvmetcp_session *nvmetcp,
++				uint8_t *psk, size_t *psk_len,
++				char *identity, size_t identity_len ) {
++	const char *hex = nvmetcp->tls_psk;
++	size_t hex_len;
++	size_t i;
++	int rc;
++
++	/* Decode hexadecimal pre-shared key */
++	hex_len = strlen ( hex );
++	if ( ( hex_len == 0 ) || ( hex_len % 2 ) ||
++	     ( ( hex_len / 2 ) > NVMETCP_MAX_PSK ) ) {
++		DBGC ( nvmetcp, "invalid pre-shared key\n" );
++		return -EINVAL;
++	}
++	for ( i = 0 ; i < ( hex_len / 2 ) ; i++ ) {
++		int hi = nvmetcp_hex_nibble ( hex[ 2 * i ] );
++		int lo = nvmetcp_hex_nibble ( hex[ ( 2 * i ) + 1 ] );
++
++		if ( ( hi < 0 ) || ( lo < 0 ) ) {
++			DBGC ( nvmetcp, "invalid pre-shared key\n" );
++			return -EINVAL;
++		}
++		psk[i] = ( ( hi << 4 ) | lo );
++	}
++	*psk_len = ( hex_len / 2 );
++
++	/* Construct pre-shared key identity */
++	rc = snprintf ( identity, identity_len, "NVMe0R01 %s %s",
++			nvmetcp->host_nqn, nvmetcp->subsystem_nqn );
++	if ( ( rc < 0 ) || ( ( size_t ) rc >= identity_len ) ) {
++		DBGC ( nvmetcp, "pre-shared key identity too long\n" );
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++/**
++ * Determine whether the firmware connection must use TLS
++ *
++ * @v nvmetcp		NVMe/TCP session
++ * @ret use_tls		Firmware connection must be encrypted
++ *
++ * The boot URI supplies "tls_psk" and "tls_trsvcid" for the
++ * kernel/initramfs handoff irrespective of how the firmware itself
++ * connects.  The firmware encrypts its own connection only when it has
++ * been told to connect to that same port, so that the control plane can
++ * move the boot port onto the TLS port independently of the handoff.
++ */
++static int nvmetcp_use_tls ( struct nvmetcp_session *nvmetcp ) {
++	const char *trsvcid = nvmetcp->tls_trsvcid;
++	unsigned int port = 0;
++
++	if ( ( ! nvmetcp->tls_psk ) || ( ! trsvcid ) || ( ! *trsvcid ) )
++		return 0;
++	for ( ; *trsvcid ; trsvcid++ ) {
++		if ( ( *trsvcid < '0' ) || ( *trsvcid > '9' ) )
++			return 0;
++		port = ( ( port * 10 ) + ( *trsvcid - '0' ) );
++		if ( port > 0xffff )
++			return 0;
++	}
++	return ( port == nvmetcp->target_port );
++}
++
+ /**
+  * Open NVMe/TCP socket
+  *
+@@ -1411,16 +1514,40 @@ static int nvmetcp_open_socket ( struct nvmetcp_session *nvmetcp,
+ 				 struct nvmetcp_rx *rx,
+ 				 unsigned int phase ) {
+ 	struct sockaddr_tcpip target;
++	char identity[NVMETCP_MAX_IDENTITY];
++	uint8_t psk[NVMETCP_MAX_PSK];
++	size_t psk_len;
+ 	int rc;
+ 
+ 	/* Open socket */
+ 	memset ( &target, 0, sizeof ( target ) );
+ 	target.st_port = htons ( nvmetcp->target_port );
+-	if ( ( rc = xfer_open_named_socket ( socket, SOCK_STREAM,
+-					     ( struct sockaddr * ) &target,
+-					     nvmetcp->target_host, NULL ) ) != 0 ) {
+-		DBGC ( nvmetcp, "could not open socket: %s\n", strerror ( rc ) );
+-		return rc;
++
++	if ( nvmetcp_use_tls ( nvmetcp ) ) {
++
++		/* Construct TLS parameters and encrypt the connection */
++		if ( ( rc = nvmetcp_tls_params ( nvmetcp, psk, &psk_len, identity,
++						 sizeof ( identity ) ) ) != 0 )
++			return rc;
++		if ( ( rc = add_tls13_psk ( socket, psk, psk_len, identity,
++					    ( struct sockaddr * ) &target,
++					    nvmetcp->target_host ) ) != 0 ) {
++			DBGC ( nvmetcp, "could not add TLS: %s\n",
++			       strerror ( rc ) );
++			return rc;
++		}
++
++	} else {
++
++		/* Open plaintext connection */
++		if ( ( rc = xfer_open_named_socket ( socket, SOCK_STREAM,
++						     ( struct sockaddr * ) &target,
++						     nvmetcp->target_host,
++						     NULL ) ) != 0 ) {
++			DBGC ( nvmetcp, "could not open socket: %s\n",
++			       strerror ( rc ) );
++			return rc;
++		}
+ 	}
+ 
+ 	/* Enter requested phase */
+diff --git a/src/net/tls.c b/src/net/tls.c
+index b8587165c..695f9a758 100644
+--- a/src/net/tls.c
++++ b/src/net/tls.c
+@@ -53,9 +53,846 @@ FILE_SECBOOT ( PERMITTED );
+ #include <ipxe/validator.h>
+ #include <ipxe/job.h>
+ #include <ipxe/ffdhe.h>
++#include <ipxe/x25519.h>
+ #include <ipxe/tls.h>
+ #include <config/crypto.h>
+ 
++/*
++ * TLS 1.3 key schedule (RFC 8446 section 7.1)
++ *
++ * These primitives are deliberately independent of the TLS 1.2 key
++ * derivation machinery (which uses the legacy tls_prf() construction).
++ * A TLS 1.3 handshake uses HKDF throughout, and the labelled variants
++ * below are the building blocks of the 1.3 schedule.
++ *
++ * They are exposed (non-static) so that the RFC 8448 test vectors can
++ * be checked directly from the self-test suite.
++ */
++
++/** TLS 1.3 label prefix */
++#define TLS13_LABEL_PREFIX "tls13 "
++
++/**
++ * Construct a TLS 1.3 HkdfLabel structure
++ *
++ * @v info		Buffer for HkdfLabel
++ * @v len		Output length
++ * @v label		Label
++ * @v context		Context
++ * @v context_len	Length of context
++ * @ret info_len	Length of HkdfLabel
++ */
++static size_t tls13_hkdf_label ( void *info, size_t len, const char *label,
++				 const void *context, size_t context_len ) {
++	static const char prefix[] = TLS13_LABEL_PREFIX;
++	size_t prefix_len = ( sizeof ( prefix ) - 1 );
++	size_t label_len = strlen ( label );
++	uint8_t *bytes = info;
++
++	assert ( len <= 0xffff );
++	assert ( ( prefix_len + label_len ) <= 255 );
++	assert ( context_len <= 255 );
++
++	/* struct {
++	 *   uint16 length;
++	 *   opaque label<7..255>;	("tls13 " + Label)
++	 *   opaque context<0..255>;
++	 * } HkdfLabel;
++	 */
++	bytes[0] = ( len >> 8 );
++	bytes[1] = ( len & 0xff );
++	bytes[2] = ( prefix_len + label_len );
++	memcpy ( &bytes[3], prefix, prefix_len );
++	memcpy ( &bytes[3 + prefix_len], label, label_len );
++	bytes[3 + prefix_len + label_len] = context_len;
++	memcpy ( &bytes[4 + prefix_len + label_len], context, context_len );
++
++	return ( 4 + prefix_len + label_len + context_len );
++}
++
++/**
++ * Expand a TLS 1.3 secret using HKDF-Expand-Label
++ *
++ * @v digest		Digest algorithm
++ * @v secret		Secret (used directly as the HKDF PRK)
++ * @v label		Label (without the "tls13 " prefix)
++ * @v context		Context
++ * @v context_len	Length of context
++ * @v out		Output buffer
++ * @v len		Output length
++ */
++void tls13_expand_label ( struct digest_algorithm *digest,
++			  const void *secret, const char *label,
++			  const void *context, size_t context_len,
++			  void *out, size_t len ) {
++	uint8_t info[ 2 + 1 + ( sizeof ( TLS13_LABEL_PREFIX ) - 1 + 255 )
++		     + 1 + 255 ];
++	size_t info_len;
++
++	info_len = tls13_hkdf_label ( info, len, label, context, context_len );
++	hkdf_expand ( digest, secret, info, info_len, out, len );
++}
++
++/**
++ * Derive a TLS 1.3 secret using Derive-Secret
++ *
++ * @v digest		Digest algorithm
++ * @v secret		Secret
++ * @v label		Label
++ * @v transcript	Handshake transcript
++ * @v transcript_len	Length of handshake transcript
++ * @v out		Output buffer (digest size)
++ */
++void tls13_derive_secret ( struct digest_algorithm *digest,
++			   const void *secret, const char *label,
++			   const void *transcript, size_t transcript_len,
++			   void *out ) {
++	uint8_t ctx[ digest->ctxsize ];
++	uint8_t hash[ digest->digestsize ];
++
++	/* Derive-Secret( Secret, Label, Messages )
++	 *   = HKDF-Expand-Label( Secret, Label,
++	 *                        Transcript-Hash( Messages ), Hash.length )
++	 */
++	digest->init ( digest, ctx );
++	digest->update ( digest, ctx, transcript, transcript_len );
++	digest->final ( digest, ctx, hash );
++	tls13_expand_label ( digest, secret, label, hash, sizeof ( hash ),
++			     out, sizeof ( hash ) );
++}
++
++/**
++ * Calculate the TLS 1.3 Early Secret
++ *
++ * @v digest		Digest algorithm
++ * @v psk		Pre-shared key (or NULL for no PSK)
++ * @v psk_len		Length of pre-shared key
++ * @v out		Output buffer (digest size)
++ */
++void tls13_early_secret ( struct digest_algorithm *digest, const void *psk,
++			  size_t psk_len, void *out ) {
++	uint8_t zero[ digest->digestsize ];
++
++	/* Early Secret = HKDF-Extract( 0, PSK ) */
++	if ( ! psk ) {
++		memset ( zero, 0, sizeof ( zero ) );
++		psk = zero;
++		psk_len = sizeof ( zero );
++	}
++	hkdf_extract ( digest, NULL, 0, psk, psk_len, out );
++}
++
++/**
++ * Calculate the TLS 1.3 Handshake Secret
++ *
++ * @v digest		Digest algorithm
++ * @v early		Early Secret
++ * @v ecdhe		(EC)DHE shared secret
++ * @v ecdhe_len	Length of (EC)DHE shared secret
++ * @v out		Output buffer (digest size)
++ */
++void tls13_handshake_secret ( struct digest_algorithm *digest,
++			      const void *early, const void *ecdhe,
++			      size_t ecdhe_len, void *out ) {
++	uint8_t derived[ digest->digestsize ];
++
++	/* Handshake Secret = HKDF-Extract(
++	 *   Derive-Secret( Early Secret, "derived", "" ), (EC)DHE ) */
++	tls13_derive_secret ( digest, early, "derived", NULL, 0, derived );
++	hkdf_extract ( digest, derived, sizeof ( derived ), ecdhe, ecdhe_len,
++		       out );
++}
++
++/**
++ * Calculate the TLS 1.3 Master Secret
++ *
++ * @v digest		Digest algorithm
++ * @v handshake		Handshake Secret
++ * @v out		Output buffer (digest size)
++ */
++void tls13_master_secret ( struct digest_algorithm *digest,
++			   const void *handshake, void *out ) {
++	uint8_t derived[ digest->digestsize ];
++	uint8_t zero[ digest->digestsize ];
++
++	/* Master Secret = HKDF-Extract(
++	 *   Derive-Secret( Handshake Secret, "derived", "" ), 0 ) */
++	tls13_derive_secret ( digest, handshake, "derived", NULL, 0, derived );
++	memset ( zero, 0, sizeof ( zero ) );
++	hkdf_extract ( digest, derived, sizeof ( derived ), zero,
++		       sizeof ( zero ), out );
++}
++
++/**
++ * Derive a TLS 1.3 traffic key and IV from a traffic secret
++ *
++ * @v digest		Digest algorithm
++ * @v secret		Traffic secret (e.g. a handshake or application traffic secret)
++ * @v key		Buffer for traffic key
++ * @v key_len		Length of traffic key
++ * @v iv		Buffer for traffic IV
++ * @v iv_len		Length of traffic IV
++ */
++void tls13_traffic_key ( struct digest_algorithm *digest, const void *secret,
++			 void *key, size_t key_len, void *iv, size_t iv_len ) {
++
++	/* key = HKDF-Expand-Label( secret, "key", "", key_len ) */
++	tls13_expand_label ( digest, secret, "key", NULL, 0, key, key_len );
++	/* iv = HKDF-Expand-Label( secret, "iv", "", iv_len ) */
++	tls13_expand_label ( digest, secret, "iv", NULL, 0, iv, iv_len );
++}
++
++/**
++ * Calculate a TLS 1.3 Finished verify_data
++ *
++ * @v digest		Digest algorithm
++ * @v secret		Traffic secret
++ * @v transcript	Handshake transcript
++ * @v transcript_len	Length of handshake transcript
++ * @v out		Output buffer (digest size)
++ *
++ * The Finished message and the pre-shared key binder use the same
++ * construction, differing only in the secret from which the finished
++ * key is derived.
++ */
++void tls13_finished ( struct digest_algorithm *digest, const void *secret,
++		      const void *transcript, size_t transcript_len,
++		      void *out ) {
++	uint8_t finished_key[ digest->digestsize ];
++	uint8_t dctx[ digest->ctxsize ];
++	uint8_t hctx[ hmac_ctxsize ( digest ) ];
++	uint8_t hash[ digest->digestsize ];
++
++	/* finished_key = HKDF-Expand-Label( secret, "finished", "",
++	 *                                   Hash.length ) */
++	tls13_expand_label ( digest, secret, "finished", NULL, 0,
++			     finished_key, sizeof ( finished_key ) );
++
++	/* verify_data = HMAC( finished_key,
++	 *                     Transcript-Hash( Handshake Context ) ) */
++	digest->init ( digest, dctx );
++	digest->update ( digest, dctx, transcript, transcript_len );
++	digest->final ( digest, dctx, hash );
++	hmac_init ( digest, hctx, finished_key, sizeof ( finished_key ) );
++	hmac_update ( digest, hctx, hash, sizeof ( hash ) );
++	hmac_final ( digest, hctx, out );
++}
++
++/**
++ * Calculate a TLS 1.3 pre-shared key binder
++ *
++ * @v digest		Digest algorithm
++ * @v early_secret	Early Secret
++ * @v label		Binder label ("ext binder" or "res binder")
++ * @v transcript	Handshake transcript (the truncated ClientHello)
++ * @v transcript_len	Length of handshake transcript
++ * @v out		Output buffer (digest size)
++ */
++void tls13_binder ( struct digest_algorithm *digest, const void *early_secret,
++		    const char *label, const void *transcript,
++		    size_t transcript_len, void *out ) {
++	uint8_t binder_key[ digest->digestsize ];
++
++	/* binder_key = Derive-Secret( Early Secret, label, "" ) */
++	tls13_derive_secret ( digest, early_secret, label, NULL, 0,
++			      binder_key );
++
++	/* binder = Finished( binder_key, Truncate( ClientHello ) ) */
++	tls13_finished ( digest, binder_key, transcript, transcript_len, out );
++}
++
++/**
++ * Construct a TLS 1.3 ClientHello offering a pre-shared key
++ *
++ * @v buf		Buffer for ClientHello handshake message
++ * @v max_len		Length of buffer
++ * @v random		Client random (32 bytes)
++ * @v public_key	X25519 key share public key (32 bytes)
++ * @v psk		Pre-shared key
++ * @v psk_len		Length of pre-shared key
++ * @v identity		PSK identity
++ * @v identity_len	Length of PSK identity
++ * @v binder_label	Binder label ("ext binder" or "res binder")
++ * @ret len		Length of ClientHello, or 0 on error
++ *
++ * The ClientHello offers a single cipher suite (TLS_AES_128_GCM_SHA256)
++ * and the psk_dhe_ke key exchange mode, with the pre_shared_key
++ * extension placed last as required by RFC 8446.  The PSK binder is
++ * calculated over the truncated ClientHello (i.e. with the binders list
++ * omitted) and appended to the message.
++ */
++size_t tls13_client_hello ( void *buf, size_t max_len, const void *random,
++			    const void *public_key, const void *psk,
++			    size_t psk_len, const char *identity,
++			    size_t identity_len, const char *binder_label ) {
++	struct digest_algorithm *digest = &sha256_algorithm;
++	size_t digestsize = digest->digestsize;
++	size_t binder_list_len = ( 2 + 1 + digestsize );
++	size_t entry_len = ( 2 + identity_len + 4 );
++	size_t needed = ( 4 /* handshake header */
++			  + 2 /* legacy_version */
++			  + 32 /* random */
++			  + 1 /* session_id length */
++			  + 2 + 2 /* cipher_suites */
++			  + 1 + 1 /* compression methods */
++			  + 2 /* extensions length */
++			  + 7 /* supported_versions */
++			  + 8 /* supported_groups */
++			  + 38 /* key_share */
++			  + 6 /* psk_key_exchange_modes */
++			  + 4 /* pre_shared_key extension header */
++			  + 2 /* PskIdentity vector length */
++			  + entry_len
++			  + binder_list_len );
++	uint8_t *ch = buf;
++	uint8_t early[ digestsize ];
++	uint8_t binder[ digestsize ];
++	size_t psk_ext_off;
++	size_t ext_len_off;
++	size_t ident_end;
++	size_t msg_len;
++	uint16_t identities_len;
++	uint16_t ext_len;
++	uint16_t exts_len;
++	size_t off;
++
++	/* Check for sufficient space and valid identity length */
++	if ( ( identity_len > 0xffff ) || ( max_len < needed ) )
++		return 0;
++
++	off = 0;
++
++	/* Handshake header (length filled in later) */
++	ch[off++] = TLS_CLIENT_HELLO;
++	ch[off++] = 0; ch[off++] = 0; ch[off++] = 0;
++
++	/* legacy_version, random, legacy_session_id */
++	ch[off++] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	ch[off++] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	memcpy ( &ch[off], random, 32 ); off += 32;
++	ch[off++] = 0;
++
++	/* cipher_suites = { TLS_AES_128_GCM_SHA256 } */
++	ch[off++] = 0x00; ch[off++] = 0x02;
++	ch[off++] = ( TLS_AES_128_GCM_SHA256 >> 8 );
++	ch[off++] = ( TLS_AES_128_GCM_SHA256 & 0xff );
++
++	/* legacy_compression_methods = { null } */
++	ch[off++] = 0x01; ch[off++] = 0x00;
++
++	/* extensions (length filled in later) */
++	ext_len_off = off;
++	ch[off++] = 0; ch[off++] = 0;
++
++	/* supported_versions = { TLS 1.3 }
++	 *
++	 * Note that the extension data holds a ProtocolVersion list, which
++	 * itself carries a one-byte length prefix (RFC 8446 section 4.2.1).
++	 */
++	ch[off++] = 0x00; ch[off++] = TLS_SUPPORTED_VERSIONS;	/* 43 */
++	ch[off++] = 0x00; ch[off++] = 0x03;
++	ch[off++] = 0x02;	/* versions list length */
++	ch[off++] = ( TLS_VERSION_TLS_1_3 >> 8 );
++	ch[off++] = ( TLS_VERSION_TLS_1_3 & 0xff );
++
++	/* supported_groups = { x25519 }
++	 *
++	 * The extension data holds a NamedGroup list, which carries a
++	 * two-byte length prefix (RFC 8446 section 4.2.7).
++	 */
++	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP;		/* 10 */
++	ch[off++] = 0x00; ch[off++] = 0x04;
++	ch[off++] = 0x00; ch[off++] = 0x02;	/* named_group_list length */
++	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP_X25519;	/* 29 */
++
++	/* key_share = { x25519: public_key } */
++	ch[off++] = 0x00; ch[off++] = TLS_KEY_SHARE;		/* 51 */
++	ch[off++] = 0x00; ch[off++] = 0x26;	/* extension length = 38 */
++	ch[off++] = 0x00; ch[off++] = 0x24;	/* client_shares length = 36 */
++	ch[off++] = 0x00; ch[off++] = TLS_NAMED_GROUP_X25519;
++	ch[off++] = 0x00; ch[off++] = 0x20;	/* key_exchange length = 32 */
++	memcpy ( &ch[off], public_key, 32 ); off += 32;
++
++	/* psk_key_exchange_modes = { psk_dhe_ke } */
++	ch[off++] = 0x00; ch[off++] = TLS_PSK_KEY_EXCHANGE_MODES;	/* 45 */
++	ch[off++] = 0x00; ch[off++] = 0x02;
++	ch[off++] = 0x01;	/* vector length */
++	ch[off++] = TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE;
++
++	/* pre_shared_key (must be last) */
++	psk_ext_off = off;
++	ch[off++] = 0x00; ch[off++] = TLS_PRE_SHARED_KEY;	/* 41 */
++	ch[off++] = 0; ch[off++] = 0;	/* extension length (filled in later) */
++	ch[off++] = 0; ch[off++] = 0;	/* PskIdentity vector length (later) */
++	ch[off++] = ( identity_len >> 8 );
++	ch[off++] = ( identity_len & 0xff );
++	memcpy ( &ch[off], identity, identity_len ); off += identity_len;
++	ch[off++] = 0; ch[off++] = 0; ch[off++] = 0; ch[off++] = 0;	/* age */
++	ident_end = off;
++
++	/* Fill in the lengths (all of which include the binders list) */
++	msg_len = ( ident_end - 4 + binder_list_len );
++	ch[1] = ( msg_len >> 16 );
++	ch[2] = ( msg_len >> 8 );
++	ch[3] = ( msg_len & 0xff );
++	identities_len = ( uint16_t ) ( entry_len );
++	ch[psk_ext_off + 4] = ( identities_len >> 8 );
++	ch[psk_ext_off + 5] = ( identities_len & 0xff );
++	ext_len = ( uint16_t ) ( 2 + entry_len + binder_list_len );
++	ch[psk_ext_off + 2] = ( ext_len >> 8 );
++	ch[psk_ext_off + 3] = ( ext_len & 0xff );
++	exts_len = ( uint16_t ) ( ident_end - ( ext_len_off + 2 )
++				  + binder_list_len );
++	ch[ext_len_off] = ( exts_len >> 8 );
++	ch[ext_len_off + 1] = ( exts_len & 0xff );
++
++	/* Calculate PSK binder over the truncated ClientHello */
++	tls13_early_secret ( digest, psk, psk_len, early );
++	tls13_binder ( digest, early, binder_label, ch, ident_end, binder );
++
++	/* Append the binders list */
++	ch[ident_end] = 0x00;
++	ch[ident_end + 1] = ( uint8_t ) ( 1 + digestsize );
++	ch[ident_end + 2] = ( uint8_t ) digestsize;
++	memcpy ( &ch[ident_end + 3], binder, digestsize );
++
++	return ( ident_end + binder_list_len );
++}
++
++/**
++ * Parse a TLS 1.3 ServerHello
++ *
++ * @v msg		ServerHello handshake message
++ * @v len		Length of handshake message
++ * @v out		Parsed ServerHello parameters
++ * @ret rc		Return status code
++ *
++ * The caller must check that the negotiated version, cipher suite and
++ * (if a pre-shared key was offered) the selected identity are
++ * acceptable.
++ */
++int tls13_parse_server_hello ( const void *msg, size_t len,
++			       struct tls13_server_hello *out ) {
++	const uint8_t *sh = msg;
++	size_t exts_len;
++	size_t end;
++	size_t pos;
++	size_t body_len;
++	size_t session_id_len;
++	uint16_t ext_type;
++	uint16_t ext_len;
++
++	/* Initialise (absent extensions are reported as such) */
++	memset ( out, 0, sizeof ( *out ) );
++
++	/* Handshake header */
++	if ( len < 4 )
++		return -EINVAL;
++	if ( sh[0] != TLS_SERVER_HELLO )
++		return -EINVAL;
++	body_len = ( ( ( size_t ) sh[1] << 16 ) | ( ( size_t ) sh[2] << 8 )
++		     | sh[3] );
++	if ( ( 4 + body_len ) > len )
++		return -EINVAL;
++	end = ( 4 + body_len );
++	pos = 4;
++
++	/* legacy_version and random */
++	if ( ( pos + 2 + 32 ) > end )
++		return -EINVAL;
++	pos += ( 2 + 32 );
++
++	/* legacy_session_id_echo */
++	if ( ( pos + 1 ) > end )
++		return -EINVAL;
++	session_id_len = sh[pos++];
++	if ( ( pos + session_id_len ) > end )
++		return -EINVAL;
++	pos += session_id_len;
++
++	/* cipher_suite and legacy_compression_method */
++	if ( ( pos + 3 ) > end )
++		return -EINVAL;
++	out->cipher_suite = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
++	pos += 3;
++
++	/* extensions */
++	if ( ( pos + 2 ) > end )
++		return -EINVAL;
++	exts_len = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
++	pos += 2;
++	if ( ( pos + exts_len ) > end )
++		return -EINVAL;
++
++	/* Parse each extension */
++	while ( exts_len > 0 ) {
++
++		/* Extension header */
++		if ( exts_len < 4 )
++			return -EINVAL;
++		ext_type = ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] );
++		ext_len = ( ( ( uint16_t ) sh[pos + 2] << 8 ) | sh[pos + 3] );
++		pos += 4;
++		exts_len -= 4;
++		if ( ( ( size_t ) ext_len ) > exts_len )
++			return -EINVAL;
++
++		switch ( ext_type ) {
++
++		case TLS_SUPPORTED_VERSIONS:
++			if ( ext_len != 2 )
++				return -EINVAL;
++			out->version = ( ( ( uint16_t ) sh[pos] << 8 )
++					 | sh[pos + 1] );
++			break;
++
++		case TLS_PRE_SHARED_KEY:
++			if ( ext_len != 2 )
++				return -EINVAL;
++			out->selected_identity = ( ( ( uint16_t ) sh[pos] << 8 )
++						   | sh[pos + 1] );
++			out->has_psk = 1;
++			break;
++
++		case TLS_KEY_SHARE:
++			if ( ext_len !=
++			     ( 4 + sizeof ( out->public_key ) ) )
++				return -EINVAL;
++			if ( ( ( ( uint16_t ) sh[pos] << 8 ) | sh[pos + 1] )
++			     != TLS_NAMED_GROUP_X25519 )
++				return -EINVAL;
++			if ( ( ( ( uint16_t ) sh[pos + 2] << 8 )
++			       | sh[pos + 3] )
++			     != sizeof ( out->public_key ) )
++				return -EINVAL;
++			memcpy ( out->public_key, &sh[pos + 4],
++				 sizeof ( out->public_key ) );
++			out->has_key_share = 1;
++			break;
++
++		default:
++			break;
++		}
++
++		pos += ext_len;
++		exts_len -= ext_len;
++	}
++
++	return 0;
++}
++
++/*
++ * TLS 1.3 record protection (RFC 8446 section 5.2/5.3)
++ *
++ * TLS 1.3 protects each record with an AEAD using a per-record nonce
++ * formed by XORing the write IV with the record sequence number.  The
++ * inner content type is appended to the plaintext before encryption,
++ * and the record header (with the outer content type of
++ * application_data) is passed as additional data.
++ */
++
++/**
++ * Construct a TLS 1.3 record nonce
++ *
++ * @v iv		Initialisation vector (TLS13_NONCE_LEN bytes)
++ * @v seq		Record sequence number
++ * @v nonce		Buffer for nonce (TLS13_NONCE_LEN bytes)
++ *
++ * The nonce is the write IV XORed with the 64-bit record sequence
++ * number, left-padded with zeros to the nonce length.
++ */
++void tls13_nonce ( const void *iv, uint64_t seq, void *nonce ) {
++	const uint8_t *iv_bytes = iv;
++	uint8_t *nonce_bytes = nonce;
++	unsigned int i;
++
++	memcpy ( nonce_bytes, iv_bytes,
++		 ( TLS13_NONCE_LEN - sizeof ( seq ) ) );
++	for ( i = 0 ; i < sizeof ( seq ) ; i++ ) {
++		nonce_bytes[ TLS13_NONCE_LEN - sizeof ( seq ) + i ] =
++			( iv_bytes[ TLS13_NONCE_LEN - sizeof ( seq ) + i ] ^
++			  ( seq >> ( 8 * ( sizeof ( seq ) - 1 - i ) ) ) );
++	}
++}
++
++/**
++ * Seal a TLS 1.3 record
++ *
++ * @v cipher		Cipher algorithm (AEAD)
++ * @v key		Write key
++ * @v key_len		Length of write key
++ * @v iv		Write IV
++ * @v seq		Record sequence number
++ * @v aad		Additional data (record header)
++ * @v aad_len		Length of additional data
++ * @v data		Plaintext data
++ * @v len		Length of plaintext data
++ * @v content_type	Inner content type
++ * @v out		Buffer for ciphertext and authentication tag
++ * @ret len		Total length of ciphertext and authentication tag
++ *
++ * The output buffer must be large enough for @c len plus one byte (the
++ * inner content type) plus the cipher's authentication tag.  The
++ * sequence number must not be reused with the same key and IV.
++ */
++size_t tls13_seal ( struct cipher_algorithm *cipher, const void *key,
++		    size_t key_len, const void *iv, uint64_t seq,
++		    const void *aad, size_t aad_len,
++		    const void *data, size_t len,
++		    unsigned int content_type, void *out ) {
++	uint8_t cipher_ctx[ cipher->ctxsize ];
++	uint8_t nonce[ TLS13_NONCE_LEN ];
++	uint8_t *ciphertext = out;
++	size_t plaintext_len = ( len + 1 );
++
++	/* Construct nonce */
++	tls13_nonce ( iv, seq, nonce );
++
++	/* Assemble plaintext (data plus trailing inner content type) */
++	memcpy ( ciphertext, data, len );
++	ciphertext[len] = content_type;
++
++	/* Set key and nonce */
++	if ( ( cipher_setkey ( cipher, cipher_ctx, key, key_len ) != 0 ) ||
++	     ( cipher_setiv ( cipher, cipher_ctx, nonce,
++			      sizeof ( nonce ) ) != 0 ) )
++		return 0;
++
++	/* Process additional data */
++	cipher_encrypt ( cipher, cipher_ctx, aad, NULL, aad_len );
++
++	/* Encrypt plaintext in place */
++	cipher_encrypt ( cipher, cipher_ctx, ciphertext, ciphertext,
++			 plaintext_len );
++
++	/* Append authentication tag */
++	cipher_auth ( cipher, cipher_ctx, &ciphertext[plaintext_len] );
++
++	return ( plaintext_len + cipher->authsize );
++}
++
++/**
++ * Open a TLS 1.3 record
++ *
++ * @v cipher		Cipher algorithm (AEAD)
++ * @v key		Read key
++ * @v key_len		Length of read key
++ * @v iv		Read IV
++ * @v seq		Record sequence number
++ * @v aad		Additional data (record header)
++ * @v aad_len		Length of additional data
++ * @v record		Ciphertext and authentication tag
++ * @v record_len	Total length of ciphertext and authentication tag
++ * @v out		Buffer for plaintext data
++ * @v len		Length of plaintext data (excluding content type)
++ * @ret content_type	Inner content type, or negative error
++ *
++ * On a failed authentication tag verification, the output buffer is
++ * zeroed and a negative error is returned.
++ */
++int tls13_open ( struct cipher_algorithm *cipher, const void *key,
++		 size_t key_len, const void *iv, uint64_t seq,
++		 const void *aad, size_t aad_len,
++		 const void *record, size_t record_len,
++		 void *out, size_t *len ) {
++	uint8_t cipher_ctx[ cipher->ctxsize ];
++	uint8_t nonce[ TLS13_NONCE_LEN ];
++	uint8_t verify_auth[ cipher->authsize ];
++	const uint8_t *ciphertext = record;
++	uint8_t *plaintext = out;
++	size_t plaintext_len;
++	uint8_t diff = 0;
++	unsigned int i;
++
++	/* Sanity check */
++	if ( record_len < ( 1 + cipher->authsize ) )
++		return -EINVAL;
++
++	/* Construct nonce */
++	tls13_nonce ( iv, seq, nonce );
++
++	/* Set key and nonce */
++	if ( ( cipher_setkey ( cipher, cipher_ctx, key, key_len ) != 0 ) ||
++	     ( cipher_setiv ( cipher, cipher_ctx, nonce,
++			      sizeof ( nonce ) ) != 0 ) ) {
++		return -EINVAL;
++	}
++
++	/* Process additional data */
++	cipher_decrypt ( cipher, cipher_ctx, aad, NULL, aad_len );
++
++	/* Decrypt ciphertext (excluding authentication tag) */
++	plaintext_len = ( record_len - cipher->authsize );
++	cipher_decrypt ( cipher, cipher_ctx, ciphertext, plaintext,
++			 plaintext_len );
++
++	/* Generate expected authentication tag */
++	cipher_auth ( cipher, cipher_ctx, verify_auth );
++
++	/* Verify authentication tag (in constant time) */
++	for ( i = 0 ; i < cipher->authsize ; i++ ) {
++		diff |= ( verify_auth[i] ^
++			  ciphertext[ plaintext_len + i ] );
++	}
++	if ( diff != 0 ) {
++		memset ( plaintext, 0, plaintext_len );
++		return -EINVAL;
++	}
++
++	/* Strip trailing inner content type */
++	*len = ( plaintext_len - 1 );
++	return plaintext[ plaintext_len - 1 ];
++}
++
++/*
++ * TLS 1.3 pre-shared key handshake context (RFC 8446 section 4.2.11)
++ *
++ * A NQN-based pre-shared key handshake requires only the key schedule
++ * plus the handshake transcript: there are no certificates and no
++ * session resumption.  The context below accumulates the transcript and
++ * holds the intermediate secrets, so that a caller (e.g. the NVMe/TCP
++ * driver) can perform the handshake without duplicating the schedule.
++ */
++
++/**
++ * Generate an ephemeral key pair
++ *
++ * @v key		Key pair to fill in
++ * @ret rc		Return status code
++ */
++int tls13_generate_key ( struct tls13_key_pair *key ) {
++	int rc;
++
++	/* Generate random private key */
++	if ( ( rc = rbg_generate ( NULL, 0, 0, key->private_key,
++				   sizeof ( key->private_key ) ) ) != 0 )
++		return rc;
++
++	/* Derive public key */
++	return exchange_share ( &x25519_algorithm, key->private_key,
++				key->public_key );
++}
++
++/**
++ * Calculate an ephemeral shared secret
++ *
++ * @v private_key	Local private key
++ * @v partner_key	Partner public key
++ * @v shared		Shared secret to fill in
++ * @ret rc		Return status code
++ */
++int tls13_shared_secret ( const void *private_key, const void *partner_key,
++			  void *shared ) {
++
++	return exchange_agree ( &x25519_algorithm, private_key, partner_key,
++				shared );
++}
++
++/**
++ * Initialise a TLS 1.3 handshake context
++ *
++ * @v hs		Handshake context
++ * @v digest		Digest algorithm
++ * @v psk		Pre-shared key (or NULL for an ephemeral handshake)
++ * @v psk_len		Length of pre-shared key
++ * @v binder_label	Binder label ("ext binder" or "res binder")
++ */
++void tls13_handshake_init ( struct tls13_handshake *hs,
++			    struct digest_algorithm *digest,
++			    const void *psk, size_t psk_len,
++			    const char *binder_label ) {
++
++	memset ( hs, 0, sizeof ( *hs ) );
++	hs->digest = digest;
++	hs->binder_label = binder_label;
++	tls13_early_secret ( digest, psk, psk_len, hs->early );
++}
++
++/**
++ * Append a handshake message to the transcript
++ *
++ * @v hs		Handshake context
++ * @v msg		Handshake message
++ * @v len		Length of handshake message
++ * @ret rc		Return status code
++ */
++int tls13_handshake_update ( struct tls13_handshake *hs, const void *msg,
++			     size_t len ) {
++
++	if ( ( hs->transcript_len + len ) > sizeof ( hs->transcript ) )
++		return -ENOSPC;
++	memcpy ( &hs->transcript[ hs->transcript_len ], msg, len );
++	hs->transcript_len += len;
++	return 0;
++}
++
++/**
++ * Derive a secret from the current handshake transcript
++ *
++ * @v hs		Handshake context
++ * @v secret		Base secret
++ * @v label		Label
++ * @v out		Output buffer (digest size)
++ */
++void tls13_handshake_derive ( struct tls13_handshake *hs, const void *secret,
++			      const char *label, void *out ) {
++
++	tls13_derive_secret ( hs->digest, secret, label, hs->transcript,
++			      hs->transcript_len, out );
++}
++
++/**
++ * Perform an ephemeral key exchange
++ *
++ * @v hs		Handshake context
++ * @v partner_key	Partner public key
++ * @ret rc		Return status code
++ *
++ * The Handshake Secret is derived from the Early Secret and the
++ * ephemeral shared secret.  The context's ephemeral private key must
++ * have been set beforehand.
++ */
++int tls13_handshake_exchange ( struct tls13_handshake *hs,
++			       const void *partner_key ) {
++	uint8_t shared[32];
++	int rc;
++
++	/* shared = X25519( private key, partner public key ) */
++	if ( ( rc = tls13_shared_secret ( hs->key.private_key, partner_key,
++					  shared ) ) != 0 )
++		return rc;
++
++	/* Handshake Secret = HKDF-Extract(
++	 *   Derive-Secret( Early Secret, "derived", "" ), shared ) */
++	tls13_handshake_secret ( hs->digest, hs->early, shared,
++				 sizeof ( shared ), hs->handshake );
++	return 0;
++}
++
++/**
++ * Calculate a Finished message from the current handshake transcript
++ *
++ * @v hs		Handshake context
++ * @v secret		Traffic secret (handshake or application)
++ * @v out		Output buffer (digest size)
++ */
++void tls13_handshake_finished ( struct tls13_handshake *hs, const void *secret,
++				void *out ) {
++
++	tls13_finished ( hs->digest, secret, hs->transcript,
++			 hs->transcript_len, out );
++}
++
++/**
++ * Calculate the Master Secret
++ *
++ * @v hs		Handshake context
++ */
++void tls13_handshake_master ( struct tls13_handshake *hs ) {
++
++	tls13_master_secret ( hs->digest, hs->handshake, hs->master );
++}
++
+ /* Disambiguate the various error causes */
+ #define EINVAL_CHANGE_CIPHER __einfo_error ( EINFO_EINVAL_CHANGE_CIPHER )
+ #define EINFO_EINVAL_CHANGE_CIPHER					\
+diff --git a/src/net/tls13.c b/src/net/tls13.c
+new file mode 100644
+index 000000000..5afb349ae
+--- /dev/null
++++ b/src/net/tls13.c
+@@ -0,0 +1,865 @@
++/*
++ * Copyright (C) 2026 LECREATE <lecreate@foxmail.com>.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301, USA.
++ *
++ * You can also choose to distribute this program under the terms of
++ * the Unmodified Binary Distribution Licence (as given in the file
++ * COPYING.UBDL), provided that you have satisfied its requirements.
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
++FILE_SECBOOT ( PERMITTED );
++
++/** @file
++ *
++ * TLS 1.3 pre-shared key connection
++ *
++ * This is a minimal TLS 1.3 client for a single, external pre-shared
++ * key: there are no certificates and no session resumption.  It is
++ * inserted as a filter interface between a byte stream consumer (e.g.
++ * the NVMe/TCP driver) and the underlying socket, in the same way as
++ * the TLS 1.2 implementation in tls.c.
++ *
++ * The initial ClientHello (and the ServerHello) are sent and received
++ * as plaintext handshake records; every subsequent record is protected
++ * with AES-128-GCM using keys derived from the pre-shared key and an
++ * ephemeral X25519 key exchange (RFC 8446 psk_dhe_ke).
++ */
++
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <ipxe/malloc.h>
++#include <ipxe/refcnt.h>
++#include <ipxe/interface.h>
++#include <ipxe/iobuf.h>
++#include <ipxe/xfer.h>
++#include <ipxe/open.h>
++#include <ipxe/crypto.h>
++#include <ipxe/aes.h>
++#include <ipxe/sha256.h>
++#include <ipxe/rbg.h>
++#include <ipxe/tls.h>
++#include <ipxe/tls13.h>
++
++/* Identify errors as coming from this file */
++#undef ERRFILE
++#define ERRFILE ERRFILE_tls13
++
++/** AES-128-GCM key length */
++#define TLS13_KEY_LEN 16
++
++/** Socket opener used to create a connection
++ *
++ * This is a function pointer so that the connection layer can be
++ * exercised by the self-tests with a mock socket, without requiring a
++ * network stack.  Production code never reassigns it.
++ */
++int ( * tls13_psk_open_socket ) ( struct interface *xfer, int semantics,
++				  struct sockaddr *peer, const char *name,
++				  struct sockaddr *local ) =
++	xfer_open_named_socket;
++
++/** Maximum size of a ClientHello handshake message */
++#define TLS13_MAX_CLIENT_HELLO 512
++
++/** Maximum plaintext record length accepted from the peer */
++#define TLS13_MAX_PLAINTEXT 8192
++
++/** Maximum ciphertext record length */
++#define TLS13_MAX_RECORD ( 5 + TLS13_MAX_PLAINTEXT + 1 + 16 )
++
++/** A TLS 1.3 record header */
++struct tls13_psk_header {
++	/** Content type */
++	uint8_t type;
++	/** Legacy record version */
++	uint8_t version[2];
++	/** Length of the following data */
++	uint8_t length[2];
++} __attribute__ (( packed ));
++
++/** TLS 1.3 PSK connection phases */
++enum tls13_psk_phase {
++	/** Need to send the ClientHello */
++	TLS13_PSK_CLIENT_HELLO = 0,
++	/** Awaiting the server flight (ServerHello, EncryptedExtensions, Finished) */
++	TLS13_PSK_SERVER_FLIGHT,
++	/** Need to send the client Finished */
++	TLS13_PSK_CLIENT_FINISHED,
++	/** Handshake complete */
++	TLS13_PSK_DATA,
++	/** Failed */
++	TLS13_PSK_FAILED,
++};
++
++/** Key direction */
++enum tls13_psk_direction {
++	/** Receive direction */
++	TLS13_PSK_RX = 0,
++	/** Transmit direction */
++	TLS13_PSK_TX,
++};
++
++/** A TLS 1.3 pre-shared key connection */
++struct tls13_psk {
++	/** Reference count */
++	struct refcnt refcnt;
++	/** Plaintext stream interface */
++	struct interface plainstream;
++	/** Ciphertext stream interface */
++	struct interface cipherstream;
++
++	/** Digest algorithm */
++	struct digest_algorithm *digest;
++	/** Pre-shared key */
++	void *psk;
++	/** Length of pre-shared key */
++	size_t psk_len;
++	/** PSK identity */
++	char *identity;
++	/** Length of PSK identity */
++	size_t identity_len;
++
++	/** Handshake context */
++	struct tls13_handshake hs;
++	/** Connection phase */
++	unsigned int phase;
++
++	/** Client handshake traffic secret */
++	uint8_t client_hs[32];
++	/** Server handshake traffic secret */
++	uint8_t server_hs[32];
++	/** Client application traffic secret */
++	uint8_t client_ap[32];
++	/** Server application traffic secret */
++	uint8_t server_ap[32];
++
++	/** Transmit key */
++	uint8_t tx_key[TLS13_KEY_LEN];
++	/** Transmit nonce */
++	uint8_t tx_iv[TLS13_NONCE_LEN];
++	/** Receive key */
++	uint8_t rx_key[TLS13_KEY_LEN];
++	/** Receive nonce */
++	uint8_t rx_iv[TLS13_NONCE_LEN];
++	/** Transmit sequence number */
++	uint64_t tx_seq;
++	/** Receive sequence number */
++	uint64_t rx_seq;
++
++	/** Pending record to transmit */
++	struct io_buffer *tx_iobuf;
++
++	/** Receive buffer */
++	uint8_t rx[TLS13_MAX_RECORD];
++	/** Length of received data */
++	size_t rx_len;
++};
++
++/**
++ * Derive a traffic key in the given direction
++ *
++ * @v tls		TLS connection
++ * @v direction		Key direction
++ * @v secret		Traffic secret
++ */
++static void tls13_psk_set_key ( struct tls13_psk *tls,
++				enum tls13_psk_direction direction,
++				const void *secret ) {
++	uint8_t *key = ( direction ? tls->tx_key : tls->rx_key );
++	uint8_t *iv = ( direction ? tls->tx_iv : tls->rx_iv );
++
++	tls13_traffic_key ( tls->digest, secret, key, TLS13_KEY_LEN,
++			    iv, TLS13_NONCE_LEN );
++}
++
++/**
++ * Construct an encrypted record
++ *
++ * @v tls		TLS connection
++ * @v type		Inner content type
++ * @v data		Plaintext data
++ * @v len		Length of plaintext data
++ * @ret iobuf		I/O buffer, or NULL on failure
++ */
++static struct io_buffer * tls13_psk_cipher_record ( struct tls13_psk *tls,
++						    unsigned int type,
++						    const void *data,
++						    size_t len ) {
++	struct cipher_algorithm *cipher = &aes_gcm_algorithm;
++	size_t cipher_len = ( len + 1 + cipher->authsize );
++	struct tls13_psk_header *header;
++	struct io_buffer *iobuf;
++	size_t out_len;
++
++	iobuf = alloc_iob ( sizeof ( *header ) + cipher_len );
++	if ( ! iobuf )
++		return NULL;
++	header = iob_put ( iobuf, sizeof ( *header ) );
++	header->type = TLS_TYPE_DATA;
++	header->version[0] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	header->version[1] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	header->length[0] = ( cipher_len >> 8 );
++	header->length[1] = ( cipher_len & 0xff );
++
++	out_len = tls13_seal ( cipher, tls->tx_key, TLS13_KEY_LEN, tls->tx_iv,
++			       tls->tx_seq, header, sizeof ( *header ), data,
++			       len, type, iob_put ( iobuf, cipher_len ) );
++	if ( out_len != cipher_len ) {
++		free_iob ( iobuf );
++		return NULL;
++	}
++	tls->tx_seq++;
++	return iobuf;
++}
++
++/**
++ * Construct the ClientHello record
++ *
++ * @v tls		TLS connection
++ * @ret iobuf		I/O buffer, or NULL on failure
++ */
++static struct io_buffer * tls13_psk_client_hello ( struct tls13_psk *tls ) {
++	struct tls13_psk_header *header;
++	struct io_buffer *iobuf;
++	uint8_t random[32];
++	uint8_t *ch;
++	size_t len;
++	int rc;
++
++	/* Generate client random */
++	if ( ( rc = rbg_generate ( NULL, 0, 0, random, sizeof ( random ) ) ) != 0 )
++		return NULL;
++
++	/* Allocate buffer for the record header and ClientHello */
++	iobuf = alloc_iob ( sizeof ( *header ) + TLS13_MAX_CLIENT_HELLO );
++	if ( ! iobuf )
++		return NULL;
++	header = iob_put ( iobuf, sizeof ( *header ) );
++	ch = iob_put ( iobuf, TLS13_MAX_CLIENT_HELLO );
++
++	/* Construct ClientHello */
++	len = tls13_client_hello ( ch, TLS13_MAX_CLIENT_HELLO, random,
++				   tls->hs.key.public_key, tls->psk,
++				   tls->psk_len, tls->identity,
++				   tls->identity_len, tls->hs.binder_label );
++	if ( ! len ) {
++		free_iob ( iobuf );
++		return NULL;
++	}
++	iob_unput ( iobuf, ( TLS13_MAX_CLIENT_HELLO - len ) );
++
++	/* Construct record header */
++	header->type = TLS_TYPE_HANDSHAKE;
++	header->version[0] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	header->version[1] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	header->length[0] = ( len >> 8 );
++	header->length[1] = ( len & 0xff );
++
++	/* Append to the handshake transcript */
++	if ( tls13_handshake_update ( &tls->hs, ch, len ) != 0 ) {
++		free_iob ( iobuf );
++		return NULL;
++	}
++
++	return iobuf;
++}
++
++/**
++ * Fail the connection
++ *
++ * @v tls		TLS connection
++ * @v rc		Reason for failure
++ */
++static void tls13_psk_fail ( struct tls13_psk *tls, int rc ) {
++
++	if ( tls->phase == TLS13_PSK_FAILED )
++		return;
++	DBGC ( tls, "TLS13 %p failed: %s\n", tls, strerror ( rc ) );
++	tls->phase = TLS13_PSK_FAILED;
++	intf_shutdown ( &tls->plainstream, rc );
++	intf_shutdown ( &tls->cipherstream, rc );
++}
++
++/**
++ * Transmit any pending record
++ *
++ * @v tls		TLS connection
++ */
++static void tls13_psk_tx ( struct tls13_psk *tls ) {
++	uint8_t verify[32];
++	uint8_t finished[4 + 32];
++
++	/* Refuse to run if the connection has failed */
++	if ( tls->phase == TLS13_PSK_FAILED )
++		return;
++
++	/* Construct the next handshake record, if applicable */
++	if ( ! tls->tx_iobuf ) {
++		switch ( tls->phase ) {
++		case TLS13_PSK_CLIENT_HELLO:
++			tls->tx_iobuf = tls13_psk_client_hello ( tls );
++			if ( ! tls->tx_iobuf ) {
++				tls13_psk_fail ( tls, -EINVAL );
++				return;
++			}
++			tls->phase = TLS13_PSK_SERVER_FLIGHT;
++			DBGC ( tls, "TLS13 %p sending ClientHello\n", tls );
++			break;
++		case TLS13_PSK_CLIENT_FINISHED:
++			tls13_handshake_finished ( &tls->hs, tls->client_hs,
++						   verify );
++			finished[0] = TLS_FINISHED;
++			finished[1] = 0;
++			finished[2] = 0;
++			finished[3] = sizeof ( verify );
++			memcpy ( &finished[4], verify, sizeof ( verify ) );
++			tls->tx_iobuf = tls13_psk_cipher_record ( tls,
++								  TLS_TYPE_HANDSHAKE,
++								  finished,
++								  sizeof ( finished ) );
++			if ( ! tls->tx_iobuf ) {
++				tls13_psk_fail ( tls, -EINVAL );
++				return;
++			}
++			DBGC ( tls, "TLS13 %p sending client Finished\n", tls );
++			break;
++		default:
++			/* Nothing to transmit */
++			break;
++		}
++	}
++
++	/* Transmit any pending record, if the socket window allows */
++	if ( tls->tx_iobuf && ( xfer_window ( &tls->cipherstream ) != 0 ) ) {
++		xfer_deliver_iob ( &tls->cipherstream,
++				   iob_disown ( tls->tx_iobuf ) );
++
++		/* Completing the ClientFinished switches to the
++		 * application traffic key.
++		 */
++		if ( tls->phase == TLS13_PSK_CLIENT_FINISHED ) {
++			tls13_psk_set_key ( tls, TLS13_PSK_TX, tls->client_ap );
++			tls->tx_seq = 0;
++			tls->phase = TLS13_PSK_DATA;
++			DBGC ( tls, "TLS13 %p handshake complete\n", tls );
++		}
++	}
++
++	/* The ciphertext window may have changed, and the plaintext
++	 * window is derived from it (see tls13_psk_plainstream_window()).
++	 * This function is the ciphertext window callback and also runs
++	 * after every record transmission, so notify the plaintext
++	 * stream unconditionally: iPXE's TCP layer reports a zero window
++	 * while a segment remains unacknowledged, and a missed
++	 * notification would stall the consumer indefinitely.
++	 */
++	xfer_window_changed ( &tls->plainstream );
++}
++
++/**
++ * Handle a ServerHello handshake message
++ *
++ * @v tls		TLS connection
++ * @v msg		Handshake message
++ * @v len		Length of handshake message
++ * @ret rc		Return status code
++ */
++static int tls13_psk_server_hello ( struct tls13_psk *tls, const void *msg,
++				    size_t len ) {
++	struct tls13_server_hello hello;
++	int rc;
++
++	/* Parse and validate the ServerHello */
++	if ( ( rc = tls13_parse_server_hello ( msg, len, &hello ) ) != 0 )
++		return rc;
++	if ( hello.version != TLS_VERSION_TLS_1_3 )
++		return -EINVAL;
++	if ( hello.cipher_suite != TLS_AES_128_GCM_SHA256 )
++		return -EINVAL;
++	if ( ! hello.has_key_share )
++		return -EINVAL;
++	if ( ! hello.has_psk )
++		return -EINVAL;
++
++	/* Append to the transcript, then perform the key exchange */
++	if ( ( rc = tls13_handshake_update ( &tls->hs, msg, len ) ) != 0 )
++		return rc;
++	if ( ( rc = tls13_handshake_exchange ( &tls->hs,
++					       hello.public_key ) ) != 0 )
++		return rc;
++
++	/* Derive the handshake traffic secrets and keys */
++	tls13_handshake_derive ( &tls->hs, tls->hs.handshake, "c hs traffic",
++				 tls->client_hs );
++	tls13_handshake_derive ( &tls->hs, tls->hs.handshake, "s hs traffic",
++				 tls->server_hs );
++	tls13_psk_set_key ( tls, TLS13_PSK_TX, tls->client_hs );
++	tls13_psk_set_key ( tls, TLS13_PSK_RX, tls->server_hs );
++	tls->tx_seq = 0;
++	tls->rx_seq = 0;
++
++	DBGC ( tls, "TLS13 %p received ServerHello\n", tls );
++	return 0;
++}
++
++/**
++ * Handle a server Finished handshake message
++ *
++ * @v tls		TLS connection
++ * @v msg		Handshake message
++ * @v len		Length of handshake message
++ * @ret rc		Return status code
++ */
++static int tls13_psk_server_finished ( struct tls13_psk *tls, const void *msg,
++				       size_t len ) {
++	uint8_t verify[32];
++	int rc;
++
++	/* Verify the Finished message against the transcript so far */
++	if ( len != ( 4 + sizeof ( verify ) ) )
++		return -EINVAL;
++	tls13_handshake_finished ( &tls->hs, tls->server_hs, verify );
++	if ( memcmp ( verify, ( ( const uint8_t * ) msg + 4 ),
++		      sizeof ( verify ) ) != 0 ) {
++		DBGC ( tls, "TLS13 %p server Finished mismatch\n", tls );
++		return -EINVAL;
++	}
++
++	/* Append the server Finished to the transcript */
++	if ( ( rc = tls13_handshake_update ( &tls->hs, msg, len ) ) != 0 )
++		return rc;
++
++	/* Derive the Master Secret and application traffic secrets */
++	tls13_handshake_master ( &tls->hs );
++	tls13_handshake_derive ( &tls->hs, tls->hs.master, "c ap traffic",
++				 tls->client_ap );
++	tls13_handshake_derive ( &tls->hs, tls->hs.master, "s ap traffic",
++				 tls->server_ap );
++
++	/* The server now protects records with its application key */
++	tls13_psk_set_key ( tls, TLS13_PSK_RX, tls->server_ap );
++	tls->rx_seq = 0;
++
++	/* The client must now send its own Finished */
++	tls->phase = TLS13_PSK_CLIENT_FINISHED;
++
++	DBGC ( tls, "TLS13 %p received server Finished\n", tls );
++	return 0;
++}
++
++/**
++ * Handle handshake messages
++ *
++ * @v tls		TLS connection
++ * @v data		Handshake messages
++ * @v len		Length of handshake messages
++ * @ret rc		Return status code
++ */
++static int tls13_psk_handshake ( struct tls13_psk *tls, const void *data,
++				 size_t len ) {
++	const uint8_t *msg = data;
++	size_t remaining = len;
++	unsigned int type;
++	size_t msg_len;
++	size_t total;
++	int rc;
++
++	while ( remaining >= 4 ) {
++		type = msg[0];
++		msg_len = ( ( ( size_t ) msg[1] << 16 ) | ( ( size_t ) msg[2] << 8 )
++			    | msg[3] );
++		total = ( 4 + msg_len );
++		if ( total > remaining ) {
++			DBGC ( tls, "TLS13 %p fragmentated handshake message\n",
++			       tls );
++			return -EINVAL;
++		}
++
++		switch ( type ) {
++
++		case TLS_SERVER_HELLO:
++			if ( ( rc = tls13_psk_server_hello ( tls, msg,
++							     total ) ) != 0 )
++				return rc;
++			break;
++
++		case TLS_ENCRYPTED_EXTENSIONS:
++			if ( ( rc = tls13_handshake_update ( &tls->hs, msg,
++							     total ) ) != 0 )
++				return rc;
++			break;
++
++		case TLS_FINISHED:
++			if ( ( rc = tls13_psk_server_finished ( tls, msg,
++								total ) ) != 0 )
++				return rc;
++			break;
++
++		case TLS_NEW_SESSION_TICKET:
++			/* Post-handshake message; ignored (no resumption) */
++			break;
++
++		default:
++			DBGC ( tls, "TLS13 %p unexpected handshake type %d\n",
++			       tls, type );
++			return -EINVAL;
++		}
++
++		msg += total;
++		remaining -= total;
++	}
++
++	return 0;
++}
++
++/**
++ * Deliver decrypted data to the plaintext stream
++ *
++ * @v tls		TLS connection
++ * @v data		Plaintext data
++ * @v len		Length of plaintext data
++ * @ret rc		Return status code
++ */
++static int tls13_psk_deliver ( struct tls13_psk *tls, const void *data,
++			       size_t len ) {
++	struct io_buffer *iobuf;
++
++	if ( ! len )
++		return 0;
++	iobuf = alloc_iob ( len );
++	if ( ! iobuf )
++		return -ENOMEM;
++	memcpy ( iob_put ( iobuf, len ), data, len );
++	return xfer_deliver_iob ( &tls->plainstream, iobuf );
++}
++
++/**
++ * Handle a received record
++ *
++ * @v tls		TLS connection
++ * @v record		Record (including header)
++ * @v total		Total length of record
++ * @ret rc		Return status code
++ */
++static int tls13_psk_record ( struct tls13_psk *tls, uint8_t *record,
++			      size_t total ) {
++	unsigned int type = record[0];
++	size_t record_len = ( total - 5 );
++	size_t plain_len;
++	int content_type;
++
++	/* Compatibility ChangeCipherSpec records are ignored */
++	if ( type == TLS_TYPE_CHANGE_CIPHER )
++		return 0;
++
++	/* The ServerHello is sent as a plaintext handshake record */
++	if ( type == TLS_TYPE_HANDSHAKE )
++		return tls13_psk_handshake ( tls, &record[5], record_len );
++
++	if ( type != TLS_TYPE_DATA ) {
++		DBGC ( tls, "TLS13 %p unexpected record type %d\n", tls, type );
++		return -EINVAL;
++	}
++
++	/* Decrypt the record in place */
++	content_type = tls13_open ( &aes_gcm_algorithm, tls->rx_key,
++				    TLS13_KEY_LEN, tls->rx_iv, tls->rx_seq,
++				    record, 5, &record[5], record_len,
++				    &record[5], &plain_len );
++	if ( content_type < 0 ) {
++		DBGC ( tls, "TLS13 %p could not decrypt record\n", tls );
++		return -EINVAL;
++	}
++	tls->rx_seq++;
++
++	switch ( content_type ) {
++
++	case TLS_TYPE_HANDSHAKE:
++		return tls13_psk_handshake ( tls, &record[5], plain_len );
++
++	case TLS_TYPE_DATA:
++		return tls13_psk_deliver ( tls, &record[5], plain_len );
++
++	case TLS_TYPE_ALERT:
++		DBGC ( tls, "TLS13 %p received alert %d\n", tls,
++		       ( plain_len ? record[5] : -1 ) );
++		return -EINVAL;
++
++	default:
++		DBGC ( tls, "TLS13 %p unexpected inner type %d\n", tls,
++		       content_type );
++		return -EINVAL;
++	}
++}
++
++/**
++ * Process received records
++ *
++ * @v tls		TLS connection
++ */
++static void tls13_psk_rx ( struct tls13_psk *tls ) {
++	size_t record_len;
++	size_t total;
++	int rc;
++
++	while ( tls->rx_len >= 5 ) {
++
++		record_len = ( ( ( size_t ) tls->rx[3] << 8 ) | tls->rx[4] );
++		total = ( 5 + record_len );
++		if ( total > sizeof ( tls->rx ) ) {
++			tls13_psk_fail ( tls, -EINVAL );
++			return;
++		}
++		if ( tls->rx_len < total )
++			break;
++
++		if ( ( rc = tls13_psk_record ( tls, tls->rx, total ) ) != 0 ) {
++			tls13_psk_fail ( tls, rc );
++			return;
++		}
++
++		memmove ( tls->rx, &tls->rx[total], ( tls->rx_len - total ) );
++		tls->rx_len -= total;
++
++		/* Any record received during the handshake may have
++		 * completed the handshake and thus unblocked transmission.
++		 */
++		tls13_psk_tx ( tls );
++	}
++}
++
++/**
++ * Handle received ciphertext
++ *
++ * @v tls		TLS connection
++ * @v iobuf		I/O buffer
++ * @v meta		Data transfer metadata
++ * @ret rc		Return status code
++ */
++static int tls13_psk_cipherstream_deliver ( struct tls13_psk *tls,
++					    struct io_buffer *iobuf,
++					    struct xfer_metadata *meta __unused ) {
++	size_t len = iob_len ( iobuf );
++
++	if ( ( tls->rx_len + len ) > sizeof ( tls->rx ) ) {
++		free_iob ( iobuf );
++		tls13_psk_fail ( tls, -EINVAL );
++		return -EINVAL;
++	}
++	memcpy ( &tls->rx[tls->rx_len], iobuf->data, len );
++	tls->rx_len += len;
++	free_iob ( iobuf );
++
++	tls13_psk_rx ( tls );
++	return 0;
++}
++
++/**
++ * Handle window change on the ciphertext stream
++ *
++ * @v tls		TLS connection
++ */
++static void tls13_psk_cipherstream_window ( struct tls13_psk *tls ) {
++
++	tls13_psk_tx ( tls );
++}
++
++/**
++ * Get plaintext stream window
++ *
++ * @v tls		TLS connection
++ * @ret len		Length of window
++ */
++static size_t tls13_psk_plainstream_window ( struct tls13_psk *tls ) {
++
++	/* Block transmission until the handshake is complete and any
++	 * previously delivered record has been transmitted.
++	 */
++	if ( tls->phase != TLS13_PSK_DATA )
++		return 0;
++	if ( tls->tx_iobuf )
++		return 0;
++	return xfer_window ( &tls->cipherstream );
++}
++
++/**
++ * Handle delivery of plaintext data
++ *
++ * @v tls		TLS connection
++ * @v iobuf		I/O buffer
++ * @v meta		Data transfer metadata
++ * @ret rc		Return status code
++ */
++static int tls13_psk_plainstream_deliver ( struct tls13_psk *tls,
++					   struct io_buffer *iobuf,
++					   struct xfer_metadata *meta __unused ) {
++	struct io_buffer *record;
++
++	/* Sanity check */
++	if ( tls->phase != TLS13_PSK_DATA ) {
++		free_iob ( iobuf );
++		return -EINVAL;
++	}
++
++	/* Encrypt into a record and transmit */
++	record = tls13_psk_cipher_record ( tls, TLS_TYPE_DATA, iobuf->data,
++					   iob_len ( iobuf ) );
++	free_iob ( iobuf );
++	if ( ! record )
++		return -ENOMEM;
++	tls->tx_iobuf = record;
++	tls13_psk_tx ( tls );
++	return 0;
++}
++
++/**
++ * Close the connection
++ *
++ * @v tls		TLS connection
++ * @v rc		Reason for close
++ */
++static void tls13_psk_close ( struct tls13_psk *tls, int rc ) {
++
++	tls->phase = TLS13_PSK_FAILED;
++	intf_shutdown ( &tls->plainstream, rc );
++	intf_shutdown ( &tls->cipherstream, rc );
++}
++
++/** TLS 1.3 PSK plaintext stream interface operations */
++static struct interface_operation tls13_psk_plainstream_ops[] = {
++	INTF_OP ( xfer_deliver, struct tls13_psk *,
++		  tls13_psk_plainstream_deliver ),
++	INTF_OP ( xfer_window, struct tls13_psk *, tls13_psk_plainstream_window ),
++	INTF_OP ( intf_close, struct tls13_psk *, tls13_psk_close ),
++};
++
++/** TLS 1.3 PSK plaintext stream interface descriptor */
++static struct interface_descriptor tls13_psk_plainstream_desc =
++	INTF_DESC ( struct tls13_psk, plainstream, tls13_psk_plainstream_ops );
++
++/** TLS 1.3 PSK ciphertext stream interface operations */
++static struct interface_operation tls13_psk_cipherstream_ops[] = {
++	INTF_OP ( xfer_deliver, struct tls13_psk *,
++		  tls13_psk_cipherstream_deliver ),
++	INTF_OP ( xfer_window_changed, struct tls13_psk *,
++		  tls13_psk_cipherstream_window ),
++	INTF_OP ( intf_close, struct tls13_psk *, tls13_psk_close ),
++};
++
++/** TLS 1.3 PSK ciphertext stream interface descriptor */
++static struct interface_descriptor tls13_psk_cipherstream_desc =
++	INTF_DESC ( struct tls13_psk, cipherstream, tls13_psk_cipherstream_ops );
++
++/**
++ * Free TLS 1.3 PSK connection
++ *
++ * @v refcnt		Reference count
++ */
++static void tls13_psk_free ( struct refcnt *refcnt ) {
++	struct tls13_psk *tls =
++		container_of ( refcnt, struct tls13_psk, refcnt );
++
++	if ( tls->tx_iobuf )
++		free_iob ( tls->tx_iobuf );
++	free ( tls->psk );
++	free ( tls->identity );
++	free ( tls );
++}
++
++/**
++ * Create a TLS 1.3 PSK connection
++ *
++ * @v xfer		Parent interface
++ * @v psk		Pre-shared key
++ * @v psk_len		Length of pre-shared key
++ * @v identity		Pre-shared key identity (NUL-terminated)
++ * @v peer		Peer socket address
++ * @v name		Peer name (or NULL)
++ * @ret rc		Return status code
++ */
++int add_tls13_psk ( struct interface *xfer, const void *psk, size_t psk_len,
++		    const char *identity, struct sockaddr *peer,
++		    const char *name ) {
++	struct tls13_psk *tls;
++	int rc;
++
++	/* Allocate and initialise structure */
++	tls = zalloc ( sizeof ( *tls ) );
++	if ( ! tls ) {
++		rc = -ENOMEM;
++		goto err_alloc;
++	}
++	ref_init ( &tls->refcnt, tls13_psk_free );
++	intf_init ( &tls->plainstream, &tls13_psk_plainstream_desc,
++		    &tls->refcnt );
++	intf_init ( &tls->cipherstream, &tls13_psk_cipherstream_desc,
++		    &tls->refcnt );
++	tls->digest = &sha256_algorithm;
++
++	/* Record pre-shared key and identity */
++	tls->psk = malloc ( psk_len );
++	if ( ! tls->psk ) {
++		rc = -ENOMEM;
++		goto err_psk;
++	}
++	memcpy ( tls->psk, psk, psk_len );
++	tls->psk_len = psk_len;
++	tls->identity = strdup ( identity );
++	if ( ! tls->identity ) {
++		rc = -ENOMEM;
++		goto err_identity;
++	}
++	tls->identity_len = strlen ( tls->identity );
++
++	/* Initialise handshake context and generate an ephemeral key */
++	tls13_handshake_init ( &tls->hs, tls->digest, tls->psk, tls->psk_len,
++			       "ext binder" );
++	if ( ( rc = tls13_generate_key ( &tls->hs.key ) ) != 0 )
++		goto err_key;
++	tls->phase = TLS13_PSK_CLIENT_HELLO;
++
++	/* Open the socket beneath us.  This is the only remaining
++	 * fallible operation, so it must be performed before we attach
++	 * to the parent interface: otherwise a failure would leave the
++	 * parent plugged to an interface that is about to be freed.
++	 */
++	if ( ( rc = tls13_psk_open_socket ( &tls->cipherstream, SOCK_STREAM,
++					    peer, name, NULL ) ) != 0 ) {
++		DBGC ( tls, "TLS13 %p could not open socket: %s\n", tls,
++		       strerror ( rc ) );
++		goto err_open;
++	}
++
++	/* Attach to parent interface */
++	intf_plug_plug ( xfer, &tls->plainstream );
++
++	/* Begin the handshake, mortalise self, and return */
++	tls13_psk_tx ( tls );
++	ref_put ( &tls->refcnt );
++	return 0;
++
++ err_open:
++ err_key:
++ err_identity:
++ err_psk:
++	ref_put ( &tls->refcnt );
++ err_alloc:
++	return rc;
++}
+diff --git a/src/tests/tests.c b/src/tests/tests.c
+index c952cf08a..75d4d946d 100644
+--- a/src/tests/tests.c
++++ b/src/tests/tests.c
+@@ -93,6 +93,8 @@ REQUIRE_OBJECT ( cpio_test );
+ REQUIRE_OBJECT ( fdt_test );
+ REQUIRE_OBJECT ( ecdsa_test );
+ REQUIRE_OBJECT ( hkdf_test );
++REQUIRE_OBJECT ( tls13_test );
++REQUIRE_OBJECT ( tls13_conn_test );
+ REQUIRE_OBJECT ( ffdhe_test );
+ REQUIRE_OBJECT ( mime_test );
+ REQUIRE_OBJECT ( datauri_test );
+diff --git a/src/tests/tls13_conn_test.c b/src/tests/tls13_conn_test.c
+new file mode 100644
+index 000000000..1f99590ee
+--- /dev/null
++++ b/src/tests/tls13_conn_test.c
+@@ -0,0 +1,695 @@
++/*
++ * Copyright (C) 2026 LECREATE <lecreate@foxmail.com>.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301, USA.
++ *
++ * You can also choose to distribute this program under the terms of
++ * the Unmodified Binary Distribution Licence (as given in the file
++ * COPYING.UBDL), provided that you have satisfied its requirements.
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
++
++/** @file
++ *
++ * TLS 1.3 pre-shared key connection self-tests
++ *
++ * The connection layer in net/tls13.c is exercised in-process: the
++ * socket below it is a mock, installed via the tls13_psk_open_socket()
++ * injection point, and the consumer above it is a mock, so the
++ * handshake state machine, the record layer and the flow-control
++ * contract can all be driven without a peer.
++ *
++ * The server side of the handshake is played by the test itself, using
++ * the same primitives as the client.  The client is not a party to that
++ * reconstruction: it verifies the server Finished against its own
++ * transcript and decrypts the server records with keys that it derived
++ * independently, so a mistake here shows up as a failed handshake
++ * rather than as a silently passing test.  The primitives themselves
++ * are separately checked against the RFC 8448 vectors in tls13_test.c.
++ */
++
++/* Forcibly enable assertions */
++#undef NDEBUG
++
++/* Identify errors as coming from this file */
++#undef ERRFILE
++#define ERRFILE ERRFILE_tls13_test
++
++#include <stdint.h>
++#include <stddef.h>
++#include <string.h>
++#include <errno.h>
++#include <ipxe/interface.h>
++#include <ipxe/iobuf.h>
++#include <ipxe/refcnt.h>
++#include <ipxe/xfer.h>
++#include <ipxe/aes.h>
++#include <ipxe/sha256.h>
++#include <ipxe/tls.h>
++#include <ipxe/tls13.h>
++#include <ipxe/test.h>
++
++/** Number of records recorded by the mock socket */
++#define TLS13_CONN_MAX_RECORDS 8
++
++/** Length of the pre-shared key used by these tests */
++#define TLS13_CONN_PSK_LEN 32
++
++/** PSK identity used by these tests */
++#define TLS13_CONN_IDENTITY "NVMe0R01 nqn.2026-07.com.kurrent:test"
++
++/** A mock socket */
++struct tls13_mock_socket {
++	/** Reference count */
++	struct refcnt refcnt;
++	/** Data transfer interface */
++	struct interface xfer;
++	/** Transmit window size */
++	size_t window;
++	/** Number of socket opens */
++	unsigned int opens;
++	/** Number of records delivered */
++	unsigned int records;
++	/** Content type of each delivered record */
++	uint8_t type[TLS13_CONN_MAX_RECORDS];
++	/** First record delivered (the ClientHello) */
++	uint8_t first[512];
++	/** Length of the first record */
++	size_t first_len;
++	/** Total length of all records delivered */
++	size_t total;
++	/** Close reason, or 0 if the socket was never closed */
++	int close_rc;
++};
++
++/** A mock consumer */
++struct tls13_mock_consumer {
++	/** Reference count */
++	struct refcnt refcnt;
++	/** Data transfer interface */
++	struct interface xfer;
++	/** Number of window change notifications */
++	unsigned int window_changes;
++	/** Number of plaintext buffers delivered */
++	unsigned int records;
++	/** Total length of plaintext delivered */
++	size_t total;
++	/** Plaintext delivered */
++	uint8_t data[512];
++	/** Length of plaintext delivered */
++	size_t len;
++	/** Close reason, or 0 if the consumer was never closed */
++	int close_rc;
++};
++
++/** Mock socket */
++static struct tls13_mock_socket mock;
++
++/** Mock consumer */
++static struct tls13_mock_consumer consumer;
++
++/**
++ * Handle record delivery from the connection to the mock socket
++ *
++ * @v sock		Mock socket
++ * @v iobuf		Record
++ * @v meta		Data transfer metadata
++ * @ret rc		Return status code
++ */
++static int mock_socket_deliver ( struct tls13_mock_socket *sock,
++				 struct io_buffer *iobuf,
++				 struct xfer_metadata *meta __unused ) {
++	size_t len = iob_len ( iobuf );
++
++	/* Record the content type of each record */
++	if ( sock->records < TLS13_CONN_MAX_RECORDS )
++		sock->type[sock->records] = ( ( uint8_t * ) iobuf->data )[0];
++
++	/* Retain the first record, which is the ClientHello */
++	if ( ( sock->records == 0 ) && ( len <= sizeof ( sock->first ) ) ) {
++		memcpy ( sock->first, iobuf->data, len );
++		sock->first_len = len;
++	}
++
++	sock->records++;
++	sock->total += len;
++	free_iob ( iobuf );
++	return 0;
++}
++
++/**
++ * Get mock socket window
++ *
++ * @v sock		Mock socket
++ * @ret len		Length of window
++ */
++static size_t mock_socket_window ( struct tls13_mock_socket *sock ) {
++
++	return sock->window;
++}
++
++/**
++ * Handle mock socket close
++ *
++ * @v sock		Mock socket
++ * @v rc		Reason for close
++ */
++static void mock_socket_close ( struct tls13_mock_socket *sock, int rc ) {
++
++	sock->close_rc = rc;
++}
++
++/** Mock socket interface operations */
++static struct interface_operation mock_socket_ops[] = {
++	INTF_OP ( xfer_deliver, struct tls13_mock_socket *,
++		  mock_socket_deliver ),
++	INTF_OP ( xfer_window, struct tls13_mock_socket *, mock_socket_window ),
++	INTF_OP ( intf_close, struct tls13_mock_socket *, mock_socket_close ),
++};
++
++/** Mock socket interface descriptor */
++static struct interface_descriptor mock_socket_desc =
++	INTF_DESC ( struct tls13_mock_socket, xfer, mock_socket_ops );
++
++/**
++ * Handle plaintext window change on the mock consumer
++ *
++ * @v cnsmr		Mock consumer
++ */
++static void mock_consumer_window_changed ( struct tls13_mock_consumer *cnsmr ) {
++
++	cnsmr->window_changes++;
++}
++
++/**
++ * Handle plaintext delivery to the mock consumer
++ *
++ * @v cnsmr		Mock consumer
++ * @v iobuf		Plaintext
++ * @v meta		Data transfer metadata
++ * @ret rc		Return status code
++ */
++static int mock_consumer_deliver ( struct tls13_mock_consumer *cnsmr,
++				   struct io_buffer *iobuf,
++				   struct xfer_metadata *meta __unused ) {
++	size_t len = iob_len ( iobuf );
++
++	if ( ( cnsmr->len + len ) <= sizeof ( cnsmr->data ) ) {
++		memcpy ( &cnsmr->data[cnsmr->len], iobuf->data, len );
++		cnsmr->len += len;
++	}
++	cnsmr->records++;
++	cnsmr->total += len;
++	free_iob ( iobuf );
++	return 0;
++}
++
++/**
++ * Get mock consumer window
++ *
++ * @v cnsmr		Mock consumer
++ * @ret len		Length of window
++ */
++static size_t mock_consumer_window ( struct tls13_mock_consumer *cnsmr
++				     __unused ) {
++
++	return 0xffff;
++}
++
++/**
++ * Handle mock consumer close
++ *
++ * @v cnsmr		Mock consumer
++ * @v rc		Reason for close
++ */
++static void mock_consumer_close ( struct tls13_mock_consumer *cnsmr, int rc ) {
++
++	cnsmr->close_rc = ( rc ? rc : -1 );
++}
++
++/** Mock consumer interface operations */
++static struct interface_operation mock_consumer_ops[] = {
++	INTF_OP ( xfer_window_changed, struct tls13_mock_consumer *,
++		  mock_consumer_window_changed ),
++	INTF_OP ( xfer_deliver, struct tls13_mock_consumer *,
++		  mock_consumer_deliver ),
++	INTF_OP ( xfer_window, struct tls13_mock_consumer *,
++		  mock_consumer_window ),
++	INTF_OP ( intf_close, struct tls13_mock_consumer *, mock_consumer_close ),
++};
++
++/** Mock consumer interface descriptor */
++static struct interface_descriptor mock_consumer_desc =
++	INTF_DESC ( struct tls13_mock_consumer, xfer, mock_consumer_ops );
++
++/**
++ * Open a mock socket
++ *
++ * @v xfer		Data transfer interface
++ * @v semantics		Communication semantics
++ * @v peer		Peer socket address
++ * @v name		Peer name
++ * @v local		Local socket address
++ * @ret rc		Return status code
++ *
++ * This is installed as tls13_psk_open_socket(), so that a connection
++ * may be created without a network stack.  The mock is plugged into
++ * the caller's interface exactly as a real socket would be.
++ */
++static int mock_socket_open ( struct interface *xfer, int semantics,
++			      struct sockaddr *peer, const char *name,
++			      struct sockaddr *local ) {
++
++	( void ) semantics;
++	( void ) peer;
++	( void ) name;
++	( void ) local;
++
++	mock.opens++;
++	intf_plug_plug ( &mock.xfer, xfer );
++	return 0;
++}
++
++/**
++ * Reset the mock socket and consumer
++ */
++static void tls13_conn_reset ( void ) {
++
++	memset ( &mock, 0, sizeof ( mock ) );
++	memset ( &consumer, 0, sizeof ( consumer ) );
++	ref_init ( &mock.refcnt, NULL );
++	intf_init ( &mock.xfer, &mock_socket_desc, &mock.refcnt );
++	ref_init ( &consumer.refcnt, NULL );
++	intf_init ( &consumer.xfer, &mock_consumer_desc, &consumer.refcnt );
++	mock.window = 0x10000;
++	tls13_psk_open_socket = mock_socket_open;
++}
++
++/**
++ * Tear down the connection under test
++ */
++static void tls13_conn_done ( void ) {
++
++	/* Shutting down the consumer propagates through the connection
++	 * and frees it.
++	 */
++	if ( consumer.close_rc == 0 )
++		intf_shutdown ( &consumer.xfer, 0 );
++}
++
++/**
++ * Create a connection under test
++ *
++ * @ret rc		Return status code
++ */
++static int tls13_conn_create ( void ) {
++	uint8_t psk[TLS13_CONN_PSK_LEN];
++
++	memset ( psk, 0x5a, sizeof ( psk ) );
++	return add_tls13_psk ( &consumer.xfer, psk, sizeof ( psk ),
++			       TLS13_CONN_IDENTITY, NULL, "mock" );
++}
++
++/**
++ * Locate the client key share within a captured ClientHello record
++ *
++ * @v record		ClientHello record (including record header)
++ * @v len		Length of record
++ * @v public_key	Buffer for the X25519 public key
++ * @ret rc		Return status code
++ */
++static int tls13_conn_client_key_share ( const uint8_t *record, size_t len,
++					 uint8_t *public_key ) {
++	const uint8_t *msg;
++	const uint8_t *ext;
++	const uint8_t *end;
++	size_t msg_len;
++	size_t ext_len;
++	size_t elen;
++	unsigned int type;
++
++	/* Sanity check the record and handshake headers */
++	if ( len < 5 )
++		return -EINVAL;
++	if ( record[0] != TLS_TYPE_HANDSHAKE )
++		return -EINVAL;
++	msg_len = ( ( ( size_t ) record[3] << 8 ) | record[4] );
++	if ( ( 5 + msg_len ) > len )
++		return -EINVAL;
++	msg = &record[5];
++	if ( msg_len < ( 47 + 2 ) )
++		return -EINVAL;
++	if ( msg[0] != TLS_CLIENT_HELLO )
++		return -EINVAL;
++
++	/* Walk the extension block.  The fixed prefix of the
++	 * ClientHello has already been validated by tls13_test.c, so
++	 * only the extension block is re-parsed here.
++	 */
++	ext_len = ( ( ( size_t ) msg[45] << 8 ) | msg[46] );
++	if ( ( 47 + ext_len ) > msg_len )
++		return -EINVAL;
++	ext = &msg[47];
++	end = &msg[47 + ext_len];
++	while ( ext < end ) {
++		if ( ( ( size_t ) ( end - ext ) ) < 4 )
++			return -EINVAL;
++		type = ( ( ext[0] << 8 ) | ext[1] );
++		elen = ( ( ext[2] << 8 ) | ext[3] );
++		ext += 4;
++		if ( ( ( size_t ) ( end - ext ) ) < elen )
++			return -EINVAL;
++		if ( type == TLS_KEY_SHARE ) {
++			/* client_shares: u16 length, u16 group,
++			 * u16 key length, 32-byte key
++			 */
++			if ( elen != ( 2 + 2 + 2 + 32 ) )
++				return -EINVAL;
++			if ( ( ( ext[2] << 8 ) | ext[3] ) !=
++			     TLS_NAMED_GROUP_X25519 )
++				return -EINVAL;
++			if ( ( ( ext[4] << 8 ) | ext[5] ) != 32 )
++				return -EINVAL;
++			memcpy ( public_key, &ext[6], 32 );
++			return 0;
++		}
++		ext += elen;
++	}
++
++	return -ENOENT;
++}
++
++/**
++ * Construct the server flight (ServerHello, EncryptedExtensions, Finished)
++ *
++ * @v hs		Server handshake context (already keyed)
++ * @v server_hello	Buffer for the ServerHello handshake message
++ * @v server_hello_len	Length of ServerHello, or 0 on error
++ * @v record		Buffer for the encrypted records
++ * @v record_len	Length of records, or 0 on error
++ *
++ * @ret rc		Return status code
++ */
++static int tls13_conn_server_flight ( struct tls13_handshake *hs,
++				      uint8_t *server_hello,
++				      size_t *server_hello_len,
++				      uint8_t *record, size_t *record_len ) {
++	uint8_t c_hs[32];
++	uint8_t s_hs[32];
++	uint8_t key[16];
++	uint8_t iv[TLS13_NONCE_LEN];
++	uint8_t plain[ 4 + 4 + 32 ];
++	uint8_t verify[32];
++	uint8_t *sh = server_hello;
++	uint8_t *out = &record[5];
++	size_t ext_len_off;
++	size_t ext_start;
++	size_t ext_len;
++	size_t msg_len;
++	size_t cipher_len;
++	size_t n = 0;
++	size_t plain_len = 0;
++
++	*server_hello_len = 0;
++	*record_len = 0;
++
++	/* ServerHello: header (length filled in later) */
++	sh[n++] = TLS_SERVER_HELLO;
++	sh[n++] = 0; sh[n++] = 0; sh[n++] = 0;
++
++	/* legacy_version and random */
++	sh[n++] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	sh[n++] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	memset ( &sh[n], 0x37, 32 ); n += 32;
++
++	/* legacy_session_id_echo (empty), cipher_suite, compression */
++	sh[n++] = 0;
++	sh[n++] = ( TLS_AES_128_GCM_SHA256 >> 8 );
++	sh[n++] = ( TLS_AES_128_GCM_SHA256 & 0xff );
++	sh[n++] = 0;
++
++	/* extensions (length filled in later) */
++	ext_len_off = n;
++	sh[n++] = 0; sh[n++] = 0;
++	ext_start = n;
++
++	/* supported_versions = { TLS 1.3 } */
++	sh[n++] = 0x00; sh[n++] = TLS_SUPPORTED_VERSIONS;
++	sh[n++] = 0x00; sh[n++] = 0x02;
++	sh[n++] = ( TLS_VERSION_TLS_1_3 >> 8 );
++	sh[n++] = ( TLS_VERSION_TLS_1_3 & 0xff );
++
++	/* key_share = { x25519: hs->key.public_key } */
++	sh[n++] = 0x00; sh[n++] = TLS_KEY_SHARE;
++	sh[n++] = 0x00; sh[n++] = 0x24;
++	sh[n++] = 0x00; sh[n++] = TLS_NAMED_GROUP_X25519;
++	sh[n++] = 0x00; sh[n++] = 0x20;
++	memcpy ( &sh[n], hs->key.public_key, 32 ); n += 32;
++
++	/* pre_shared_key = { selected_identity = 0 } */
++	sh[n++] = 0x00; sh[n++] = TLS_PRE_SHARED_KEY;
++	sh[n++] = 0x00; sh[n++] = 0x02;
++	sh[n++] = 0x00; sh[n++] = 0x00;
++
++	/* Fill in the extension and message lengths */
++	ext_len = ( n - ext_start );
++	sh[ext_len_off] = ( ext_len >> 8 );
++	sh[ext_len_off + 1] = ( ext_len & 0xff );
++	msg_len = ( n - 4 );
++	sh[1] = ( msg_len >> 16 );
++	sh[2] = ( msg_len >> 8 );
++	sh[3] = ( msg_len & 0xff );
++
++	/* Append the ServerHello to the server transcript */
++	if ( tls13_handshake_update ( hs, server_hello, n ) != 0 )
++		return -EINVAL;
++	*server_hello_len = n;
++
++	/* Derive the handshake traffic secrets and the server key */
++	tls13_handshake_derive ( hs, hs->handshake, "c hs traffic", c_hs );
++	tls13_handshake_derive ( hs, hs->handshake, "s hs traffic", s_hs );
++	tls13_traffic_key ( hs->digest, s_hs, key, sizeof ( key ),
++			    iv, sizeof ( iv ) );
++
++	/* EncryptedExtensions (empty) */
++	plain[plain_len++] = TLS_ENCRYPTED_EXTENSIONS;
++	plain[plain_len++] = 0; plain[plain_len++] = 0; plain[plain_len++] = 0;
++	if ( tls13_handshake_update ( hs, plain, plain_len ) != 0 )
++		return -EINVAL;
++
++	/* Server Finished */
++	tls13_handshake_finished ( hs, s_hs, verify );
++	plain[plain_len++] = TLS_FINISHED;
++	plain[plain_len++] = 0; plain[plain_len++] = 0;
++	plain[plain_len++] = sizeof ( verify );
++	memcpy ( &plain[plain_len], verify, sizeof ( verify ) );
++	plain_len += sizeof ( verify );
++
++	/* Encrypt the flight into a single protected record */
++	cipher_len = ( plain_len + 1 + aes_gcm_algorithm.authsize );
++	record[0] = TLS_TYPE_DATA;
++	record[1] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	record[2] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	record[3] = ( cipher_len >> 8 );
++	record[4] = ( cipher_len & 0xff );
++	if ( tls13_seal ( &aes_gcm_algorithm, key, sizeof ( key ), iv, 0,
++			  record, 5, plain, plain_len, TLS_TYPE_HANDSHAKE,
++			  out ) != cipher_len )
++		return -EINVAL;
++	*record_len = ( 5 + cipher_len );
++
++	return 0;
++}
++
++/**
++ * Deliver a record to the connection under test
++ *
++ * @v data		Record
++ * @v len		Length of record
++ * @ret rc		Return status code
++ */
++static int tls13_conn_deliver ( const void *data, size_t len ) {
++	struct io_buffer *iobuf;
++
++	iobuf = alloc_iob ( len );
++	if ( ! iobuf )
++		return -ENOMEM;
++	memcpy ( iob_put ( iobuf, len ), data, len );
++	return xfer_deliver_iob ( &mock.xfer, iobuf );
++}
++
++/**
++ * Deliver a handshake message to the connection under test
++ *
++ * @v msg		Handshake message
++ * @v len		Length of handshake message
++ * @ret rc		Return status code
++ *
++ * The message is sent as a plaintext handshake record, as a server
++ * does for the ServerHello (and for the whole flight when no
++ * encryption is in use).
++ */
++static int tls13_conn_deliver_handshake ( const void *msg, size_t len ) {
++	uint8_t record[ 5 + 256 ];
++	uint8_t *hdr = record;
++
++	if ( len > 256 )
++		return -EINVAL;
++	hdr[0] = TLS_TYPE_HANDSHAKE;
++	hdr[1] = ( TLS_VERSION_TLS_1_2 >> 8 );
++	hdr[2] = ( TLS_VERSION_TLS_1_2 & 0xff );
++	hdr[3] = ( len >> 8 );
++	hdr[4] = ( len & 0xff );
++	memcpy ( &record[5], msg, len );
++	return tls13_conn_deliver ( record, ( 5 + len ) );
++}
++
++/**
++ * Report a window-contract test for the connection layer
++ *
++ * The connection layer must notify the plaintext stream whenever the
++ * ciphertext window may have changed, even when it has no record to
++ * transmit at that moment.  A consumer that waits on the plaintext
++ * window (as the NVMe/TCP driver does before issuing its first command)
++ * would otherwise never be woken again.
++ */
++static void tls13_conn_window_test ( void ) {
++
++	tls13_conn_reset();
++
++	/* Establish the connection: the ClientHello is transmitted
++	 * immediately, leaving no pending record and the plaintext
++	 * window still closed because the handshake is incomplete.
++	 */
++	ok ( tls13_conn_create() == 0 );
++	ok ( mock.opens == 1 );
++	ok ( mock.records == 1 );
++	ok ( mock.type[0] == TLS_TYPE_HANDSHAKE );
++	ok ( xfer_window ( &consumer.xfer ) == 0 );
++
++	/* The socket reports that its window has changed (e.g. an ACK
++	 * has freed the transmit window).  There is nothing to send,
++	 * but the plaintext stream must still be notified.
++	 */
++	consumer.window_changes = 0;
++	xfer_window_changed ( &mock.xfer );
++	ok ( consumer.window_changes == 1 );
++
++	tls13_conn_done();
++}
++
++/**
++ * Report a handshake and data-transfer test for the connection layer
++ *
++ * This drives a complete handshake against a server played by the
++ * test, then transfers data in both directions, and finally exercises
++ * the window contract in the established state.
++ */
++static void tls13_conn_handshake_test ( void ) {
++	struct tls13_handshake hs;
++	uint8_t client_key[32];
++	uint8_t server_hello[128];
++	uint8_t record[256];
++	uint8_t psk[TLS13_CONN_PSK_LEN];
++	struct io_buffer *iobuf;
++	size_t server_hello_len;
++	size_t record_len;
++	size_t msg_len;
++
++	tls13_conn_reset();
++	memset ( psk, 0x5a, sizeof ( psk ) );
++
++	/* Establish the connection and capture its ClientHello */
++	ok ( tls13_conn_create() == 0 );
++	ok ( mock.records == 1 );
++	ok ( tls13_conn_client_key_share ( mock.first, mock.first_len,
++					   client_key ) == 0 );
++	msg_len = ( ( ( size_t ) mock.first[3] << 8 ) | mock.first[4] );
++
++	/* Play the server: initialise a handshake context with the same
++	 * pre-shared key, absorb the ClientHello, generate an ephemeral
++	 * key and agree the shared secret.
++	 *
++	 * The binder label differs (the client sends no resumption
++	 * ticket, so it uses the "ext binder" label) but the label only
++	 * affects the binder calculation, not the early secret from
++	 * which the handshake keys are derived.
++	 */
++	tls13_handshake_init ( &hs, &sha256_algorithm, psk, sizeof ( psk ),
++			       "res binder" );
++	ok ( tls13_handshake_update ( &hs, &mock.first[5], msg_len ) == 0 );
++	ok ( tls13_generate_key ( &hs.key ) == 0 );
++	ok ( tls13_handshake_exchange ( &hs, client_key ) == 0 );
++
++	/* Construct and absorb the ServerHello */
++	ok ( tls13_conn_server_flight ( &hs, server_hello, &server_hello_len,
++					record, &record_len ) == 0 );
++	ok ( server_hello_len > 0 );
++	ok ( record_len > 0 );
++
++	/* The client must parse and accept the ServerHello, then decrypt
++	 * and verify the rest of the flight.
++	 */
++	ok ( tls13_conn_deliver_handshake ( server_hello, server_hello_len ) == 0 );
++	ok ( tls13_conn_deliver ( record, record_len ) == 0 );
++
++	/* The handshake must now be complete: the client Finished has
++	 * been transmitted (as a protected record), the plaintext
++	 * window is open, and the connection has not been closed.
++	 */
++	ok ( consumer.close_rc == 0 );
++	ok ( mock.records == 2 );
++	ok ( mock.type[0] == TLS_TYPE_HANDSHAKE );
++	ok ( mock.type[1] == TLS_TYPE_DATA );
++	ok ( xfer_window ( &consumer.xfer ) != 0 );
++
++	/* Transmit plaintext: it must reach the socket as a protected
++	 * record rather than as a handshake record.
++	 */
++	iobuf = alloc_iob ( 16 );
++	ok ( iobuf != NULL );
++	memcpy ( iob_put ( iobuf, 5 ), "hello", 5 );
++	ok ( xfer_deliver_iob ( &consumer.xfer, iobuf ) == 0 );
++	ok ( mock.records == 3 );
++	ok ( mock.type[2] == TLS_TYPE_DATA );
++
++	/* The window contract must hold in the established state too:
++	 * with nothing pending, a window change on the socket must
++	 * still be propagated to the plaintext stream.
++	 */
++	mock.window = 0;
++	consumer.window_changes = 0;
++	xfer_window_changed ( &mock.xfer );
++	ok ( consumer.window_changes == 1 );
++
++	tls13_conn_done();
++}
++
++/**
++ * Report all TLS 1.3 connection self-tests
++ */
++static void tls13_conn_test_exec ( void ) {
++
++	tls13_conn_window_test();
++	tls13_conn_handshake_test();
++}
++
++/** TLS 1.3 connection self-test */
++struct self_test tls13_conn_test __self_test = {
++	.name = "tls13conn",
++	.exec = tls13_conn_test_exec,
++};
+diff --git a/src/tests/tls13_test.c b/src/tests/tls13_test.c
+new file mode 100644
+index 000000000..02f2489a0
+--- /dev/null
++++ b/src/tests/tls13_test.c
+@@ -0,0 +1,1112 @@
++/*
++ * Copyright (C) 2026 Michael Brown <mbrown@fensystems.co.uk>.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301, USA.
++ *
++ * You can also choose to distribute this program under the terms of
++ * the Unmodified Binary Distribution Licence (as given in the file
++ * COPYING.UBDL), provided that you have satisfied its requirements.
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
++
++/** @file
++ *
++ * TLS 1.3 key schedule self-tests
++ *
++ * These test vectors are taken from RFC 8448 section 3 ("Simple 1-RTT
++ * Handshake"), which uses cipher suite TLS_AES_128_GCM_SHA256 and hence
++ * a SHA-256 key schedule.  The intermediate secrets below are reproduced
++ * exactly as printed in the RFC.
++ */
++
++/* Forcibly enable assertions */
++#undef NDEBUG
++
++#include <string.h>
++#include <ipxe/aes.h>
++#include <ipxe/x25519.h>
++#include <ipxe/crypto.h>
++#include <ipxe/sha256.h>
++#include <ipxe/tls.h>
++#include <ipxe/test.h>
++
++/** Define inline raw bytes */
++#define BYTES(...) { __VA_ARGS__ }
++
++/** RFC 8448 section 3 (EC)DHE shared secret */
++static const uint8_t ecdhe[] = BYTES (
++	0x8b, 0xd4, 0x05, 0x4f, 0xb5, 0x5b, 0x9d, 0x63,
++	0xfd, 0xfb, 0xac, 0xf9, 0xf0, 0x4b, 0x9f, 0x0d,
++	0x35, 0xe6, 0xd6, 0x3f, 0x53, 0x75, 0x63, 0xef,
++	0xd4, 0x62, 0x72, 0x90, 0x0f, 0x89, 0x49, 0x2d );
++
++/** RFC 8448 section 3 expected Early Secret */
++static const uint8_t early_secret[] = BYTES (
++	0x33, 0xad, 0x0a, 0x1c, 0x60, 0x7e, 0xc0, 0x3b,
++	0x09, 0xe6, 0xcd, 0x98, 0x93, 0x68, 0x0c, 0xe2,
++	0x10, 0xad, 0xf3, 0x00, 0xaa, 0x1f, 0x26, 0x60,
++	0xe1, 0xb2, 0x2e, 0x10, 0xf1, 0x70, 0xf9, 0x2a );
++
++/** RFC 8448 section 3 expected derived (early) */
++static const uint8_t derived_early[] = BYTES (
++	0x6f, 0x26, 0x15, 0xa1, 0x08, 0xc7, 0x02, 0xc5,
++	0x67, 0x8f, 0x54, 0xfc, 0x9d, 0xba, 0xb6, 0x97,
++	0x16, 0xc0, 0x76, 0x18, 0x9c, 0x48, 0x25, 0x0c,
++	0xeb, 0xea, 0xc3, 0x57, 0x6c, 0x36, 0x11, 0xba );
++
++/** RFC 8448 section 3 expected Handshake Secret */
++static const uint8_t handshake_secret[] = BYTES (
++	0x1d, 0xc8, 0x26, 0xe9, 0x36, 0x06, 0xaa, 0x6f,
++	0xdc, 0x0a, 0xad, 0xc1, 0x2f, 0x74, 0x1b, 0x01,
++	0x04, 0x6a, 0xa6, 0xb9, 0x9f, 0x69, 0x1e, 0xd2,
++	0x21, 0xa9, 0xf0, 0xca, 0x04, 0x3f, 0xbe, 0xac );
++
++/** RFC 8448 section 3 expected derived (handshake) */
++static const uint8_t derived_handshake[] = BYTES (
++	0x43, 0xde, 0x77, 0xe0, 0xc7, 0x77, 0x13, 0x85,
++	0x9a, 0x94, 0x4d, 0xb9, 0xdb, 0x25, 0x90, 0xb5,
++	0x31, 0x90, 0xa6, 0x5b, 0x3e, 0xe2, 0xe4, 0xf1,
++	0x2d, 0xd7, 0xa0, 0xbb, 0x7c, 0xe2, 0x54, 0xb4 );
++
++/** RFC 8448 section 3 expected Master Secret */
++static const uint8_t master_secret[] = BYTES (
++	0x18, 0xdf, 0x06, 0x84, 0x3d, 0x13, 0xa0, 0x8b,
++	0xf2, 0xa4, 0x49, 0x84, 0x4c, 0x5f, 0x8a, 0x47,
++	0x80, 0x01, 0xbc, 0x4d, 0x4c, 0x62, 0x79, 0x84,
++	0xd5, 0xa4, 0x1d, 0xa8, 0xd0, 0x40, 0x29, 0x19 );
++
++/** RFC 8448 section 3 server handshake traffic secret */
++static const uint8_t server_hs_traffic[] = BYTES (
++	0xb6, 0x7b, 0x7d, 0x69, 0x0c, 0xc1, 0x6c, 0x4e,
++	0x75, 0xe5, 0x42, 0x13, 0xcb, 0x2d, 0x37, 0xb4,
++	0xe9, 0xc9, 0x12, 0xbc, 0xde, 0xd9, 0x10, 0x5d,
++	0x42, 0xbe, 0xfd, 0x59, 0xd3, 0x91, 0xad, 0x38 );
++
++/** RFC 8448 section 3 expected server handshake write key */
++static const uint8_t server_write_key[] = BYTES (
++	0x3f, 0xce, 0x51, 0x60, 0x09, 0xc2, 0x17, 0x27,
++	0xd0, 0xf2, 0xe4, 0xe8, 0x6e, 0xe4, 0x03, 0xbc );
++
++/** RFC 8448 section 3 expected server handshake write IV */
++static const uint8_t server_write_iv[] = BYTES (
++	0x5d, 0x31, 0x3e, 0xb2, 0x67, 0x12, 0x76, 0xee,
++	0x13, 0x00, 0x0b, 0x30 );
++
++/** RFC 8448 section 4 resumption pre-shared key */
++static const uint8_t resumption_psk[] = BYTES (
++	0x4e, 0xcd, 0x0e, 0xb6, 0xec, 0x3b, 0x4d, 0x87,
++	0xf5, 0xd6, 0x02, 0x8f, 0x92, 0x2c, 0xa4, 0xc5,
++	0x85, 0x1a, 0x27, 0x7f, 0xd4, 0x13, 0x11, 0xc9,
++	0xe6, 0x2d, 0x2c, 0x94, 0x92, 0xe1, 0xc4, 0xf3 );
++
++/** RFC 8448 section 4 expected Early Secret */
++static const uint8_t resumption_early[] = BYTES (
++	0x9b, 0x21, 0x88, 0xe9, 0xb2, 0xfc, 0x6d, 0x64,
++	0xd7, 0x1d, 0xc3, 0x29, 0x90, 0x0e, 0x20, 0xbb,
++	0x41, 0x91, 0x50, 0x00, 0xf6, 0x78, 0xaa, 0x83,
++	0x9c, 0xbb, 0x79, 0x7c, 0xb7, 0xd8, 0x33, 0x2c );
++
++/** RFC 8448 section 4 expected PSK binder */
++static const uint8_t resumption_binder[] = BYTES (
++	0x3a, 0xdd, 0x4f, 0xb2, 0xd8, 0xfd, 0xf8, 0x22,
++	0xa0, 0xca, 0x3c, 0xf7, 0x67, 0x8e, 0xf5, 0xe8,
++	0x8d, 0xae, 0x99, 0x01, 0x41, 0xc5, 0x92, 0x4d,
++	0x57, 0xbb, 0x6f, 0xa3, 0x1b, 0x9e, 0x5f, 0x9d );
++
++/** RFC 8448 section 4 truncated ClientHello (477 octets) */
++static const uint8_t ch_prefix[] = BYTES (
++	0x01, 0x00, 0x01, 0xfc, 0x03, 0x03, 0x1b, 0xc3, 0xce, 0xb6, 0xbb, 0xe3, 0x9c, 0xff, 0x93, 0x83,
++	0x55, 0xb5, 0xa5, 0x0a, 0xdb, 0x6d, 0xb2, 0x1b, 0x7a, 0x6a, 0xf6, 0x49, 0xd7, 0xb4, 0xbc, 0x41,
++	0x9d, 0x78, 0x76, 0x48, 0x7d, 0x95, 0x00, 0x00, 0x06, 0x13, 0x01, 0x13, 0x03, 0x13, 0x02, 0x01,
++	0x00, 0x01, 0xcd, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x09, 0x00, 0x00, 0x06, 0x73, 0x65, 0x72, 0x76,
++	0x65, 0x72, 0xff, 0x01, 0x00, 0x01, 0x00, 0x00, 0x0a, 0x00, 0x14, 0x00, 0x12, 0x00, 0x1d, 0x00,
++	0x17, 0x00, 0x18, 0x00, 0x19, 0x01, 0x00, 0x01, 0x01, 0x01, 0x02, 0x01, 0x03, 0x01, 0x04, 0x00,
++	0x33, 0x00, 0x26, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20, 0xe4, 0xff, 0xb6, 0x8a, 0xc0, 0x5f, 0x8d,
++	0x96, 0xc9, 0x9d, 0xa2, 0x66, 0x98, 0x34, 0x6c, 0x6b, 0xe1, 0x64, 0x82, 0xba, 0xdd, 0xda, 0xfe,
++	0x05, 0x1a, 0x66, 0xb4, 0xf1, 0x8d, 0x66, 0x8f, 0x0b, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x2b, 0x00,
++	0x03, 0x02, 0x03, 0x04, 0x00, 0x0d, 0x00, 0x20, 0x00, 0x1e, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03,
++	0x02, 0x03, 0x08, 0x04, 0x08, 0x05, 0x08, 0x06, 0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x02, 0x01,
++	0x04, 0x02, 0x05, 0x02, 0x06, 0x02, 0x02, 0x02, 0x00, 0x2d, 0x00, 0x02, 0x01, 0x01, 0x00, 0x1c,
++	0x00, 0x02, 0x40, 0x01, 0x00, 0x15, 0x00, 0x57, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x29, 0x00, 0xdd, 0x00, 0xb8, 0x00, 0xb2, 0x2c, 0x03, 0x5d, 0x82, 0x93, 0x59, 0xee, 0x5f, 0xf7,
++	0xaf, 0x4e, 0xc9, 0x00, 0x00, 0x00, 0x00, 0x26, 0x2a, 0x64, 0x94, 0xdc, 0x48, 0x6d, 0x2c, 0x8a,
++	0x34, 0xcb, 0x33, 0xfa, 0x90, 0xbf, 0x1b, 0x00, 0x70, 0xad, 0x3c, 0x49, 0x88, 0x83, 0xc9, 0x36,
++	0x7c, 0x09, 0xa2, 0xbe, 0x78, 0x5a, 0xbc, 0x55, 0xcd, 0x22, 0x60, 0x97, 0xa3, 0xa9, 0x82, 0x11,
++	0x72, 0x83, 0xf8, 0x2a, 0x03, 0xa1, 0x43, 0xef, 0xd3, 0xff, 0x5d, 0xd3, 0x6d, 0x64, 0xe8, 0x61,
++	0xbe, 0x7f, 0xd6, 0x1d, 0x28, 0x27, 0xdb, 0x27, 0x9c, 0xce, 0x14, 0x50, 0x77, 0xd4, 0x54, 0xa3,
++	0x66, 0x4d, 0x4e, 0x6d, 0xa4, 0xd2, 0x9e, 0xe0, 0x37, 0x25, 0xa6, 0xa4, 0xda, 0xfc, 0xd0, 0xfc,
++	0x67, 0xd2, 0xae, 0xa7, 0x05, 0x29, 0x51, 0x3e, 0x3d, 0xa2, 0x67, 0x7f, 0xa5, 0x90, 0x6c, 0x5b,
++	0x3f, 0x7d, 0x8f, 0x92, 0xf2, 0x28, 0xbd, 0xa4, 0x0d, 0xda, 0x72, 0x14, 0x70, 0xf9, 0xfb, 0xf2,
++	0x97, 0xb5, 0xae, 0xa6, 0x17, 0x64, 0x6f, 0xac, 0x5c, 0x03, 0x27, 0x2e, 0x97, 0x07, 0x27, 0xc6,
++	0x21, 0xa7, 0x91, 0x41, 0xef, 0x5f, 0x7d, 0xe6, 0x50, 0x5e, 0x5b, 0xfb, 0xc3, 0x88, 0xe9, 0x33,
++	0x43, 0x69, 0x40, 0x93, 0x93, 0x4a, 0xe4, 0xd3, 0x57, 0xfa, 0xd6, 0xaa, 0xcb );
++
++/** RFC 8448 section 3 client application write key */
++static const uint8_t client_app_key[] = BYTES (
++	0x17, 0x42, 0x2d, 0xda, 0x59, 0x6e, 0xd5, 0xd9,
++	0xac, 0xd8, 0x90, 0xe3, 0xc6, 0x3f, 0x50, 0x51 );
++
++/** RFC 8448 section 3 client application write IV */
++static const uint8_t client_app_iv[] = BYTES (
++	0x5b, 0x78, 0x92, 0x3d, 0xee, 0x08, 0x57, 0x90,
++	0x33, 0xe5, 0x23, 0xd9 );
++
++/** RFC 8448 section 3 server application write key */
++static const uint8_t server_app_key[] = BYTES (
++	0x9f, 0x02, 0x28, 0x3b, 0x6c, 0x9c, 0x07, 0xef,
++	0xc2, 0x6b, 0xb9, 0xf2, 0xac, 0x92, 0xe3, 0x56 );
++
++/** RFC 8448 section 3 server application write IV */
++static const uint8_t server_app_iv[] = BYTES (
++	0xcf, 0x78, 0x2b, 0x88, 0xdd, 0x83, 0x54, 0x9a,
++	0xad, 0xf1, 0xe9, 0x84 );
++
++/** RFC 8448 section 3 application_data payload (50 octets) */
++static const uint8_t app_payload[] = BYTES (
++	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
++	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
++	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
++	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
++	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
++	0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
++	0x30, 0x31 );
++
++/** RFC 8448 section 3 client application_data record body (67 octets) */
++static const uint8_t client_app_record[] = BYTES (
++	0xa2, 0x3f, 0x70, 0x54, 0xb6, 0x2c, 0x94, 0xd0,
++	0xaf, 0xfa, 0xfe, 0x82, 0x28, 0xba, 0x55, 0xcb,
++	0xef, 0xac, 0xea, 0x42, 0xf9, 0x14, 0xaa, 0x66,
++	0xbc, 0xab, 0x3f, 0x2b, 0x98, 0x19, 0xa8, 0xa5,
++	0xb4, 0x6b, 0x39, 0x5b, 0xd5, 0x4a, 0x9a, 0x20,
++	0x44, 0x1e, 0x2b, 0x62, 0x97, 0x4e, 0x1f, 0x5a,
++	0x62, 0x92, 0xa2, 0x97, 0x70, 0x14, 0xbd, 0x1e,
++	0x3d, 0xea, 0xe6, 0x3a, 0xee, 0xbb, 0x21, 0x69,
++	0x49, 0x15, 0xe4 );
++
++/** RFC 8448 section 3 server application_data record body (67 octets) */
++static const uint8_t server_app_record[] = BYTES (
++	0x2e, 0x93, 0x7e, 0x11, 0xef, 0x4a, 0xc7, 0x40,
++	0xe5, 0x38, 0xad, 0x36, 0x00, 0x5f, 0xc4, 0xa4,
++	0x69, 0x32, 0xfc, 0x32, 0x25, 0xd0, 0x5f, 0x82,
++	0xaa, 0x1b, 0x36, 0xe3, 0x0e, 0xfa, 0xf9, 0x7d,
++	0x90, 0xe6, 0xdf, 0xfc, 0x60, 0x2d, 0xcb, 0x50,
++	0x1a, 0x59, 0xa8, 0xfc, 0xc4, 0x9c, 0x4b, 0xf2,
++	0xe5, 0xf0, 0xa2, 0x1c, 0x00, 0x47, 0xc2, 0xab,
++	0xf3, 0x32, 0x54, 0x0d, 0xd0, 0x32, 0xe1, 0x67,
++	0xc2, 0x95, 0x5d );
++
++/** RFC 8448 section 3 client alert record body (19 octets) */
++static const uint8_t alert_record[] = BYTES (
++	0xc9, 0x87, 0x27, 0x60, 0x65, 0x56, 0x66, 0xb7,
++	0x4d, 0x7f, 0xf1, 0x15, 0x3e, 0xfd, 0x6d, 0xb6,
++	0xd0, 0xb0, 0xe3 );
++
++/** RFC 8448 section 3 alert payload (2 octets) */
++static const uint8_t alert_payload[] = BYTES ( 0x01, 0x00 );
++
++/** RFC 8448 section 3 ServerHello handshake message (90 octets) */
++static const uint8_t server_hello_3[] = BYTES (
++	0x02, 0x00, 0x00, 0x56, 0x03, 0x03, 0xa6, 0xaf,
++	0x06, 0xa4, 0x12, 0x18, 0x60, 0xdc, 0x5e, 0x6e,
++	0x60, 0x24, 0x9c, 0xd3, 0x4c, 0x95, 0x93, 0x0c,
++	0x8a, 0xc5, 0xcb, 0x14, 0x34, 0xda, 0xc1, 0x55,
++	0x77, 0x2e, 0xd3, 0xe2, 0x69, 0x28, 0x00, 0x13,
++	0x01, 0x00, 0x00, 0x2e, 0x00, 0x33, 0x00, 0x24,
++	0x00, 0x1d, 0x00, 0x20, 0xc9, 0x82, 0x88, 0x76,
++	0x11, 0x20, 0x95, 0xfe, 0x66, 0x76, 0x2b, 0xdb,
++	0xf7, 0xc6, 0x72, 0xe1, 0x56, 0xd6, 0xcc, 0x25,
++	0x3b, 0x83, 0x3d, 0xf1, 0xdd, 0x69, 0xb1, 0xb0,
++	0x4e, 0x75, 0x1f, 0x0f, 0x00, 0x2b, 0x00, 0x02,
++	0x03, 0x04 );
++
++/** RFC 8448 section 3 ServerHello key share (32 octets) */
++static const uint8_t server_hello_3_key[] = BYTES (
++	0xc9, 0x82, 0x88, 0x76, 0x11, 0x20, 0x95, 0xfe,
++	0x66, 0x76, 0x2b, 0xdb, 0xf7, 0xc6, 0x72, 0xe1,
++	0x56, 0xd6, 0xcc, 0x25, 0x3b, 0x83, 0x3d, 0xf1,
++	0xdd, 0x69, 0xb1, 0xb0, 0x4e, 0x75, 0x1f, 0x0f );
++
++/** RFC 8448 section 4 ServerHello handshake message (96 octets) */
++static const uint8_t server_hello_4[] = BYTES (
++	0x02, 0x00, 0x00, 0x5c, 0x03, 0x03, 0x3c, 0xcf,
++	0xd2, 0xde, 0xc8, 0x90, 0x22, 0x27, 0x63, 0x47,
++	0x2a, 0xe8, 0x13, 0x67, 0x77, 0xc9, 0xd7, 0x35,
++	0x87, 0x77, 0xbb, 0x66, 0xe9, 0x1e, 0xa5, 0x12,
++	0x24, 0x95, 0xf5, 0x59, 0xea, 0x2d, 0x00, 0x13,
++	0x01, 0x00, 0x00, 0x34, 0x00, 0x29, 0x00, 0x02,
++	0x00, 0x00, 0x00, 0x33, 0x00, 0x24, 0x00, 0x1d,
++	0x00, 0x20, 0x12, 0x17, 0x61, 0xee, 0x42, 0xc3,
++	0x33, 0xe1, 0xb9, 0xe7, 0x7b, 0x60, 0xdd, 0x57,
++	0xc2, 0x05, 0x3c, 0xd9, 0x45, 0x12, 0xab, 0x47,
++	0xf1, 0x15, 0xe8, 0x6e, 0xff, 0x50, 0x94, 0x2c,
++	0xea, 0x31, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04 );
++
++/** RFC 8448 section 4 ServerHello key share (32 octets) */
++static const uint8_t server_hello_4_key[] = BYTES (
++	0x12, 0x17, 0x61, 0xee, 0x42, 0xc3, 0x33, 0xe1,
++	0xb9, 0xe7, 0x7b, 0x60, 0xdd, 0x57, 0xc2, 0x05,
++	0x3c, 0xd9, 0x45, 0x12, 0xab, 0x47, 0xf1, 0x15,
++	0xe8, 0x6e, 0xff, 0x50, 0x94, 0x2c, 0xea, 0x31 );
++
++/** RFC 8448 section 3 handshake transcript up to CertificateVerify
++ *
++ * This is the concatenation of the ClientHello, ServerHello,
++ * EncryptedExtensions, Certificate and CertificateVerify handshake
++ * messages, and is the transcript hash input for the server Finished.
++ */
++static const uint8_t finished_transcript[] = BYTES (
++	0x01, 0x00, 0x00, 0xc0, 0x03, 0x03, 0xcb, 0x34,
++	0xec, 0xb1, 0xe7, 0x81, 0x63, 0xba, 0x1c, 0x38,
++	0xc6, 0xda, 0xcb, 0x19, 0x6a, 0x6d, 0xff, 0xa2,
++	0x1a, 0x8d, 0x99, 0x12, 0xec, 0x18, 0xa2, 0xef,
++	0x62, 0x83, 0x02, 0x4d, 0xec, 0xe7, 0x00, 0x00,
++	0x06, 0x13, 0x01, 0x13, 0x03, 0x13, 0x02, 0x01,
++	0x00, 0x00, 0x91, 0x00, 0x00, 0x00, 0x0b, 0x00,
++	0x09, 0x00, 0x00, 0x06, 0x73, 0x65, 0x72, 0x76,
++	0x65, 0x72, 0xff, 0x01, 0x00, 0x01, 0x00, 0x00,
++	0x0a, 0x00, 0x14, 0x00, 0x12, 0x00, 0x1d, 0x00,
++	0x17, 0x00, 0x18, 0x00, 0x19, 0x01, 0x00, 0x01,
++	0x01, 0x01, 0x02, 0x01, 0x03, 0x01, 0x04, 0x00,
++	0x23, 0x00, 0x00, 0x00, 0x33, 0x00, 0x26, 0x00,
++	0x24, 0x00, 0x1d, 0x00, 0x20, 0x99, 0x38, 0x1d,
++	0xe5, 0x60, 0xe4, 0xbd, 0x43, 0xd2, 0x3d, 0x8e,
++	0x43, 0x5a, 0x7d, 0xba, 0xfe, 0xb3, 0xc0, 0x6e,
++	0x51, 0xc1, 0x3c, 0xae, 0x4d, 0x54, 0x13, 0x69,
++	0x1e, 0x52, 0x9a, 0xaf, 0x2c, 0x00, 0x2b, 0x00,
++	0x03, 0x02, 0x03, 0x04, 0x00, 0x0d, 0x00, 0x20,
++	0x00, 0x1e, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03,
++	0x02, 0x03, 0x08, 0x04, 0x08, 0x05, 0x08, 0x06,
++	0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x02, 0x01,
++	0x04, 0x02, 0x05, 0x02, 0x06, 0x02, 0x02, 0x02,
++	0x00, 0x2d, 0x00, 0x02, 0x01, 0x01, 0x00, 0x1c,
++	0x00, 0x02, 0x40, 0x01, 0x02, 0x00, 0x00, 0x56,
++	0x03, 0x03, 0xa6, 0xaf, 0x06, 0xa4, 0x12, 0x18,
++	0x60, 0xdc, 0x5e, 0x6e, 0x60, 0x24, 0x9c, 0xd3,
++	0x4c, 0x95, 0x93, 0x0c, 0x8a, 0xc5, 0xcb, 0x14,
++	0x34, 0xda, 0xc1, 0x55, 0x77, 0x2e, 0xd3, 0xe2,
++	0x69, 0x28, 0x00, 0x13, 0x01, 0x00, 0x00, 0x2e,
++	0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20,
++	0xc9, 0x82, 0x88, 0x76, 0x11, 0x20, 0x95, 0xfe,
++	0x66, 0x76, 0x2b, 0xdb, 0xf7, 0xc6, 0x72, 0xe1,
++	0x56, 0xd6, 0xcc, 0x25, 0x3b, 0x83, 0x3d, 0xf1,
++	0xdd, 0x69, 0xb1, 0xb0, 0x4e, 0x75, 0x1f, 0x0f,
++	0x00, 0x2b, 0x00, 0x02, 0x03, 0x04, 0x08, 0x00,
++	0x00, 0x24, 0x00, 0x22, 0x00, 0x0a, 0x00, 0x14,
++	0x00, 0x12, 0x00, 0x1d, 0x00, 0x17, 0x00, 0x18,
++	0x00, 0x19, 0x01, 0x00, 0x01, 0x01, 0x01, 0x02,
++	0x01, 0x03, 0x01, 0x04, 0x00, 0x1c, 0x00, 0x02,
++	0x40, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00,
++	0x01, 0xb9, 0x00, 0x00, 0x01, 0xb5, 0x00, 0x01,
++	0xb0, 0x30, 0x82, 0x01, 0xac, 0x30, 0x82, 0x01,
++	0x15, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01,
++	0x02, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48,
++	0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00,
++	0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06, 0x03,
++	0x55, 0x04, 0x03, 0x13, 0x03, 0x72, 0x73, 0x61,
++	0x30, 0x1e, 0x17, 0x0d, 0x31, 0x36, 0x30, 0x37,
++	0x33, 0x30, 0x30, 0x31, 0x32, 0x33, 0x35, 0x39,
++	0x5a, 0x17, 0x0d, 0x32, 0x36, 0x30, 0x37, 0x33,
++	0x30, 0x30, 0x31, 0x32, 0x33, 0x35, 0x39, 0x5a,
++	0x30, 0x0e, 0x31, 0x0c, 0x30, 0x0a, 0x06, 0x03,
++	0x55, 0x04, 0x03, 0x13, 0x03, 0x72, 0x73, 0x61,
++	0x30, 0x81, 0x9f, 0x30, 0x0d, 0x06, 0x09, 0x2a,
++	0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
++	0x05, 0x00, 0x03, 0x81, 0x8d, 0x00, 0x30, 0x81,
++	0x89, 0x02, 0x81, 0x81, 0x00, 0xb4, 0xbb, 0x49,
++	0x8f, 0x82, 0x79, 0x30, 0x3d, 0x98, 0x08, 0x36,
++	0x39, 0x9b, 0x36, 0xc6, 0x98, 0x8c, 0x0c, 0x68,
++	0xde, 0x55, 0xe1, 0xbd, 0xb8, 0x26, 0xd3, 0x90,
++	0x1a, 0x24, 0x61, 0xea, 0xfd, 0x2d, 0xe4, 0x9a,
++	0x91, 0xd0, 0x15, 0xab, 0xbc, 0x9a, 0x95, 0x13,
++	0x7a, 0xce, 0x6c, 0x1a, 0xf1, 0x9e, 0xaa, 0x6a,
++	0xf9, 0x8c, 0x7c, 0xed, 0x43, 0x12, 0x09, 0x98,
++	0xe1, 0x87, 0xa8, 0x0e, 0xe0, 0xcc, 0xb0, 0x52,
++	0x4b, 0x1b, 0x01, 0x8c, 0x3e, 0x0b, 0x63, 0x26,
++	0x4d, 0x44, 0x9a, 0x6d, 0x38, 0xe2, 0x2a, 0x5f,
++	0xda, 0x43, 0x08, 0x46, 0x74, 0x80, 0x30, 0x53,
++	0x0e, 0xf0, 0x46, 0x1c, 0x8c, 0xa9, 0xd9, 0xef,
++	0xbf, 0xae, 0x8e, 0xa6, 0xd1, 0xd0, 0x3e, 0x2b,
++	0xd1, 0x93, 0xef, 0xf0, 0xab, 0x9a, 0x80, 0x02,
++	0xc4, 0x74, 0x28, 0xa6, 0xd3, 0x5a, 0x8d, 0x88,
++	0xd7, 0x9f, 0x7f, 0x1e, 0x3f, 0x02, 0x03, 0x01,
++	0x00, 0x01, 0xa3, 0x1a, 0x30, 0x18, 0x30, 0x09,
++	0x06, 0x03, 0x55, 0x1d, 0x13, 0x04, 0x02, 0x30,
++	0x00, 0x30, 0x0b, 0x06, 0x03, 0x55, 0x1d, 0x0f,
++	0x04, 0x04, 0x03, 0x02, 0x05, 0xa0, 0x30, 0x0d,
++	0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d,
++	0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x81, 0x81,
++	0x00, 0x85, 0xaa, 0xd2, 0xa0, 0xe5, 0xb9, 0x27,
++	0x6b, 0x90, 0x8c, 0x65, 0xf7, 0x3a, 0x72, 0x67,
++	0x17, 0x06, 0x18, 0xa5, 0x4c, 0x5f, 0x8a, 0x7b,
++	0x33, 0x7d, 0x2d, 0xf7, 0xa5, 0x94, 0x36, 0x54,
++	0x17, 0xf2, 0xea, 0xe8, 0xf8, 0xa5, 0x8c, 0x8f,
++	0x81, 0x72, 0xf9, 0x31, 0x9c, 0xf3, 0x6b, 0x7f,
++	0xd6, 0xc5, 0x5b, 0x80, 0xf2, 0x1a, 0x03, 0x01,
++	0x51, 0x56, 0x72, 0x60, 0x96, 0xfd, 0x33, 0x5e,
++	0x5e, 0x67, 0xf2, 0xdb, 0xf1, 0x02, 0x70, 0x2e,
++	0x60, 0x8c, 0xca, 0xe6, 0xbe, 0xc1, 0xfc, 0x63,
++	0xa4, 0x2a, 0x99, 0xbe, 0x5c, 0x3e, 0xb7, 0x10,
++	0x7c, 0x3c, 0x54, 0xe9, 0xb9, 0xeb, 0x2b, 0xd5,
++	0x20, 0x3b, 0x1c, 0x3b, 0x84, 0xe0, 0xa8, 0xb2,
++	0xf7, 0x59, 0x40, 0x9b, 0xa3, 0xea, 0xc9, 0xd9,
++	0x1d, 0x40, 0x2d, 0xcc, 0x0c, 0xc8, 0xf8, 0x96,
++	0x12, 0x29, 0xac, 0x91, 0x87, 0xb4, 0x2b, 0x4d,
++	0xe1, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x84, 0x08,
++	0x04, 0x00, 0x80, 0x5a, 0x74, 0x7c, 0x5d, 0x88,
++	0xfa, 0x9b, 0xd2, 0xe5, 0x5a, 0xb0, 0x85, 0xa6,
++	0x10, 0x15, 0xb7, 0x21, 0x1f, 0x82, 0x4c, 0xd4,
++	0x84, 0x14, 0x5a, 0xb3, 0xff, 0x52, 0xf1, 0xfd,
++	0xa8, 0x47, 0x7b, 0x0b, 0x7a, 0xbc, 0x90, 0xdb,
++	0x78, 0xe2, 0xd3, 0x3a, 0x5c, 0x14, 0x1a, 0x07,
++	0x86, 0x53, 0xfa, 0x6b, 0xef, 0x78, 0x0c, 0x5e,
++	0xa2, 0x48, 0xee, 0xaa, 0xa7, 0x85, 0xc4, 0xf3,
++	0x94, 0xca, 0xb6, 0xd3, 0x0b, 0xbe, 0x8d, 0x48,
++	0x59, 0xee, 0x51, 0x1f, 0x60, 0x29, 0x57, 0xb1,
++	0x54, 0x11, 0xac, 0x02, 0x76, 0x71, 0x45, 0x9e,
++	0x46, 0x44, 0x5c, 0x9e, 0xa5, 0x8c, 0x18, 0x1e,
++	0x81, 0x8e, 0x95, 0xb8, 0xc3, 0xfb, 0x0b, 0xf3,
++	0x27, 0x84, 0x09, 0xd3, 0xbe, 0x15, 0x2a, 0x3d,
++	0xa5, 0x04, 0x3e, 0x06, 0x3d, 0xda, 0x65, 0xcd,
++	0xf5, 0xae, 0xa2, 0x0d, 0x53, 0xdf, 0xac, 0xd4,
++	0x2f, 0x74, 0xf3 );
++
++/** RFC 8448 section 3 server Finished verify_data (32 octets) */
++static const uint8_t server_finished[] = BYTES (
++	0x9b, 0x9b, 0x14, 0x1d, 0x90, 0x63, 0x37, 0xfb,
++	0xd2, 0xcb, 0xdc, 0xe7, 0x1d, 0xf4, 0xde, 0xda,
++	0x4a, 0xb4, 0x2c, 0x30, 0x95, 0x72, 0xcb, 0x7f,
++	0xff, 0xee, 0x54, 0x54, 0xb7, 0x8f, 0x07, 0x18 );
++
++/** RFC 8448 section 3 client ephemeral private key */
++static const uint8_t client_private_key_3[] = BYTES (
++	0x49, 0xaf, 0x42, 0xba, 0x7f, 0x79, 0x94, 0x85,
++	0x2d, 0x71, 0x3e, 0xf2, 0x78, 0x4b, 0xcb, 0xca,
++	0xa7, 0x91, 0x1d, 0xe2, 0x6a, 0xdc, 0x56, 0x42,
++	0xcb, 0x63, 0x45, 0x40, 0xe7, 0xea, 0x50, 0x05, );
++
++/** RFC 8448 section 3 client ephemeral public key */
++static const uint8_t client_public_key_3[] = BYTES (
++	0x99, 0x38, 0x1d, 0xe5, 0x60, 0xe4, 0xbd, 0x43,
++	0xd2, 0x3d, 0x8e, 0x43, 0x5a, 0x7d, 0xba, 0xfe,
++	0xb3, 0xc0, 0x6e, 0x51, 0xc1, 0x3c, 0xae, 0x4d,
++	0x54, 0x13, 0x69, 0x1e, 0x52, 0x9a, 0xaf, 0x2c, );
++
++/** RFC 8448 section 3 client handshake traffic secret */
++static const uint8_t client_hs_traffic_3[] = BYTES (
++	0xb3, 0xed, 0xdb, 0x12, 0x6e, 0x06, 0x7f, 0x35,
++	0xa7, 0x80, 0xb3, 0xab, 0xf4, 0x5e, 0x2d, 0x8f,
++	0x3b, 0x1a, 0x95, 0x07, 0x38, 0xf5, 0x2e, 0x96,
++	0x00, 0x74, 0x6a, 0x0e, 0x27, 0xa5, 0x5a, 0x21, );
++
++/** RFC 8448 section 3 client application traffic secret */
++static const uint8_t client_ap_traffic_3[] = BYTES (
++	0x9e, 0x40, 0x64, 0x6c, 0xe7, 0x9a, 0x7f, 0x9d,
++	0xc0, 0x5a, 0xf8, 0x88, 0x9b, 0xce, 0x65, 0x52,
++	0x87, 0x5a, 0xfa, 0x0b, 0x06, 0xdf, 0x00, 0x87,
++	0xf7, 0x92, 0xeb, 0xb7, 0xc1, 0x75, 0x04, 0xa5, );
++
++/** RFC 8448 section 3 server application traffic secret */
++static const uint8_t server_ap_traffic_3[] = BYTES (
++	0xa1, 0x1a, 0xf9, 0xf0, 0x55, 0x31, 0xf8, 0x56,
++	0xad, 0x47, 0x11, 0x6b, 0x45, 0xa9, 0x50, 0x32,
++	0x82, 0x04, 0xb4, 0xf4, 0x4b, 0xfb, 0x6b, 0x3a,
++	0x4b, 0x4f, 0x1f, 0x3f, 0xcb, 0x63, 0x16, 0x43, );
++
++/** RFC 8448 section 3 server Finished message */
++static const uint8_t server_finished_msg_3[] = BYTES (
++	0x14, 0x00, 0x00, 0x20, 0x9b, 0x9b, 0x14, 0x1d,
++	0x90, 0x63, 0x37, 0xfb, 0xd2, 0xcb, 0xdc, 0xe7,
++	0x1d, 0xf4, 0xde, 0xda, 0x4a, 0xb4, 0x2c, 0x30,
++	0x95, 0x72, 0xcb, 0x7f, 0xff, 0xee, 0x54, 0x54,
++	0xb7, 0x8f, 0x07, 0x18, );
++
++/** RFC 8448 section 3 client Finished message */
++static const uint8_t client_finished_msg_3[] = BYTES (
++	0x14, 0x00, 0x00, 0x20, 0xa8, 0xec, 0x43, 0x6d,
++	0x67, 0x76, 0x34, 0xae, 0x52, 0x5a, 0xc1, 0xfc,
++	0xeb, 0xe1, 0x1a, 0x03, 0x9e, 0xc1, 0x76, 0x94,
++	0xfa, 0xc6, 0xe9, 0x85, 0x27, 0xb6, 0x42, 0xf2,
++	0xed, 0xd5, 0xce, 0x61, );
++
++/** RFC 8448 section 4 client ephemeral private key */
++static const uint8_t client_private_key_4[] = BYTES (
++	0xbf, 0xf9, 0x11, 0x88, 0x28, 0x38, 0x46, 0xdd,
++	0x6a, 0x21, 0x34, 0xef, 0x71, 0x80, 0xca, 0x2b,
++	0x0b, 0x14, 0xfb, 0x10, 0xdc, 0xe7, 0x07, 0xb5,
++	0x09, 0x8c, 0x0d, 0xdd, 0xc8, 0x13, 0xb2, 0xdf, );
++
++/** RFC 8448 section 4 ClientHello handshake message (512 octets) */
++static const uint8_t client_hello_4[] = BYTES (
++	0x01, 0x00, 0x01, 0xfc, 0x03, 0x03, 0x1b, 0xc3,
++	0xce, 0xb6, 0xbb, 0xe3, 0x9c, 0xff, 0x93, 0x83,
++	0x55, 0xb5, 0xa5, 0x0a, 0xdb, 0x6d, 0xb2, 0x1b,
++	0x7a, 0x6a, 0xf6, 0x49, 0xd7, 0xb4, 0xbc, 0x41,
++	0x9d, 0x78, 0x76, 0x48, 0x7d, 0x95, 0x00, 0x00,
++	0x06, 0x13, 0x01, 0x13, 0x03, 0x13, 0x02, 0x01,
++	0x00, 0x01, 0xcd, 0x00, 0x00, 0x00, 0x0b, 0x00,
++	0x09, 0x00, 0x00, 0x06, 0x73, 0x65, 0x72, 0x76,
++	0x65, 0x72, 0xff, 0x01, 0x00, 0x01, 0x00, 0x00,
++	0x0a, 0x00, 0x14, 0x00, 0x12, 0x00, 0x1d, 0x00,
++	0x17, 0x00, 0x18, 0x00, 0x19, 0x01, 0x00, 0x01,
++	0x01, 0x01, 0x02, 0x01, 0x03, 0x01, 0x04, 0x00,
++	0x33, 0x00, 0x26, 0x00, 0x24, 0x00, 0x1d, 0x00,
++	0x20, 0xe4, 0xff, 0xb6, 0x8a, 0xc0, 0x5f, 0x8d,
++	0x96, 0xc9, 0x9d, 0xa2, 0x66, 0x98, 0x34, 0x6c,
++	0x6b, 0xe1, 0x64, 0x82, 0xba, 0xdd, 0xda, 0xfe,
++	0x05, 0x1a, 0x66, 0xb4, 0xf1, 0x8d, 0x66, 0x8f,
++	0x0b, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x2b, 0x00,
++	0x03, 0x02, 0x03, 0x04, 0x00, 0x0d, 0x00, 0x20,
++	0x00, 0x1e, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03,
++	0x02, 0x03, 0x08, 0x04, 0x08, 0x05, 0x08, 0x06,
++	0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x02, 0x01,
++	0x04, 0x02, 0x05, 0x02, 0x06, 0x02, 0x02, 0x02,
++	0x00, 0x2d, 0x00, 0x02, 0x01, 0x01, 0x00, 0x1c,
++	0x00, 0x02, 0x40, 0x01, 0x00, 0x15, 0x00, 0x57,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x29, 0x00, 0xdd, 0x00, 0xb8, 0x00, 0xb2, 0x2c,
++	0x03, 0x5d, 0x82, 0x93, 0x59, 0xee, 0x5f, 0xf7,
++	0xaf, 0x4e, 0xc9, 0x00, 0x00, 0x00, 0x00, 0x26,
++	0x2a, 0x64, 0x94, 0xdc, 0x48, 0x6d, 0x2c, 0x8a,
++	0x34, 0xcb, 0x33, 0xfa, 0x90, 0xbf, 0x1b, 0x00,
++	0x70, 0xad, 0x3c, 0x49, 0x88, 0x83, 0xc9, 0x36,
++	0x7c, 0x09, 0xa2, 0xbe, 0x78, 0x5a, 0xbc, 0x55,
++	0xcd, 0x22, 0x60, 0x97, 0xa3, 0xa9, 0x82, 0x11,
++	0x72, 0x83, 0xf8, 0x2a, 0x03, 0xa1, 0x43, 0xef,
++	0xd3, 0xff, 0x5d, 0xd3, 0x6d, 0x64, 0xe8, 0x61,
++	0xbe, 0x7f, 0xd6, 0x1d, 0x28, 0x27, 0xdb, 0x27,
++	0x9c, 0xce, 0x14, 0x50, 0x77, 0xd4, 0x54, 0xa3,
++	0x66, 0x4d, 0x4e, 0x6d, 0xa4, 0xd2, 0x9e, 0xe0,
++	0x37, 0x25, 0xa6, 0xa4, 0xda, 0xfc, 0xd0, 0xfc,
++	0x67, 0xd2, 0xae, 0xa7, 0x05, 0x29, 0x51, 0x3e,
++	0x3d, 0xa2, 0x67, 0x7f, 0xa5, 0x90, 0x6c, 0x5b,
++	0x3f, 0x7d, 0x8f, 0x92, 0xf2, 0x28, 0xbd, 0xa4,
++	0x0d, 0xda, 0x72, 0x14, 0x70, 0xf9, 0xfb, 0xf2,
++	0x97, 0xb5, 0xae, 0xa6, 0x17, 0x64, 0x6f, 0xac,
++	0x5c, 0x03, 0x27, 0x2e, 0x97, 0x07, 0x27, 0xc6,
++	0x21, 0xa7, 0x91, 0x41, 0xef, 0x5f, 0x7d, 0xe6,
++	0x50, 0x5e, 0x5b, 0xfb, 0xc3, 0x88, 0xe9, 0x33,
++	0x43, 0x69, 0x40, 0x93, 0x93, 0x4a, 0xe4, 0xd3,
++	0x57, 0xfa, 0xd6, 0xaa, 0xcb, 0x00, 0x21, 0x20,
++	0x3a, 0xdd, 0x4f, 0xb2, 0xd8, 0xfd, 0xf8, 0x22,
++	0xa0, 0xca, 0x3c, 0xf7, 0x67, 0x8e, 0xf5, 0xe8,
++	0x8d, 0xae, 0x99, 0x01, 0x41, 0xc5, 0x92, 0x4d,
++	0x57, 0xbb, 0x6f, 0xa3, 0x1b, 0x9e, 0x5f, 0x9d, );
++
++/** RFC 8448 section 4 EncryptedExtensions handshake message */
++static const uint8_t encrypted_extensions_4[] = BYTES (
++	0x08, 0x00, 0x00, 0x28, 0x00, 0x26, 0x00, 0x0a,
++	0x00, 0x14, 0x00, 0x12, 0x00, 0x1d, 0x00, 0x17,
++	0x00, 0x18, 0x00, 0x19, 0x01, 0x00, 0x01, 0x01,
++	0x01, 0x02, 0x01, 0x03, 0x01, 0x04, 0x00, 0x1c,
++	0x00, 0x02, 0x40, 0x01, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x2a, 0x00, 0x00, );
++
++/** RFC 8448 section 4 server Finished message */
++static const uint8_t server_finished_msg_4[] = BYTES (
++	0x14, 0x00, 0x00, 0x20, 0x48, 0xd3, 0xe0, 0xe1,
++	0xb3, 0xd9, 0x07, 0xc6, 0xac, 0xff, 0x14, 0x5e,
++	0x16, 0x09, 0x03, 0x88, 0xc7, 0x7b, 0x05, 0xc0,
++	0x50, 0xb6, 0x34, 0xab, 0x1a, 0x88, 0xbb, 0xd0,
++	0xdd, 0x1a, 0x34, 0xb2, );
++
++/** RFC 8448 section 4 EndOfEarlyData handshake message */
++static const uint8_t end_of_early_data_4[] = BYTES (
++	0x05, 0x00, 0x00, 0x00, );
++
++/** RFC 8448 section 4 client Finished message */
++static const uint8_t client_finished_msg_4[] = BYTES (
++	0x14, 0x00, 0x00, 0x20, 0x72, 0x30, 0xa9, 0xc9,
++	0x52, 0xc2, 0x5c, 0xd6, 0x13, 0x8f, 0xc5, 0xe6,
++	0x62, 0x83, 0x08, 0xc4, 0x1c, 0x53, 0x35, 0xdd,
++	0x81, 0xb9, 0xf9, 0x6b, 0xce, 0xa5, 0x0f, 0xd3,
++	0x2b, 0xda, 0x41, 0x6d, );
++
++/** RFC 8448 section 4 client handshake traffic secret */
++static const uint8_t client_hs_traffic_4[] = BYTES (
++	0x2f, 0xaa, 0xc0, 0x8f, 0x85, 0x1d, 0x35, 0xfe,
++	0xa3, 0x60, 0x4f, 0xcb, 0x4d, 0xe8, 0x2d, 0xc6,
++	0x2c, 0x9b, 0x16, 0x4a, 0x70, 0x97, 0x4d, 0x04,
++	0x62, 0xe2, 0x7f, 0x1a, 0xb2, 0x78, 0x70, 0x0f, );
++
++/** RFC 8448 section 4 server handshake traffic secret */
++static const uint8_t server_hs_traffic_4[] = BYTES (
++	0xfe, 0x92, 0x7a, 0xe2, 0x71, 0x31, 0x2e, 0x8b,
++	0xf0, 0x27, 0x5b, 0x58, 0x1c, 0x54, 0xee, 0xf0,
++	0x20, 0x45, 0x0d, 0xc4, 0xec, 0xff, 0xaa, 0x05,
++	0xa1, 0xa3, 0x5d, 0x27, 0x51, 0x8e, 0x78, 0x03, );
++
++/** RFC 8448 section 4 client application traffic secret */
++static const uint8_t client_ap_traffic_4[] = BYTES (
++	0x2a, 0xbb, 0xf2, 0xb8, 0xe3, 0x81, 0xd2, 0x3d,
++	0xbe, 0xbe, 0x1d, 0xd2, 0xa7, 0xd1, 0x6a, 0x8b,
++	0xf4, 0x84, 0xcb, 0x49, 0x50, 0xd2, 0x3f, 0xb7,
++	0xfb, 0x7f, 0xa8, 0x54, 0x70, 0x62, 0xd9, 0xa1, );
++
++/** RFC 8448 section 4 server application traffic secret */
++static const uint8_t server_ap_traffic_4[] = BYTES (
++	0xcc, 0x21, 0xf1, 0xbf, 0x8f, 0xeb, 0x7d, 0xd5,
++	0xfa, 0x50, 0x5b, 0xd9, 0xc4, 0xb4, 0x68, 0xa9,
++	0x98, 0x4d, 0x55, 0x4a, 0x99, 0x3d, 0xc4, 0x9e,
++	0x6d, 0x28, 0x55, 0x98, 0xfb, 0x67, 0x26, 0x91, );
++
++/** Record header for an application_data record of the given body length */
++#define APP_RECORD_HEADER( body_len )					\
++	{ 0x17, 0x03, 0x03,				\
++	  ( (body_len) >> 8 ), ( (body_len) & 0xff ) }
++
++/** Fixed client random for ClientHello construction tests */
++static const uint8_t test_random[] = BYTES (
++	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
++	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
++	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
++	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f );
++
++/** Fixed X25519 public key for ClientHello construction tests */
++static const uint8_t test_public_key[] = BYTES (
++	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
++	0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
++	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
++	0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f );
++
++/** PSK identity for ClientHello construction tests */
++static const char test_identity[] =
++	"NVMe0R01 nqn.2026-07.com.kurrent:host.worker-01 "
++	"nqn.2026-07.com.kurrent:worker-01.test";
++
++/** Report a TLS 1.3 key schedule mismatch */
++static void tls13_okx ( const char *name, const void *value,
++			const void *expected, size_t len ) {
++	int mismatch = ( memcmp ( value, expected, len ) != 0 );
++
++	if ( mismatch )
++		DBG ( "TLS13 %s mismatch\n", name );
++	ok ( ! mismatch );
++}
++
++/** Test TLS 1.3 ClientHello construction */
++static void tls13_client_hello_test ( void ) {
++	struct digest_algorithm *digest = &sha256_algorithm;
++	size_t id_len = strlen ( test_identity );
++	uint8_t ch[ 1024 ];
++	uint8_t early[ digest->digestsize ];
++	uint8_t binder[ digest->digestsize ];
++	size_t prefix_len;
++	size_t len;
++	size_t i;
++	int found;
++
++	len = tls13_client_hello ( ch, sizeof ( ch ), test_random,
++				   test_public_key, resumption_psk,
++				   sizeof ( resumption_psk ), test_identity,
++				   id_len, "ext binder" );
++	ok ( len != 0 );
++
++	/* Handshake header */
++	ok ( ch[0] == TLS_CLIENT_HELLO );
++	ok ( ( size_t ) ( ( ch[1] << 16 ) | ( ch[2] << 8 ) | ch[3] )
++	     == ( len - 4 ) );
++
++	/* legacy_version, random, legacy_session_id */
++	ok ( ( ch[4] == 0x03 ) && ( ch[5] == 0x03 ) );
++	ok ( memcmp ( &ch[6], test_random, sizeof ( test_random ) ) == 0 );
++	ok ( ch[38] == 0x00 );
++
++	/* cipher_suites = { TLS_AES_128_GCM_SHA256 }, compression = { null } */
++	ok ( ( ch[39] == 0x00 ) && ( ch[40] == 0x02 ) );
++	ok ( ( ch[41] == 0x13 ) && ( ch[42] == 0x01 ) );
++	ok ( ( ch[43] == 0x01 ) && ( ch[44] == 0x00 ) );
++
++	/* PSK identity must appear verbatim */
++	found = 0;
++	for ( i = 0 ; ( i + id_len ) <= len ; i++ ) {
++		if ( memcmp ( &ch[i], test_identity, id_len ) == 0 ) {
++			found = 1;
++			break;
++		}
++	}
++	ok ( found );
++
++	/* The extension block must be well-formed (RFC 8446 section 4.2).
++	 *
++	 * Walk the extensions produced by tls13_client_hello() and check
++	 * each list-encoded field, so that every offset and length within
++	 * the message is independently verified rather than trusted.
++	 */
++	{
++		size_t p = 47;		/* past the compression methods */
++		size_t eend;
++		uint16_t type;
++		uint16_t elen;
++
++		/* The extensions block ends at the end of the message,
++		 * since the final extension contains the binders list.
++		 */
++		eend = ( p + ( ( ch[45] << 8 ) | ch[46] ) );
++		ok ( eend == len );
++
++		/* supported_versions = { TLS 1.3 }; the version list
++		 * carries a one-byte length prefix.
++		 */
++		type = ( ( ch[p] << 8 ) | ch[p+1] );
++		elen = ( ( ch[p+2] << 8 ) | ch[p+3] );
++		ok ( type == TLS_SUPPORTED_VERSIONS );
++		ok ( elen == 3 );
++		ok ( ch[p+4] == 2 );
++		ok ( ( ch[p+5] == 0x03 ) && ( ch[p+6] == 0x04 ) );
++		p += ( 4 + elen );
++
++		/* supported_groups = { x25519 }; the named group list
++		 * carries a two-byte length prefix.
++		 */
++		type = ( ( ch[p] << 8 ) | ch[p+1] );
++		elen = ( ( ch[p+2] << 8 ) | ch[p+3] );
++		ok ( type == TLS_NAMED_GROUP );
++		ok ( elen == 4 );
++		ok ( ( ( ch[p+4] << 8 ) | ch[p+5] ) == 2 );
++		ok ( ( ( ch[p+6] << 8 ) | ch[p+7] ) == TLS_NAMED_GROUP_X25519 );
++		p += ( 4 + elen );
++
++		/* key_share = { x25519: public_key }; the client shares
++		 * list carries a two-byte length prefix.
++		 */
++		type = ( ( ch[p] << 8 ) | ch[p+1] );
++		elen = ( ( ch[p+2] << 8 ) | ch[p+3] );
++		ok ( type == TLS_KEY_SHARE );
++		ok ( elen == 38 );
++		ok ( ( ( ch[p+4] << 8 ) | ch[p+5] ) == 36 );
++		ok ( ( ( ch[p+6] << 8 ) | ch[p+7] ) == TLS_NAMED_GROUP_X25519 );
++		ok ( ( ( ch[p+8] << 8 ) | ch[p+9] ) == 32 );
++		ok ( memcmp ( &ch[p+10], test_public_key,
++			      sizeof ( test_public_key ) ) == 0 );
++		p += ( 4 + elen );
++
++		/* psk_key_exchange_modes = { psk_dhe_ke }; the mode list
++		 * carries a one-byte length prefix.
++		 */
++		type = ( ( ch[p] << 8 ) | ch[p+1] );
++		elen = ( ( ch[p+2] << 8 ) | ch[p+3] );
++		ok ( type == TLS_PSK_KEY_EXCHANGE_MODES );
++		ok ( elen == 2 );
++		ok ( ch[p+4] == 1 );
++		ok ( ch[p+5] == TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE );
++		p += ( 4 + elen );
++
++		/* pre_shared_key must be the final extension */
++		type = ( ( ch[p] << 8 ) | ch[p+1] );
++		elen = ( ( ch[p+2] << 8 ) | ch[p+3] );
++		ok ( type == TLS_PRE_SHARED_KEY );
++		ok ( ( p + 4 + elen ) == eend );
++	}
++
++	/* The final extension is pre_shared_key: binders list + binder */
++	prefix_len = ( len - ( 2 + 1 + digest->digestsize ) );
++	ok ( ch[prefix_len] == 0x00 );
++	ok ( ch[prefix_len + 1] == ( uint8_t ) ( 1 + digest->digestsize ) );
++	ok ( ch[prefix_len + 2] == ( uint8_t ) digest->digestsize );
++	tls13_early_secret ( digest, resumption_psk, sizeof ( resumption_psk ),
++			     early );
++	tls13_binder ( digest, early, "ext binder", ch, prefix_len, binder );
++	ok ( memcmp ( &ch[prefix_len + 3], binder, sizeof ( binder ) ) == 0 );
++}
++
++/** Test TLS 1.3 record nonce construction */
++static void tls13_nonce_test ( void ) {
++	uint8_t expected[ TLS13_NONCE_LEN ];
++	uint8_t nonce[ TLS13_NONCE_LEN ];
++	unsigned int i;
++
++	/* Sequence number zero leaves the IV unchanged */
++	tls13_nonce ( client_app_iv, 0, nonce );
++	tls13_okx ( "nonce(0)", nonce, client_app_iv, sizeof ( nonce ) );
++
++	/* Sequence number one XORs into the final byte */
++	memcpy ( expected, client_app_iv, sizeof ( expected ) );
++	expected[ TLS13_NONCE_LEN - 1 ] ^= 0x01;
++	tls13_nonce ( client_app_iv, 1, nonce );
++	tls13_okx ( "nonce(1)", nonce, expected, sizeof ( nonce ) );
++
++	/* Multi-byte sequence numbers XOR into the final eight bytes */
++	memcpy ( expected, client_app_iv, sizeof ( expected ) );
++	for ( i = 0 ; i < 8 ; i++ )
++		expected[ TLS13_NONCE_LEN - 8 + i ] ^= ( 0x0102030405060708ULL
++							 >> ( 8 * ( 7 - i ) ) );
++	tls13_nonce ( client_app_iv, 0x0102030405060708ULL, nonce );
++	tls13_okx ( "nonce(64-bit)", nonce, expected, sizeof ( nonce ) );
++}
++
++/** Test TLS 1.3 record sealing and opening against RFC 8448 section 3 */
++static void tls13_record_test ( void ) {
++	struct cipher_algorithm *cipher = &aes_gcm_algorithm;
++	uint8_t header[] = APP_RECORD_HEADER ( sizeof ( client_app_record ) );
++	uint8_t sealed[ 128 ];
++	uint8_t opened[ 128 ];
++	uint8_t tampered[ sizeof ( client_app_record ) ];
++	size_t len;
++	int content_type;
++
++	/* Seal client application_data at sequence number zero */
++	len = tls13_seal ( cipher, client_app_key, sizeof ( client_app_key ),
++			   client_app_iv, 0, header, sizeof ( header ),
++			   app_payload, sizeof ( app_payload ), TLS_TYPE_DATA,
++			   sealed );
++	ok ( len == sizeof ( client_app_record ) );
++	tls13_okx ( "seal(client)", sealed, client_app_record, len );
++
++	/* Open client application_data at sequence number zero */
++	content_type = tls13_open ( cipher, client_app_key,
++				    sizeof ( client_app_key ), client_app_iv, 0,
++				    header, sizeof ( header ),
++				    client_app_record, sizeof ( client_app_record ),
++				    opened, &len );
++	ok ( content_type == TLS_TYPE_DATA );
++	ok ( len == sizeof ( app_payload ) );
++	tls13_okx ( "open(client)", opened, app_payload, len );
++
++	/* Server application_data uses sequence number one (sequence
++	 * number zero was consumed by a NewSessionTicket record).
++	 */
++	header[3] = ( uint8_t ) ( sizeof ( server_app_record ) >> 8 );
++	header[4] = ( uint8_t ) ( sizeof ( server_app_record ) & 0xff );
++	len = tls13_seal ( cipher, server_app_key, sizeof ( server_app_key ),
++			   server_app_iv, 1, header, sizeof ( header ),
++			   app_payload, sizeof ( app_payload ), TLS_TYPE_DATA,
++			   sealed );
++	ok ( len == sizeof ( server_app_record ) );
++	tls13_okx ( "seal(server)", sealed, server_app_record, len );
++
++	/* Alert records carry an inner content type of alert */
++	header[3] = ( uint8_t ) ( sizeof ( alert_record ) >> 8 );
++	header[4] = ( uint8_t ) ( sizeof ( alert_record ) & 0xff );
++	len = tls13_seal ( cipher, client_app_key, sizeof ( client_app_key ),
++			   client_app_iv, 1, header, sizeof ( header ),
++			   alert_payload, sizeof ( alert_payload ), TLS_TYPE_ALERT,
++			   sealed );
++	ok ( len == sizeof ( alert_record ) );
++	tls13_okx ( "seal(alert)", sealed, alert_record, len );
++
++	content_type = tls13_open ( cipher, client_app_key,
++				    sizeof ( client_app_key ), client_app_iv, 1,
++				    header, sizeof ( header ), alert_record,
++				    sizeof ( alert_record ), opened, &len );
++	ok ( content_type == TLS_TYPE_ALERT );
++	ok ( len == sizeof ( alert_payload ) );
++	tls13_okx ( "open(alert)", opened, alert_payload, len );
++
++	/* A tampered authentication tag must be rejected */
++	header[3] = ( uint8_t ) ( sizeof ( client_app_record ) >> 8 );
++	header[4] = ( uint8_t ) ( sizeof ( client_app_record ) & 0xff );
++	memcpy ( tampered, client_app_record, sizeof ( tampered ) );
++	tampered[ sizeof ( tampered ) - 1 ] ^= 0x01;
++	content_type = tls13_open ( cipher, client_app_key,
++				    sizeof ( client_app_key ), client_app_iv, 0,
++				    header, sizeof ( header ), tampered,
++				    sizeof ( tampered ), opened, &len );
++	ok ( content_type < 0 );
++
++	/* A tampered ciphertext must be rejected */
++	memcpy ( tampered, client_app_record, sizeof ( tampered ) );
++	tampered[0] ^= 0x01;
++	content_type = tls13_open ( cipher, client_app_key,
++				    sizeof ( client_app_key ), client_app_iv, 0,
++				    header, sizeof ( header ), tampered,
++				    sizeof ( tampered ), opened, &len );
++	ok ( content_type < 0 );
++
++	/* A mismatched sequence number must be rejected */
++	content_type = tls13_open ( cipher, client_app_key,
++				    sizeof ( client_app_key ), client_app_iv, 7,
++				    header, sizeof ( header ),
++				    client_app_record, sizeof ( client_app_record ),
++				    opened, &len );
++	ok ( content_type < 0 );
++}
++
++/** Test TLS 1.3 ServerHello parsing */
++static void tls13_server_hello_test ( void ) {
++	struct tls13_server_hello hello;
++	uint8_t bad[ sizeof ( server_hello_3 ) ];
++	int rc;
++
++	/* RFC 8448 section 3: full handshake, X25519 key share */
++	rc = tls13_parse_server_hello ( server_hello_3, sizeof ( server_hello_3 ),
++					&hello );
++	ok ( rc == 0 );
++	ok ( hello.cipher_suite == TLS_AES_128_GCM_SHA256 );
++	ok ( hello.version == TLS_VERSION_TLS_1_3 );
++	ok ( ! hello.has_psk );
++	ok ( hello.has_key_share );
++	tls13_okx ( "sh3 key", hello.public_key, server_hello_3_key,
++		    sizeof ( hello.public_key ) );
++
++	/* RFC 8448 section 4: pre-shared key accepted as identity 0 */
++	rc = tls13_parse_server_hello ( server_hello_4, sizeof ( server_hello_4 ),
++					&hello );
++	ok ( rc == 0 );
++	ok ( hello.cipher_suite == TLS_AES_128_GCM_SHA256 );
++	ok ( hello.version == TLS_VERSION_TLS_1_3 );
++	ok ( hello.has_psk );
++	ok ( hello.selected_identity == 0 );
++	ok ( hello.has_key_share );
++	tls13_okx ( "sh4 key", hello.public_key, server_hello_4_key,
++		    sizeof ( hello.public_key ) );
++
++	/* Truncated messages must be rejected */
++	rc = tls13_parse_server_hello ( server_hello_3,
++					( sizeof ( server_hello_3 ) - 1 ),
++					&hello );
++	ok ( rc != 0 );
++
++	/* Non-ServerHello messages must be rejected */
++	memcpy ( bad, server_hello_3, sizeof ( bad ) );
++	bad[0] = TLS_CLIENT_HELLO;
++	rc = tls13_parse_server_hello ( bad, sizeof ( bad ), &hello );
++	ok ( rc != 0 );
++}
++
++/** Test TLS 1.3 Finished calculation against RFC 8448 section 3 */
++static void tls13_finished_test ( void ) {
++	uint8_t verify_data[ sizeof ( server_finished ) ];
++	uint8_t bad[ sizeof ( finished_transcript ) ];
++
++	/* verify_data = HMAC( ExpandLabel( secret, "finished" ),
++	 *                     Transcript-Hash( ClientHello..CertificateVerify ) )
++	 */
++	tls13_finished ( &sha256_algorithm, server_hs_traffic,
++			 finished_transcript, sizeof ( finished_transcript ),
++			 verify_data );
++	tls13_okx ( "server finished", verify_data, server_finished,
++		    sizeof ( verify_data ) );
++
++	/* A single altered transcript byte must change the result */
++	memcpy ( bad, finished_transcript, sizeof ( bad ) );
++	bad[ sizeof ( bad ) - 1 ] ^= 0x01;
++	tls13_finished ( &sha256_algorithm, server_hs_traffic, bad, sizeof ( bad ),
++			 verify_data );
++	ok ( memcmp ( verify_data, server_finished,
++		      sizeof ( verify_data ) ) != 0 );
++}
++
++/** Test TLS 1.3 ephemeral key exchange (RFC 8448 section 3) */
++static void tls13_key_exchange_test ( void ) {
++	struct tls13_key_pair key;
++	uint8_t shared[32];
++
++	/* Derive the client public key from its known private key */
++	memcpy ( key.private_key, client_private_key_3,
++		 sizeof ( key.private_key ) );
++	ok ( exchange_share ( &x25519_algorithm, key.private_key,
++			      key.public_key ) == 0 );
++	tls13_okx ( "X25519 public key", key.public_key, client_public_key_3,
++		    sizeof ( key.public_key ) );
++
++	/* Agree the shared secret with the server public key */
++	ok ( tls13_shared_secret ( client_private_key_3, server_hello_3_key,
++				   shared ) == 0 );
++	tls13_okx ( "X25519 shared secret", shared, ecdhe, sizeof ( shared ) );
++}
++
++/** Test the TLS 1.3 handshake context (RFC 8448 sections 3 and 4) */
++static void tls13_handshake_test ( void ) {
++	struct tls13_handshake hs;
++	uint8_t c_hs[32];
++	uint8_t s_hs[32];
++	uint8_t c_ap[32];
++	uint8_t s_ap[32];
++	uint8_t fin[32];
++	size_t ch_sh = ( 196 + 90 );
++
++	/* Section 3: ephemeral handshake with no pre-shared key */
++	tls13_handshake_init ( &hs, &sha256_algorithm, NULL, 0, "ext binder" );
++	ok ( tls13_handshake_update ( &hs, finished_transcript,
++				      ch_sh ) == 0 );
++
++	/* Reproduce the (EC)DHE using the RFC's client private key */
++	memcpy ( hs.key.private_key, client_private_key_3,
++		 sizeof ( hs.key.private_key ) );
++	ok ( tls13_handshake_exchange ( &hs, server_hello_3_key ) == 0 );
++	tls13_okx ( "hs secret", hs.handshake, handshake_secret,
++		    sizeof ( hs.handshake ) );
++
++	tls13_handshake_derive ( &hs, hs.handshake, "c hs traffic", c_hs );
++	tls13_handshake_derive ( &hs, hs.handshake, "s hs traffic", s_hs );
++	tls13_okx ( "c hs traffic", c_hs, client_hs_traffic_3, sizeof ( c_hs ) );
++	tls13_okx ( "s hs traffic", s_hs, server_hs_traffic, sizeof ( s_hs ) );
++
++	/* Server Finished: transcript extends to CertificateVerify */
++	ok ( tls13_handshake_update ( &hs, &finished_transcript[ch_sh],
++				      ( sizeof ( finished_transcript ) -
++					ch_sh ) ) == 0 );
++	tls13_handshake_finished ( &hs, s_hs, fin );
++	tls13_okx ( "server finished", fin, server_finished, sizeof ( fin ) );
++
++	/* Client Finished: transcript extends by the server Finished */
++	ok ( tls13_handshake_update ( &hs, server_finished_msg_3,
++				      sizeof ( server_finished_msg_3 ) ) == 0 );
++	tls13_handshake_finished ( &hs, c_hs, fin );
++	tls13_okx ( "client finished", fin, &client_finished_msg_3[4],
++		    sizeof ( fin ) );
++
++	/* Application traffic secrets: transcript to the server Finished */
++	tls13_handshake_master ( &hs );
++	tls13_okx ( "master secret", hs.master, master_secret,
++		    sizeof ( hs.master ) );
++	tls13_handshake_derive ( &hs, hs.master, "c ap traffic", c_ap );
++	tls13_handshake_derive ( &hs, hs.master, "s ap traffic", s_ap );
++	tls13_okx ( "c ap traffic", c_ap, client_ap_traffic_3,
++		    sizeof ( c_ap ) );
++	tls13_okx ( "s ap traffic", s_ap, server_ap_traffic_3,
++		    sizeof ( s_ap ) );
++
++	/* Section 4: pre-shared key handshake */
++	tls13_handshake_init ( &hs, &sha256_algorithm, resumption_psk,
++			       sizeof ( resumption_psk ), "res binder" );
++	tls13_okx ( "psk early secret", hs.early, resumption_early,
++		    sizeof ( hs.early ) );
++
++	/* Shake hands as the client: ClientHello then ServerHello */
++	ok ( tls13_handshake_update ( &hs, client_hello_4,
++				      sizeof ( client_hello_4 ) ) == 0 );
++	ok ( tls13_handshake_update ( &hs, server_hello_4,
++				      sizeof ( server_hello_4 ) ) == 0 );
++	memcpy ( hs.key.private_key, client_private_key_4,
++		 sizeof ( hs.key.private_key ) );
++	ok ( tls13_handshake_exchange ( &hs, server_hello_4_key ) == 0 );
++
++	tls13_handshake_derive ( &hs, hs.handshake, "c hs traffic", c_hs );
++	tls13_handshake_derive ( &hs, hs.handshake, "s hs traffic", s_hs );
++	tls13_okx ( "psk c hs traffic", c_hs, client_hs_traffic_4,
++		    sizeof ( c_hs ) );
++	tls13_okx ( "psk s hs traffic", s_hs, server_hs_traffic_4,
++		    sizeof ( s_hs ) );
++
++	/* Server Finished: transcript extends to EncryptedExtensions */
++	ok ( tls13_handshake_update ( &hs, encrypted_extensions_4,
++				      sizeof ( encrypted_extensions_4 ) ) == 0 );
++	tls13_handshake_finished ( &hs, s_hs, fin );
++	tls13_okx ( "psk server finished", fin, &server_finished_msg_4[4],
++		    sizeof ( fin ) );
++
++	/* Application traffic secrets: transcript to the server Finished */
++	ok ( tls13_handshake_update ( &hs, server_finished_msg_4,
++				      sizeof ( server_finished_msg_4 ) ) == 0 );
++	tls13_handshake_master ( &hs );
++	tls13_handshake_derive ( &hs, hs.master, "c ap traffic", c_ap );
++	tls13_handshake_derive ( &hs, hs.master, "s ap traffic", s_ap );
++	tls13_okx ( "psk c ap traffic", c_ap, client_ap_traffic_4,
++		    sizeof ( c_ap ) );
++	tls13_okx ( "psk s ap traffic", s_ap, server_ap_traffic_4,
++		    sizeof ( s_ap ) );
++
++	/* Client Finished: the trace uses 0-RTT, so the transcript also
++	 * includes the EndOfEarlyData message. */
++	ok ( tls13_handshake_update ( &hs, end_of_early_data_4,
++				      sizeof ( end_of_early_data_4 ) ) == 0 );
++	tls13_handshake_finished ( &hs, c_hs, fin );
++	tls13_okx ( "psk client finished", fin, &client_finished_msg_4[4],
++		    sizeof ( fin ) );
++
++	/* A transcript overflow must be detected */
++	tls13_handshake_init ( &hs, &sha256_algorithm, NULL, 0, "ext binder" );
++	ok ( tls13_handshake_update ( &hs, finished_transcript,
++				      sizeof ( finished_transcript ) ) == 0 );
++	ok ( tls13_handshake_update ( &hs, finished_transcript,
++				      200 ) != 0 );
++}
++
++/** Test TLS 1.3 key schedule against RFC 8448 section 3 */
++static void tls13_test_exec ( void ) {
++	struct digest_algorithm *digest = &sha256_algorithm;
++	uint8_t secret[ digest->digestsize ];
++	uint8_t key[ sizeof ( server_write_key ) ];
++	uint8_t iv[ sizeof ( server_write_iv ) ];
++	uint8_t binder[ digest->digestsize ];
++
++	/* Early Secret = HKDF-Extract( 0, 0 ) */
++	tls13_early_secret ( digest, NULL, 0, secret );
++	tls13_okx ( "early", secret, early_secret, sizeof ( secret ) );
++
++	/* derived = Derive-Secret( Early, "derived", "" ) */
++	tls13_derive_secret ( digest, secret, "derived", NULL, 0, secret );
++	tls13_okx ( "derived(early)", secret, derived_early, sizeof ( secret ) );
++
++	/* Handshake Secret = HKDF-Extract( derived, (EC)DHE ) */
++	tls13_early_secret ( digest, NULL, 0, secret );
++	tls13_handshake_secret ( digest, secret, ecdhe, sizeof ( ecdhe ),
++				 secret );
++	tls13_okx ( "handshake", secret, handshake_secret, sizeof ( secret ) );
++
++	/* derived = Derive-Secret( Handshake, "derived", "" ) */
++	tls13_derive_secret ( digest, secret, "derived", NULL, 0, secret );
++	tls13_okx ( "derived(handshake)", secret, derived_handshake,
++		    sizeof ( secret ) );
++
++	/* Master Secret = HKDF-Extract( derived, 0 ) */
++	tls13_handshake_secret ( digest, early_secret, ecdhe, sizeof ( ecdhe ),
++				 secret );
++	tls13_master_secret ( digest, secret, secret );
++	tls13_okx ( "master", secret, master_secret, sizeof ( secret ) );
++
++	/* Traffic key / IV from the server handshake traffic secret */
++	tls13_traffic_key ( digest, server_hs_traffic, key, sizeof ( key ),
++			    iv, sizeof ( iv ) );
++	tls13_okx ( "write key", key, server_write_key, sizeof ( key ) );
++	tls13_okx ( "write iv", iv, server_write_iv, sizeof ( iv ) );
++
++	/* Early Secret and PSK binder (RFC 8448 section 4) */
++	tls13_early_secret ( digest, resumption_psk, sizeof ( resumption_psk ),
++			     secret );
++	tls13_okx ( "psk early", secret, resumption_early, sizeof ( secret ) );
++	tls13_binder ( digest, secret, "res binder", ch_prefix,
++		       sizeof ( ch_prefix ), binder );
++	tls13_okx ( "psk binder", binder, resumption_binder, sizeof ( binder ) );
++
++	/* ClientHello construction */
++	tls13_client_hello_test();
++
++	/* Record protection */
++	tls13_nonce_test();
++	tls13_record_test();
++
++	/* ServerHello parsing and Finished calculation */
++	tls13_server_hello_test();
++	tls13_finished_test();
++
++	/* Key exchange and handshake context */
++	tls13_key_exchange_test();
++	tls13_handshake_test();
++}
++
++/** TLS 1.3 key schedule self-test */
++struct self_test tls13_test __self_test = {
++	.name = "tls13",
++	.exec = tls13_test_exec,
++};

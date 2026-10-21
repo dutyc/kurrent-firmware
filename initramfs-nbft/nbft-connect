@@ -59,21 +59,24 @@ detect_nbft() {
 # The firmware (iPXE) writes one fixed-size entry per authenticated
 # NVMe/TCP session into a custom ACPI table signed "NBCT", so that the
 # kernel-side reconnect can attach the DH-HMAC-CHAP secret and host NQN
-# without a second network fetch of credentials.  Layout (see
-# iPXE src/drivers/block/nbct.c):
+# without a second network fetch of credentials.  An entry additionally
+# carries the kernel-segment TLS handoff (tls_trsvcid / tls_psk).  Layout
+# (see iPXE src/drivers/block/nbct.c):
 #
 #   offset  size  field
 #   0       36    ACPI header (signature "NBCT", length, revision, ...)
 #   36      4     nbct_header: count (u8) + reserved[3]
-#   40 + i*1024  entry i (fixed 1024 bytes):
+#   40 + i*1152  entry i (fixed 1152 bytes):
 #     +0    4     index (u16) + reserved (u16)
 #     +4    128   traddr (NUL-terminated)
-#     +132  16    trsvcid
+#     +132  16    trsvcid (port used by the firmware segment)
 #     +148  256   nqn
 #     +404  256   hostnqn
 #     +660  320   secret (empty if unauthenticated)
+#     +980  16    tls_trsvcid (kernel-segment TLS port; empty = no TLS)
+#     +996  128   tls_psk (TLS pre-shared key, hex; empty = no key)
 
-NBCT_ENTRY_LEN=1024
+NBCT_ENTRY_LEN=1152
 NBCT_BODY_OFF=40        # first entry (ACPI header 36 + nbct_header 4)
 NBCT_HDR_OFF=36        # nbct_header: count (u8) + reserved[3]
 NBCT_TRADDR_OFF=4
@@ -86,6 +89,10 @@ NBCT_HOSTNQN_OFF=404
 NBCT_HOSTNQN_LEN=256
 NBCT_SECRET_OFF=660
 NBCT_SECRET_LEN=320
+NBCT_TLS_TRSVCID_OFF=980
+NBCT_TLS_TRSVCID_LEN=16
+NBCT_TLS_PSK_OFF=996
+NBCT_TLS_PSK_LEN=128
 
 # Detect the NBCT credentials table exported by the kernel.
 detect_nbct() {
@@ -107,12 +114,72 @@ nbct_field() {
        count="$4" 2>/dev/null
 }
 
+# --- TLS-PSK injection (kernel global .nvme keyring) ------------------------
+#
+# The kernel resolves the TLS pre-shared key from a `psk` key whose
+# description is the PSK identity "NVMe0R01 <hostnqn> <subsysnqn>" and whose
+# payload is the raw 32-byte key.  The keyring is the one the nvme-keyring
+# module creates (".nvme"); it is linked into no session, so it cannot be
+# found by name -- its serial is read from /proc/keys instead.  keyctl reads
+# the payload from stdin, so the hex NBCT field is decoded on the fly.
+KEYCTL="${KEYCTL:-$(command -v keyctl || echo /usr/bin/keyctl)}"
+# Kernel key listing path; overridable so host-side unit tests can supply a
+# synthetic listing instead of the real /proc/keys.
+KEYS_FILE="${KEYS_FILE:-/proc/keys}"
+
+# Find the serial of the kernel ".nvme" keyring.  keyctl needs it in 0x form:
+# a bare number is parsed as decimal, so a hex serial containing letters would
+# be rejected ("Unparsable key").
+nvme_keyring_serial() {
+    local line
+    while IFS= read -r line; do
+        case "$line" in
+        *keyring*.nvme*)
+            set -- $line
+            echo "0x$1"
+            return 0
+            ;;
+        esac
+    done < "$KEYS_FILE"
+    return 1
+}
+
+# Decode a hex string to raw bytes on stdout.  Uses only shell builtins plus
+# printf: arithmetic expands the 0x hex pair, %o renders it octal, and %b
+# turns the \0NNN escapes back into bytes.  The result may contain NULs, so it
+# must never be captured in a variable (command substitution would truncate).
+hex_to_raw() {
+    local h="$1" out="" pair
+    while [ -n "$h" ]; do
+        pair="${h%"${h#??}"}"
+        # Stop on malformed input (odd tail or non-hex char) instead of
+        # looping forever: a stray byte must never hang the boot.
+        [ "${#pair}" -eq 2 ] || break
+        case "$pair" in *[!0-9a-fA-F]*) break ;; esac
+        out="${out}\\0$(printf '%o' "$(( 0x${pair} ))")"
+        h="${h#??}"
+    done
+    printf '%b' "$out"
+}
+
+# Inject the TLS PSK for (hostnqn, subsysnqn) into the kernel .nvme keyring.
+inject_tls_psk() {
+    local hostnqn="$1" subnqn="$2" hex="$3" kr
+    kr="$(nvme_keyring_serial)" || {
+        warn "kernel .nvme keyring not found in /proc/keys"
+        return 1
+    }
+    hex_to_raw "$hex" | "$KEYCTL" padd psk \
+        "NVMe0R01 ${hostnqn} ${subnqn}" "$kr" >/dev/null 2>&1
+}
+
 # Connect the sessions recorded in the NBCT table, attaching the
 # per-session DH-HMAC-CHAP secret and host NQN.  Skips entries without a
 # transport address or subsystem NQN; continues on per-entry failure so
 # one bad record cannot block the rest.
 nbct_connect() {
     local tbl f i count traddr trsvcid nqn hostnqn secret rc=0
+    local tls_trsvcid tls_psk tls
 
     tbl=
     for f in "${NBFT_SYSFS_PATH}"/NBCT*; do
@@ -140,6 +207,8 @@ nbct_connect() {
         nqn="$(nbct_field "$tbl" "$i" $NBCT_NQN_OFF $NBCT_NQN_LEN)"
         hostnqn="$(nbct_field "$tbl" "$i" $NBCT_HOSTNQN_OFF $NBCT_HOSTNQN_LEN)"
         secret="$(nbct_field "$tbl" "$i" $NBCT_SECRET_OFF $NBCT_SECRET_LEN)"
+        tls_trsvcid="$(nbct_field "$tbl" "$i" $NBCT_TLS_TRSVCID_OFF $NBCT_TLS_TRSVCID_LEN)"
+        tls_psk="$(nbct_field "$tbl" "$i" $NBCT_TLS_PSK_OFF $NBCT_TLS_PSK_LEN)"
 
         if [ -z "$traddr" ] || [ -z "$nqn" ]; then
             warn "NBCT entry $i incomplete (traddr='${traddr}' nqn='${nqn}')"
@@ -149,12 +218,41 @@ nbct_connect() {
         fi
         [ -n "$trsvcid" ] || trsvcid=4420
 
+        # Kernel-segment TLS: a non-empty tls_trsvcid marks the session for
+        # TLS and switches the connection to that port; a non-empty tls_psk
+        # seeds the kernel keyring first.  The PSK authenticates the session
+        # itself, so DH-HMAC-CHAP is not requested alongside it.
+        tls=0
+        if [ -n "$tls_trsvcid" ]; then
+            if [ -z "$hostnqn" ]; then
+                warn "NBCT entry $i requests TLS but carries no hostnqn"
+                rc=1
+                i=$((i + 1))
+                continue
+            fi
+            if [ -n "$tls_psk" ]; then
+                if inject_tls_psk "$hostnqn" "$nqn" "$tls_psk"; then
+                    log "injected TLS PSK for ${nqn}"
+                else
+                    warn "TLS PSK injection failed for ${nqn}"
+                    rc=1
+                    i=$((i + 1))
+                    continue
+                fi
+            fi
+            trsvcid="$tls_trsvcid"
+            tls=1
+        fi
+
         # All fields are simple ASCII (hex secret, NQN, IP), so quoting
         # and eval are safe; the values carry no shell metacharacters.
         local cmd="${NVME} connect -t tcp -a '${traddr}' -s '${trsvcid}' -n '${nqn}'"
         [ -n "$hostnqn" ] && cmd="${cmd} -q '${hostnqn}'"
         [ -n "$HOSTID" ] && cmd="${cmd} --hostid '${HOSTID}'"
-        [ -n "$secret" ] && cmd="${cmd} --dhchap-secret '${secret}'"
+        [ "$tls" -eq 1 ] && cmd="${cmd} --tls"
+        if [ "$tls" -eq 0 ] && [ -n "$secret" ]; then
+            cmd="${cmd} --dhchap-secret '${secret}'"
+        fi
         log "running: $cmd"
         if eval "$cmd"; then
             log "connected ${nqn} @ ${traddr}:${trsvcid}"
@@ -257,6 +355,17 @@ selftest() {
     got="$(normalize_mac '52-54-00-4F-97-E9')"
     [ "$got" = "52:54:00:4f:97:e9" ] || { echo "FAIL mac dash: $got" >&2; fail=1; }
 
+    # hex_to_raw decodes to the exact bytes.  Only the NUL-free path is
+    # asserted here (command substitution cannot carry NULs); the full byte
+    # range is exercised by the live PSK injection pipeline.
+    got="$(hex_to_raw '414243')"
+    [ "$got" = "ABC" ] || { echo "FAIL hex_to_raw: $got" >&2; fail=1; }
+    # Malformed input (odd length / non-hex) must terminate, not loop.
+    got="$(hex_to_raw '41424')"
+    [ "$got" = "AB" ] || { echo "FAIL hex_to_raw odd: $got" >&2; fail=1; }
+    got="$(hex_to_raw '4142zz')"
+    [ "$got" = "AB" ] || { echo "FAIL hex_to_raw non-hex: $got" >&2; fail=1; }
+
     # NBCT table parsing against a synthetic table (two entries: one
     # authenticated, one without a secret).
     if selftest_nbct; then
@@ -276,6 +385,7 @@ selftest() {
 # Build a synthetic NBCT ACPI table in $1 and verify the field parser.
 selftest_nbct() {
     local dir fail=0 got tbl
+    local psk0='aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899'
     dir="${TMPDIR:-/tmp}/nbct-selftest.$$"
     rm -rf "$dir"
     mkdir -p "$dir" || return 1
@@ -294,9 +404,10 @@ selftest_nbct() {
     printf '\002\000\000\000' >> "$tbl"
 
     build_nbct_entry "$tbl" '192.0.2.10' '4420' 'nqn.2026-08.test:disk0' \
-        'nqn.2026-08.test:host' '00112233445566778899aabbccddeeff'
+        'nqn.2026-08.test:host' '00112233445566778899aabbccddeeff' \
+        '4421' "$psk0"
     build_nbct_entry "$tbl" '192.0.2.11' '' 'nqn.2026-08.test:disk1' \
-        '' ''
+        '' '' '' ''
 
     NBFT_SYSFS_PATH="$dir"
     detect_nbct || { echo "FAIL detect_nbct" >&2; fail=1; }
@@ -319,7 +430,16 @@ selftest_nbct() {
     got="$(nbct_field "$tbl" 1 $NBCT_HOSTNQN_OFF $NBCT_HOSTNQN_LEN)"
     [ -z "$got" ] || { echo "FAIL entry1 hostnqn (should be empty)" >&2; fail=1; }
 
-    # Table format sanity: 40 bytes of headers + N * 1024 (host-side
+    got="$(nbct_field "$tbl" 0 $NBCT_TLS_TRSVCID_OFF $NBCT_TLS_TRSVCID_LEN)"
+    [ "$got" = "4421" ] || { echo "FAIL entry0 tls_trsvcid: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 0 $NBCT_TLS_PSK_OFF $NBCT_TLS_PSK_LEN)"
+    [ "$got" = "$psk0" ] || { echo "FAIL entry0 tls_psk: $got" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 1 $NBCT_TLS_TRSVCID_OFF $NBCT_TLS_TRSVCID_LEN)"
+    [ -z "$got" ] || { echo "FAIL entry1 tls_trsvcid (should be empty)" >&2; fail=1; }
+    got="$(nbct_field "$tbl" 1 $NBCT_TLS_PSK_OFF $NBCT_TLS_PSK_LEN)"
+    [ -z "$got" ] || { echo "FAIL entry1 tls_psk (should be empty)" >&2; fail=1; }
+
+    # Table format sanity: 40 bytes of headers + N * NBCT_ENTRY_LEN (host-side
     # check; the klibc initramfs path derives the count from the header
     # byte instead, see nbct_connect).
     got=$(( $(wc -c < "$tbl") - NBCT_BODY_OFF ))
@@ -337,7 +457,7 @@ selftest_nbct() {
     return "$fail"
 }
 
-# Append one fixed-size NBCT entry (1024 bytes) to $1.
+# Append one fixed-size NBCT entry (NBCT_ENTRY_LEN bytes) to $1.
 build_nbct_entry() {
     local i
     printf '\000\000\000\000' >> "$1"   # index + reserved
@@ -356,9 +476,15 @@ build_nbct_entry() {
     printf '%s' "$6" >> "$1"
     i=$(( NBCT_SECRET_LEN - ${#6} ))
     while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
-    # The packed entry body is 980 bytes; the firmware strides entries
-    # by NBCT_ENTRY_LEN (1024), so pad the remainder.
-    i=$(( NBCT_ENTRY_LEN - 980 ))
+    printf '%s' "$7" >> "$1"
+    i=$(( NBCT_TLS_TRSVCID_LEN - ${#7} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    printf '%s' "$8" >> "$1"
+    i=$(( NBCT_TLS_PSK_LEN - ${#8} ))
+    while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
+    # The packed entry body is 1124 bytes; the firmware strides entries
+    # by NBCT_ENTRY_LEN (1152), so pad the remainder.
+    i=$(( NBCT_ENTRY_LEN - 1124 ))
     while [ "$i" -gt 0 ]; do printf '\000' >> "$1"; i=$((i - 1)); done
 }
 
@@ -508,6 +634,10 @@ Options:
 Environment:
   NBFT_SYSFS_PATH    path to the kernel ACPI table export (default: /sys/firmware/acpi/tables)
   NVME               path to the nvme binary (default: from PATH or /usr/sbin/nvme)
+  KEYCTL             path to the keyctl binary used for TLS-PSK injection
+                     (default: from PATH or /usr/bin/keyctl)
+  KEYS_FILE          kernel key listing read to locate the .nvme keyring
+                     (default: /proc/keys)
   HOSTID             host ID passed as --hostid to nvme connect (default:
                      11111111-2222-3333-4444-555555555555; pinned to avoid
                      kernel "same hostid but different hostnqn" rejection)

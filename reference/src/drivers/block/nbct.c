@@ -29,6 +29,7 @@ FILE_SECBOOT ( PERMITTED );
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <assert.h>
 #include <byteswap.h>
 #include <ipxe/acpi.h>
 #include <ipxe/nvmetcp.h>
@@ -54,7 +55,7 @@ FILE_SECBOOT ( PERMITTED );
 #define NBCT_SIGNATURE ACPI_SIGNATURE ( 'N', 'B', 'C', 'T' )
 
 /** Length of each NBCT entry (fixed, for initramfs dd parsing) */
-#define NBCT_ENTRY_LEN 1024
+#define NBCT_ENTRY_LEN 1152
 
 /** NBCT entry field lengths (including NUL terminator) */
 #define NBCT_TRADDR_LEN 128
@@ -62,6 +63,8 @@ FILE_SECBOOT ( PERMITTED );
 #define NBCT_NQN_LEN 256
 #define NBCT_HOSTNQN_LEN 256
 #define NBCT_SECRET_LEN 320
+#define NBCT_TLS_TRSVCID_LEN 16
+#define NBCT_TLS_PSK_LEN 128
 
 /** NBCT table body header */
 struct nbct_header {
@@ -87,6 +90,10 @@ struct nbct_entry {
 	char hostnqn[NBCT_HOSTNQN_LEN];
 	/** DH-HMAC-CHAP secret (empty if unauthenticated) */
 	char secret[NBCT_SECRET_LEN];
+	/** Kernel-side TLS port (empty if TLS not requested) */
+	char tls_trsvcid[NBCT_TLS_TRSVCID_LEN];
+	/** TLS pre-shared key, hex (empty if TLS not requested) */
+	char tls_psk[NBCT_TLS_PSK_LEN];
 } __attribute__ (( packed ));
 
 /**
@@ -121,6 +128,10 @@ static int nbct_install ( int ( * install ) ( struct acpi_header *acpi ) ) {
 	unsigned int i;
 	size_t len;
 	int rc;
+
+	/* The initramfs parses entries by fixed offset, so the packed body
+	 * must stay within the fixed per-entry stride. */
+	build_assert ( sizeof ( struct nbct_entry ) <= NBCT_ENTRY_LEN );
 
 	/* Count sessions */
 	list_for_each_entry ( nvmetcp, &nbct_model.descs, desc.list )
@@ -160,6 +171,13 @@ static int nbct_install ( int ( * install ) ( struct acpi_header *acpi ) ) {
 		if ( nvmetcp->secret )
 			snprintf ( entry->secret, sizeof ( entry->secret ),
 				   "%s", nvmetcp->secret );
+		if ( nvmetcp->tls_trsvcid )
+			snprintf ( entry->tls_trsvcid,
+				   sizeof ( entry->tls_trsvcid ), "%s",
+				   nvmetcp->tls_trsvcid );
+		if ( nvmetcp->tls_psk )
+			snprintf ( entry->tls_psk, sizeof ( entry->tls_psk ),
+				   "%s", nvmetcp->tls_psk );
 		i++;
 	}
 

@@ -56,10 +56,10 @@ index 6faf79d32..e177ca2b8 100644
  #define ERRFILE_elf		      ( ERRFILE_IMAGE | 0x00010000 )
 diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
 new file mode 100644
-index 000000000..8607fcd3c
+index 000000000..8b568d416
 --- /dev/null
 +++ b/src/include/ipxe/nvmetcp.h
-@@ -0,0 +1,916 @@
+@@ -0,0 +1,920 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -861,6 +861,10 @@ index 000000000..8607fcd3c
 +	char *target_host;
 +	/** Target port */
 +	uint16_t target_port;
++	/** TLS pre-shared key (hex; empty if TLS not requested) */
++	char *tls_psk;
++	/** Kernel-side TLS port (NBCT handoff; empty if TLS not requested) */
++	char *tls_trsvcid;
 +	/** Subsystem NQN */
 +	char *subsystem_nqn;
 +	/** Host NQN */
@@ -978,10 +982,10 @@ index 000000000..8607fcd3c
 +#endif /* _IPXE_NVMETCP_H */
 diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
 new file mode 100644
-index 000000000..fa64bb2a6
+index 000000000..505d3d4a9
 --- /dev/null
 +++ b/src/net/tcp/nvmetcp.c
-@@ -0,0 +1,1443 @@
+@@ -0,0 +1,1494 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware contributors.
 + *
@@ -1060,6 +1064,8 @@ index 000000000..fa64bb2a6
 +	free ( nvmetcp->subsystem_nqn );
 +	free ( nvmetcp->host_nqn );
 +	free ( nvmetcp->secret );
++	free ( nvmetcp->tls_psk );
++	free ( nvmetcp->tls_trsvcid );
 +	uri_put ( nvmetcp->uri );
 +	free ( nvmetcp );
 +}
@@ -2183,6 +2189,53 @@ index 000000000..fa64bb2a6
 +	INTF_DESC ( struct nvmetcp_session, control, nvmetcp_control_operations );
 +
 +/**
++ * Parse a URI query parameter
++ *
++ * @v uri		URI
++ * @v name		Parameter name including the trailing '='
++ * @v dest		Destination for the value (allocated; NULL if absent)
++ * @ret rc		Return status code
++ *
++ * The value runs up to the next '&' (or the end of the query string).
++ * An absent or empty parameter leaves *dest as NULL.
++ */
++static int nvmetcp_parse_qparam ( struct uri *uri, const char *name,
++				  char **dest ) {
++	size_t name_len = strlen ( name );
++	const char *query;
++	const char *match;
++	const char *end;
++	size_t len;
++
++	*dest = NULL;
++	if ( ! uri->equery )
++		return 0;
++
++	/* Locate "name" parameter (start of query, or preceded by '&') */
++	query = uri->equery;
++	while ( ( match = strstr ( query, name ) ) != NULL ) {
++		query = match + name_len;
++		if ( ( match == uri->equery ) || ( match[-1] == '&' ) )
++			break;
++	}
++	if ( ! match )
++		return 0;
++
++	/* Extract value (up to next '&') */
++	end = strchr ( match + name_len, '&' );
++	len = ( end ? ( ( size_t ) ( end - match ) - name_len ) :
++		( strlen ( match ) - name_len ) );
++	if ( len == 0 )
++		return 0;
++	*dest = zalloc ( len + 1 );
++	if ( ! *dest )
++		return -ENOMEM;
++	memcpy ( *dest, match + name_len, len );
++
++	return 0;
++}
++
++/**
 + * Parse URI secret (query parameter "secret=")
 + *
 + * @v nvmetcp		NVMe/TCP session
@@ -2191,34 +2244,31 @@ index 000000000..fa64bb2a6
 + */
 +static int nvmetcp_parse_secret ( struct nvmetcp_session *nvmetcp,
 +				  struct uri *uri ) {
-+	const char *query;
-+	char *secret;
-+	char *end;
-+	size_t len;
++	return nvmetcp_parse_qparam ( uri, "secret=", &nvmetcp->secret );
++}
 +
-+	if ( ! uri->equery )
-+		return 0;
++/**
++ * Parse TLS handoff parameters (query parameters "tls_psk=", "tls_trsvcid=")
++ *
++ * @v nvmetcp		NVMe/TCP session
++ * @v uri		URI
++ * @ret rc		Return status code
++ *
++ * These carry the kernel/initramfs session parameters (TLS pre-shared key
++ * and the target's TLS port) into the NBCT handoff table.  The firmware
++ * itself keeps connecting in the clear; TLS is requested by the (non-empty)
++ * presence of tls_psk.
++ */
++static int nvmetcp_parse_tls ( struct nvmetcp_session *nvmetcp,
++			       struct uri *uri ) {
++	int rc;
 +
-+	/* Locate "secret=" parameter */
-+	query = uri->equery;
-+	while ( ( secret = strstr ( query, "secret=" ) ) != NULL ) {
-+		query = secret + 7;
-+		if ( ( secret == uri->equery ) || ( secret[-1] == '&' ) )
-+			break;
-+	}
-+	if ( ! secret )
-+		return 0;
-+
-+	/* Extract value (up to next '&') */
-+	end = strchr ( secret + 7, '&' );
-+	len = ( end ? ( ( size_t ) ( end - secret ) - 7 ) :
-+		( strlen ( secret ) - 7 ) );
-+	if ( len == 0 )
-+		return 0;
-+	nvmetcp->secret = zalloc ( len + 1 );
-+	if ( ! nvmetcp->secret )
-+		return -ENOMEM;
-+	memcpy ( nvmetcp->secret, secret + 7, len );
++	if ( ( rc = nvmetcp_parse_qparam ( uri, "tls_psk=",
++					   &nvmetcp->tls_psk ) ) != 0 )
++		return rc;
++	if ( ( rc = nvmetcp_parse_qparam ( uri, "tls_trsvcid=",
++					   &nvmetcp->tls_trsvcid ) ) != 0 )
++		return rc;
 +
 +	return 0;
 +}
@@ -2234,6 +2284,7 @@ index 000000000..fa64bb2a6
 +				     struct uri *uri ) {
 +	const char *nqn;
 +	size_t nqn_len;
++	int rc;
 +
 +	/* Target address */
 +	if ( ! uri->host ) {
@@ -2265,7 +2316,11 @@ index 000000000..fa64bb2a6
 +		return -ENOMEM;
 +
 +	/* Authentication secret */
-+	return nvmetcp_parse_secret ( nvmetcp, uri );
++	if ( ( rc = nvmetcp_parse_secret ( nvmetcp, uri ) ) != 0 )
++		return rc;
++
++	/* TLS handoff parameters (kernel segment; carried via NBCT) */
++	return nvmetcp_parse_tls ( nvmetcp, uri );
 +}
 +
 +/** NVMe host NQN setting (overrides the UUID-derived default) */

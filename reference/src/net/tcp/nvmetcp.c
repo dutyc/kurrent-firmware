@@ -46,6 +46,7 @@ FILE_LICENCE ( GPL2_ONLY );
 
 #include <ipxe/nvmetcp.h>
 #include <ipxe/nbct.h>
+#include <ipxe/tls13.h>
 
 /** Default host NQN prefix (uuid suffix appended) */
 #define NVMETCP_DEFAULT_HOST_NQN "nqn.2014-08.org.ipxe:"
@@ -77,6 +78,8 @@ static void nvmetcp_free ( struct refcnt *refcnt ) {
 	free ( nvmetcp->subsystem_nqn );
 	free ( nvmetcp->host_nqn );
 	free ( nvmetcp->secret );
+	free ( nvmetcp->tls_psk );
+	free ( nvmetcp->tls_trsvcid );
 	uri_put ( nvmetcp->uri );
 	free ( nvmetcp );
 }
@@ -1214,6 +1217,53 @@ static struct interface_descriptor nvmetcp_control_desc =
 	INTF_DESC ( struct nvmetcp_session, control, nvmetcp_control_operations );
 
 /**
+ * Parse a URI query parameter
+ *
+ * @v uri		URI
+ * @v name		Parameter name including the trailing '='
+ * @v dest		Destination for the value (allocated; NULL if absent)
+ * @ret rc		Return status code
+ *
+ * The value runs up to the next '&' (or the end of the query string).
+ * An absent or empty parameter leaves *dest as NULL.
+ */
+static int nvmetcp_parse_qparam ( struct uri *uri, const char *name,
+				  char **dest ) {
+	size_t name_len = strlen ( name );
+	const char *query;
+	const char *match;
+	const char *end;
+	size_t len;
+
+	*dest = NULL;
+	if ( ! uri->equery )
+		return 0;
+
+	/* Locate "name" parameter (start of query, or preceded by '&') */
+	query = uri->equery;
+	while ( ( match = strstr ( query, name ) ) != NULL ) {
+		query = match + name_len;
+		if ( ( match == uri->equery ) || ( match[-1] == '&' ) )
+			break;
+	}
+	if ( ! match )
+		return 0;
+
+	/* Extract value (up to next '&') */
+	end = strchr ( match + name_len, '&' );
+	len = ( end ? ( ( size_t ) ( end - match ) - name_len ) :
+		( strlen ( match ) - name_len ) );
+	if ( len == 0 )
+		return 0;
+	*dest = zalloc ( len + 1 );
+	if ( ! *dest )
+		return -ENOMEM;
+	memcpy ( *dest, match + name_len, len );
+
+	return 0;
+}
+
+/**
  * Parse URI secret (query parameter "secret=")
  *
  * @v nvmetcp		NVMe/TCP session
@@ -1222,34 +1272,31 @@ static struct interface_descriptor nvmetcp_control_desc =
  */
 static int nvmetcp_parse_secret ( struct nvmetcp_session *nvmetcp,
 				  struct uri *uri ) {
-	const char *query;
-	char *secret;
-	char *end;
-	size_t len;
+	return nvmetcp_parse_qparam ( uri, "secret=", &nvmetcp->secret );
+}
 
-	if ( ! uri->equery )
-		return 0;
+/**
+ * Parse TLS parameters (query parameters "tls_psk=", "tls_trsvcid=")
+ *
+ * @v nvmetcp		NVMe/TCP session
+ * @v uri		URI
+ * @ret rc		Return status code
+ *
+ * These carry the TLS pre-shared key and the target's TLS port.  The
+ * port is the kernel/initramfs handoff destination (written into the
+ * NBCT table); the firmware encrypts its own connection only when it is
+ * told to connect to that same port (see nvmetcp_use_tls()).
+ */
+static int nvmetcp_parse_tls ( struct nvmetcp_session *nvmetcp,
+			       struct uri *uri ) {
+	int rc;
 
-	/* Locate "secret=" parameter */
-	query = uri->equery;
-	while ( ( secret = strstr ( query, "secret=" ) ) != NULL ) {
-		query = secret + 7;
-		if ( ( secret == uri->equery ) || ( secret[-1] == '&' ) )
-			break;
-	}
-	if ( ! secret )
-		return 0;
-
-	/* Extract value (up to next '&') */
-	end = strchr ( secret + 7, '&' );
-	len = ( end ? ( ( size_t ) ( end - secret ) - 7 ) :
-		( strlen ( secret ) - 7 ) );
-	if ( len == 0 )
-		return 0;
-	nvmetcp->secret = zalloc ( len + 1 );
-	if ( ! nvmetcp->secret )
-		return -ENOMEM;
-	memcpy ( nvmetcp->secret, secret + 7, len );
+	if ( ( rc = nvmetcp_parse_qparam ( uri, "tls_psk=",
+					   &nvmetcp->tls_psk ) ) != 0 )
+		return rc;
+	if ( ( rc = nvmetcp_parse_qparam ( uri, "tls_trsvcid=",
+					   &nvmetcp->tls_trsvcid ) ) != 0 )
+		return rc;
 
 	return 0;
 }
@@ -1265,6 +1312,7 @@ static int nvmetcp_parse_root_path ( struct nvmetcp_session *nvmetcp,
 				     struct uri *uri ) {
 	const char *nqn;
 	size_t nqn_len;
+	int rc;
 
 	/* Target address */
 	if ( ! uri->host ) {
@@ -1296,7 +1344,11 @@ static int nvmetcp_parse_root_path ( struct nvmetcp_session *nvmetcp,
 		return -ENOMEM;
 
 	/* Authentication secret */
-	return nvmetcp_parse_secret ( nvmetcp, uri );
+	if ( ( rc = nvmetcp_parse_secret ( nvmetcp, uri ) ) != 0 )
+		return rc;
+
+	/* TLS handoff parameters (kernel segment; carried via NBCT) */
+	return nvmetcp_parse_tls ( nvmetcp, uri );
 }
 
 /** NVMe host NQN setting (overrides the UUID-derived default) */
@@ -1346,6 +1398,108 @@ static int nvmetcp_set_host_nqn ( struct nvmetcp_session *nvmetcp ) {
 	return 0;
 }
 
+/** Maximum length of a TLS pre-shared key identity */
+#define NVMETCP_MAX_IDENTITY 512
+
+/** Maximum length of a TLS pre-shared key */
+#define NVMETCP_MAX_PSK 64
+
+/**
+ * Convert a hexadecimal digit to a nibble
+ *
+ * @v c			Character
+ * @ret nibble		Nibble value, or negative if invalid
+ */
+static int nvmetcp_hex_nibble ( char c ) {
+
+	if ( ( c >= '0' ) && ( c <= '9' ) )
+		return ( c - '0' );
+	if ( ( c >= 'a' ) && ( c <= 'f' ) )
+		return ( c - 'a' + 10 );
+	if ( ( c >= 'A' ) && ( c <= 'F' ) )
+		return ( c - 'A' + 10 );
+	return -1;
+}
+
+/**
+ * Construct TLS pre-shared key parameters
+ *
+ * @v nvmetcp		NVMe/TCP session
+ * @v psk		Buffer for decoded pre-shared key
+ * @v psk_len		Length of decoded pre-shared key
+ * @v identity		Buffer for pre-shared key identity
+ * @v identity_len	Length of identity buffer
+ * @ret rc		Return status code
+ *
+ * The pre-shared key identity is "NVMe0R01 <hostnqn> <subsysnqn>", as
+ * used by the kernel's NVMe/TCP TLS implementation.
+ */
+static int nvmetcp_tls_params ( struct nvmetcp_session *nvmetcp,
+				uint8_t *psk, size_t *psk_len,
+				char *identity, size_t identity_len ) {
+	const char *hex = nvmetcp->tls_psk;
+	size_t hex_len;
+	size_t i;
+	int rc;
+
+	/* Decode hexadecimal pre-shared key */
+	hex_len = strlen ( hex );
+	if ( ( hex_len == 0 ) || ( hex_len % 2 ) ||
+	     ( ( hex_len / 2 ) > NVMETCP_MAX_PSK ) ) {
+		DBGC ( nvmetcp, "invalid pre-shared key\n" );
+		return -EINVAL;
+	}
+	for ( i = 0 ; i < ( hex_len / 2 ) ; i++ ) {
+		int hi = nvmetcp_hex_nibble ( hex[ 2 * i ] );
+		int lo = nvmetcp_hex_nibble ( hex[ ( 2 * i ) + 1 ] );
+
+		if ( ( hi < 0 ) || ( lo < 0 ) ) {
+			DBGC ( nvmetcp, "invalid pre-shared key\n" );
+			return -EINVAL;
+		}
+		psk[i] = ( ( hi << 4 ) | lo );
+	}
+	*psk_len = ( hex_len / 2 );
+
+	/* Construct pre-shared key identity */
+	rc = snprintf ( identity, identity_len, "NVMe0R01 %s %s",
+			nvmetcp->host_nqn, nvmetcp->subsystem_nqn );
+	if ( ( rc < 0 ) || ( ( size_t ) rc >= identity_len ) ) {
+		DBGC ( nvmetcp, "pre-shared key identity too long\n" );
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * Determine whether the firmware connection must use TLS
+ *
+ * @v nvmetcp		NVMe/TCP session
+ * @ret use_tls		Firmware connection must be encrypted
+ *
+ * The boot URI supplies "tls_psk" and "tls_trsvcid" for the
+ * kernel/initramfs handoff irrespective of how the firmware itself
+ * connects.  The firmware encrypts its own connection only when it has
+ * been told to connect to that same port, so that the control plane can
+ * move the boot port onto the TLS port independently of the handoff.
+ */
+static int nvmetcp_use_tls ( struct nvmetcp_session *nvmetcp ) {
+	const char *trsvcid = nvmetcp->tls_trsvcid;
+	unsigned int port = 0;
+
+	if ( ( ! nvmetcp->tls_psk ) || ( ! trsvcid ) || ( ! *trsvcid ) )
+		return 0;
+	for ( ; *trsvcid ; trsvcid++ ) {
+		if ( ( *trsvcid < '0' ) || ( *trsvcid > '9' ) )
+			return 0;
+		port = ( ( port * 10 ) + ( *trsvcid - '0' ) );
+		if ( port > 0xffff )
+			return 0;
+	}
+	return ( port == nvmetcp->target_port );
+}
+
 /**
  * Open NVMe/TCP socket
  *
@@ -1360,16 +1514,40 @@ static int nvmetcp_open_socket ( struct nvmetcp_session *nvmetcp,
 				 struct nvmetcp_rx *rx,
 				 unsigned int phase ) {
 	struct sockaddr_tcpip target;
+	char identity[NVMETCP_MAX_IDENTITY];
+	uint8_t psk[NVMETCP_MAX_PSK];
+	size_t psk_len;
 	int rc;
 
 	/* Open socket */
 	memset ( &target, 0, sizeof ( target ) );
 	target.st_port = htons ( nvmetcp->target_port );
-	if ( ( rc = xfer_open_named_socket ( socket, SOCK_STREAM,
-					     ( struct sockaddr * ) &target,
-					     nvmetcp->target_host, NULL ) ) != 0 ) {
-		DBGC ( nvmetcp, "could not open socket: %s\n", strerror ( rc ) );
-		return rc;
+
+	if ( nvmetcp_use_tls ( nvmetcp ) ) {
+
+		/* Construct TLS parameters and encrypt the connection */
+		if ( ( rc = nvmetcp_tls_params ( nvmetcp, psk, &psk_len, identity,
+						 sizeof ( identity ) ) ) != 0 )
+			return rc;
+		if ( ( rc = add_tls13_psk ( socket, psk, psk_len, identity,
+					    ( struct sockaddr * ) &target,
+					    nvmetcp->target_host ) ) != 0 ) {
+			DBGC ( nvmetcp, "could not add TLS: %s\n",
+			       strerror ( rc ) );
+			return rc;
+		}
+
+	} else {
+
+		/* Open plaintext connection */
+		if ( ( rc = xfer_open_named_socket ( socket, SOCK_STREAM,
+						     ( struct sockaddr * ) &target,
+						     nvmetcp->target_host,
+						     NULL ) ) != 0 ) {
+			DBGC ( nvmetcp, "could not open socket: %s\n",
+			       strerror ( rc ) );
+			return rc;
+		}
 	}
 
 	/* Enter requested phase */

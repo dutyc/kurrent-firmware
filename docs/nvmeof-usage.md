@@ -1,6 +1,6 @@
 # NVMe-OF（NVMe over TCP）SAN 引导固件使用指南
 
-> 本文档仅中文。适用范围：补丁链 `0001-0009`（基线 `e6e51ccb`）构建的固件。
+> 本文档仅中文。适用范围：补丁链 `0001-0010`（基线 `e6e51ccb`）构建的固件。
 > 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
 
 ## 1. 能力概述
@@ -146,6 +146,18 @@ sanboot nvme://10.0.2.2:4420/nqn.2026-08.org.ipxe-stateless:test?secret=${nbft-s
 shell
 ```
 
+启用 TLS 时，控制面下发 `nbft-tls-psk` / `nbft-tls-port`（默认全链路加密下二者为**必需项**），脚本在 URI 追加
+`&tls_psk=${nbft-tls-psk}&tls_trsvcid=${nbft-tls-port}`。这两个参数有**双重作用**（段 1.3c + 段 2.2）：
+
+- 它们随 NBCT 表交给 initramfs，由其在 TLS 端口带 `--tls` 重连（见 `initramfs-nbft/nbft-connect`）；
+- 同时决定**固件段自身**是否加密：当 sanboot URI 的端口等于 `tls_trsvcid` 时，固件对该连接做
+  TLS 1.3 PSK 握手（PSK 就是 `tls_psk`，identity = `NVMe0R01 <hostnqn> <subsysnqn>`）。
+
+控制面的 sanboot 端口取自 `nbft-tls-port`（即存储节点数据面端口），故默认即**固件段 + 内核段双段加密**；
+端口或密钥缺失时控制面不下发引导变量、脚本 `goto failed`，不再回落 `:4420` 明文。判定实现见
+`nvmetcp.c` 的 `nvmetcp_use_tls()`，握手与记录层见 `net/tls13.c` 的 `add_tls13_psk()`。
+（本节第 3/5 节的本地联调靶 `test/nvmet-setup.sh` 仍是明文 `:4420`，此时固件走明文路径——判据的兼容分支。）
+
 > 安全说明：生产环境中该端点必须置于强认证之后（TLS/mTLS + 客户端身份校验）；[test/cred-server.py](../test/cred-server.py) 仅为验证用的测试端点。完整可嵌入脚本示例见 [test/nvmeof-auth-test.ipxe](../test/nvmeof-auth-test.ipxe)。
 
 ### 4.4 交互式 shell
@@ -209,7 +221,7 @@ I/O queue established
 
 ## 6. 限制与注意事项
 
-- 固件必须包含**完整补丁链 0001-0009**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
+- 固件必须包含**完整补丁链 0001-0010**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
 - `nvmetcp` 驱动无编译期默认调试输出；需要认证/状态机日志（含 `authentication succeeded`）时以 `DEBUG=nvmetcp,nvmetcp_auth:3` 手动构建（仅 `DEBUG=nvmetcp:3` 看不到 `nvmetcp_auth.c` 的打印）
 - 认证仅支持 DH-HMAC-CHAP（SHA-256），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
 - Host NQN 依赖 SMBIOS UUID；无 UUID 平台（如 QEMU+OVMF）回退固定 NQN，服务端需按实际值配置

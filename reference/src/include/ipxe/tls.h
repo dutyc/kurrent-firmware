@@ -1,0 +1,746 @@
+#ifndef _IPXE_TLS_H
+#define _IPXE_TLS_H
+
+/**
+ * @file
+ *
+ * Transport Layer Security Protocol
+ */
+
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
+
+#include <stdint.h>
+#include <ipxe/refcnt.h>
+#include <ipxe/interface.h>
+#include <ipxe/process.h>
+#include <ipxe/crypto.h>
+#include <ipxe/md5.h>
+#include <ipxe/sha1.h>
+#include <ipxe/sha256.h>
+#include <ipxe/x509.h>
+#include <ipxe/privkey.h>
+#include <ipxe/pending.h>
+#include <ipxe/iobuf.h>
+#include <ipxe/tables.h>
+
+struct tls_connection;
+
+/** A TLS header */
+struct tls_header {
+	/** Content type
+	 *
+	 * This is a TLS_TYPE_XXX constant
+	 */
+	uint8_t type;
+	/** Protocol version
+	 *
+	 * This is a TLS_VERSION_XXX constant
+	 */
+	uint16_t version;
+	/** Length of payload */
+	uint16_t length;
+} __attribute__ (( packed ));
+
+/** TLS version 1.1 */
+#define TLS_VERSION_TLS_1_1 0x0302
+
+/** TLS version 1.2 */
+#define TLS_VERSION_TLS_1_2 0x0303
+
+/** TLS version 1.3 */
+#define TLS_VERSION_TLS_1_3 0x0304
+
+/** Change cipher content type */
+#define TLS_TYPE_CHANGE_CIPHER 20
+
+/** Change cipher spec magic byte */
+#define TLS_CHANGE_CIPHER_SPEC 1
+
+/** Alert content type */
+#define TLS_TYPE_ALERT 21
+
+/** Handshake content type */
+#define TLS_TYPE_HANDSHAKE 22
+
+/** Application data content type */
+#define TLS_TYPE_DATA 23
+
+/* Handshake message types */
+#define TLS_HELLO_REQUEST 0
+#define TLS_CLIENT_HELLO 1
+#define TLS_SERVER_HELLO 2
+#define TLS_NEW_SESSION_TICKET 4
+#define TLS_END_OF_EARLY_DATA 5
+#define TLS_ENCRYPTED_EXTENSIONS 8
+#define TLS_CERTIFICATE 11
+#define TLS_SERVER_KEY_EXCHANGE 12
+#define TLS_CERTIFICATE_REQUEST 13
+#define TLS_SERVER_HELLO_DONE 14
+#define TLS_CERTIFICATE_VERIFY 15
+#define TLS_CLIENT_KEY_EXCHANGE 16
+#define TLS_FINISHED 20
+
+/* TLS alert levels */
+#define TLS_ALERT_WARNING 1
+#define TLS_ALERT_FATAL 2
+
+/* TLS alert descriptions */
+#define TLS_ALERT_CLOSE_NOTIFY 0
+
+/* TLS cipher specifications */
+#define TLS_RSA_WITH_NULL_MD5 0x0001
+#define TLS_RSA_WITH_NULL_SHA 0x0002
+#define TLS_RSA_WITH_AES_128_CBC_SHA 0x002f
+#define TLS_DHE_RSA_WITH_AES_128_CBC_SHA 0x0033
+#define TLS_RSA_WITH_AES_256_CBC_SHA 0x0035
+#define TLS_DHE_RSA_WITH_AES_256_CBC_SHA 0x0039
+#define TLS_RSA_WITH_AES_128_CBC_SHA256 0x003c
+#define TLS_RSA_WITH_AES_256_CBC_SHA256 0x003d
+#define TLS_DHE_RSA_WITH_AES_128_CBC_SHA256 0x0067
+#define TLS_DHE_RSA_WITH_AES_256_CBC_SHA256 0x006b
+#define TLS_RSA_WITH_AES_128_GCM_SHA256 0x009c
+#define TLS_RSA_WITH_AES_256_GCM_SHA384 0x009d
+#define TLS_DHE_RSA_WITH_AES_128_GCM_SHA256 0x009e
+#define TLS_DHE_RSA_WITH_AES_256_GCM_SHA384 0x009f
+#define TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA 0xc009
+#define TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA 0xc00a
+#define TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA 0xc013
+#define TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA 0xc014
+#define TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 0xc023
+#define TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384 0xc024
+#define TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 0xc027
+#define TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384 0xc028
+#define TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 0xc02b
+#define TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 0xc02c
+#define TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 0xc02f
+#define TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 0xc030
+
+/* TLS 1.3 cipher specifications (RFC 8446 section B.4) */
+#define TLS_AES_128_GCM_SHA256 0x1301
+#define TLS_AES_256_GCM_SHA384 0x1302
+
+/* TLS signature hash algorithm identifiers */
+#define TLS_RSA_SHA1_ALGORITHM 0x0201
+#define TLS_RSA_SHA224_ALGORITHM 0x0301
+#define TLS_ECDSA_SHA224_ALGORITHM 0x0303
+#define TLS_RSA_SHA256_ALGORITHM 0x0401
+#define TLS_ECDSA_SHA256_ALGORITHM 0x0403
+#define TLS_RSA_SHA384_ALGORITHM 0x0501
+#define TLS_ECDSA_SHA384_ALGORITHM 0x0503
+#define TLS_RSA_SHA512_ALGORITHM 0x0601
+#define TLS_ECDSA_SHA512_ALGORITHM 0x0603
+#define TLS_RSA_PSS_RSAE_SHA256_ALGORITHM 0x0804
+#define TLS_RSA_PSS_RSAE_SHA384_ALGORITHM 0x0805
+#define TLS_RSA_PSS_RSAE_SHA512_ALGORITHM 0x0806
+#define TLS_RSA_PSS_PSS_SHA256_ALGORITHM 0x0809
+#define TLS_RSA_PSS_PSS_SHA384_ALGORITHM 0x080a
+#define TLS_RSA_PSS_PSS_SHA512_ALGORITHM 0x080b
+
+/* TLS server name extension */
+#define TLS_SERVER_NAME 0
+#define TLS_SERVER_NAME_HOST_NAME 0
+
+/* TLS maximum fragment length extension */
+#define TLS_MAX_FRAGMENT_LENGTH 1
+#define TLS_MAX_FRAGMENT_LENGTH_512 1
+#define TLS_MAX_FRAGMENT_LENGTH_1024 2
+#define TLS_MAX_FRAGMENT_LENGTH_2048 3
+#define TLS_MAX_FRAGMENT_LENGTH_4096 4
+
+/* TLS named key exchange group extension */
+#define TLS_NAMED_GROUP 10
+#define TLS_NAMED_GROUP_SECP256R1 23
+#define TLS_NAMED_GROUP_SECP384R1 24
+#define TLS_NAMED_GROUP_X25519 29
+#define TLS_NAMED_GROUP_FFDHE2048 256
+#define TLS_NAMED_GROUP_FFDHE3072 257
+#define TLS_NAMED_GROUP_FFDHE4096 258
+
+/* TLS signature algorithms extension */
+#define TLS_SIGNATURE_ALGORITHMS 13
+
+/* TLS extended master secret extension */
+#define TLS_EXTENDED_MASTER_SECRET 23
+
+/* TLS session ticket extension */
+#define TLS_SESSION_TICKET 35
+
+/* TLS renegotiation information extension */
+#define TLS_RENEGOTIATION_INFO 0xff01
+
+/* TLS 1.3 extensions (RFC 8446 section 4.2) */
+#define TLS_PRE_SHARED_KEY 41
+#define TLS_SUPPORTED_VERSIONS 43
+#define TLS_PSK_KEY_EXCHANGE_MODES 45
+#define TLS_KEY_SHARE 51
+
+/* TLS 1.3 PSK key exchange modes (RFC 8446 section 4.2.9) */
+#define TLS_PSK_KEY_EXCHANGE_MODE_PSK 0
+#define TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE 1
+
+/** TLS authentication header */
+struct tls_auth_header {
+	/** Sequence number */
+	uint64_t seq;
+	/** TLS header */
+	struct tls_header header;
+} __attribute__ (( packed ));
+
+/** TLS verification data */
+struct tls_verify_data {
+	/** Client verification data */
+	uint8_t client[12];
+	/** Server verification data */
+	uint8_t server[12];
+} __attribute__ (( packed ));
+
+/** TLS RX state machine state */
+enum tls_rx_state {
+	TLS_RX_HEADER = 0,
+	TLS_RX_DATA,
+};
+
+/** TLS TX pending flags */
+enum tls_tx_pending {
+	TLS_TX_CLIENT_HELLO = 0x0001,
+	TLS_TX_CERTIFICATE = 0x0002,
+	TLS_TX_CLIENT_KEY_EXCHANGE = 0x0004,
+	TLS_TX_CERTIFICATE_VERIFY = 0x0008,
+	TLS_TX_CHANGE_CIPHER = 0x0010,
+	TLS_TX_FINISHED = 0x0020,
+};
+
+/** A TLS key exchange algorithm */
+struct tls_key_exchange_algorithm {
+	/** Algorithm name */
+	const char *name;
+	/**
+	 * Receive new Server Key Exchange record using ECDHE key exchange
+	 *
+	 * @v tls		TLS connection
+	 * @v data		Server Key Exchange handshake record
+	 * @v len		Length of Server Key Exchange handshake record
+	 * @ret rc		Return status code
+	 */
+	int ( * server ) ( struct tls_connection *tls, const void *data,
+			   size_t len );
+	/**
+	 * Transmit Client Key Exchange record
+	 *
+	 * @v tls		TLS connection
+	 * @ret rc		Return status code
+	 */
+	int ( * client ) ( struct tls_connection *tls );
+};
+
+/** A TLS cipher suite */
+struct tls_cipher_suite {
+	/** Key exchange algorithm */
+	struct tls_key_exchange_algorithm *exchange;
+	/** Public-key encryption algorithm */
+	struct pubkey_algorithm *pubkey;
+	/** Bulk encryption cipher algorithm */
+	struct cipher_algorithm *cipher;
+	/** MAC digest algorithm */
+	struct digest_algorithm *digest;
+	/** Handshake digest algorithm (for TLSv1.2 and above) */
+	struct digest_algorithm *handshake;
+	/** Numeric code (in network-endian order) */
+	uint16_t code;
+	/** Key length */
+	uint8_t key_len;
+	/** Fixed initialisation vector length */
+	uint8_t fixed_iv_len;
+	/** Record initialisation vector length */
+	uint8_t record_iv_len;
+	/** MAC length */
+	uint8_t mac_len;
+};
+
+/** TLS cipher suite table */
+#define TLS_CIPHER_SUITES						\
+	__table ( struct tls_cipher_suite, "tls_cipher_suites" )
+
+/** Declare a TLS cipher suite */
+#define __tls_cipher_suite( pref )					\
+	__table_entry ( TLS_CIPHER_SUITES, pref )
+
+/** TLS named curve type */
+#define TLS_NAMED_CURVE_TYPE 3
+
+/** A TLS named group */
+struct tls_named_group {
+	/** Key exchange algorithm */
+	struct exchange_algorithm *exchange;
+	/** Numeric code (in network-endian order) */
+	uint16_t code;
+};
+
+/** TLS named group table */
+#define TLS_NAMED_GROUPS						\
+	__table ( struct tls_named_group, "tls_named_groups" )
+
+/** Declare a TLS named group */
+#define __tls_named_group( pref )					\
+	__table_entry ( TLS_NAMED_GROUPS, pref )
+
+/** Declare a TLS anonymous named group */
+#define __tls_anon_named_group __tls_named_group ( 98 )
+
+/** Number of non-anonymous TLS named groups */
+#define TLS_NUM_NAMED_GROUPS						\
+	( ( unsigned int )						\
+	  ( __table_entries ( TLS_NAMED_GROUPS, 97 )			\
+	    - table_start ( TLS_NAMED_GROUPS ) ) )
+
+/** A TLS cipher specification */
+struct tls_cipherspec {
+	/** Cipher suite */
+	struct tls_cipher_suite *suite;
+	/** Dynamically-allocated storage */
+	void *dynamic;
+	/** Bulk encryption cipher context */
+	void *cipher_ctx;
+	/** MAC secret */
+	void *mac_secret;
+	/** Fixed initialisation vector */
+	void *fixed_iv;
+};
+
+/** A TLS cipher specification pair */
+struct tls_cipherspec_pair {
+	/** Current cipher specification */
+	struct tls_cipherspec active;
+	/** Next cipher specification */
+	struct tls_cipherspec pending;
+};
+
+/** A TLS signature algorithm */
+struct tls_signature_hash_algorithm {
+	/** Digest algorithm */
+	struct digest_algorithm *digest;
+	/** Public-key algorithm */
+	struct pubkey_algorithm *pubkey;
+	/** Required certificate OID-identified algorithm */
+	struct asn1_algorithm *algorithm;
+	/** Numeric code (in network-endian order) */
+	uint16_t code;
+};
+
+/** TLS signature hash algorithm table
+ *
+ * Note that the default (TLSv1.1 and earlier) algorithm using
+ * MD5+SHA1 is never explicitly specified.
+ */
+#define TLS_SIG_HASH_ALGORITHMS						\
+	__table ( struct tls_signature_hash_algorithm,			\
+		  "tls_sig_hash_algorithms" )
+
+/** Declare a TLS signature hash algorithm */
+#define __tls_sig_hash_algorithm					\
+	__table_entry ( TLS_SIG_HASH_ALGORITHMS, 01 )
+
+/** TLS client random data */
+struct tls_client_random {
+	/** Random data */
+	uint8_t random[32];
+} __attribute__ (( packed ));
+
+/** A TLS session */
+struct tls_session {
+	/** Reference counter */
+	struct refcnt refcnt;
+	/** List of sessions */
+	struct list_head list;
+
+	/** Server name */
+	const char *name;
+	/** Root of trust */
+	struct x509_root *root;
+	/** Private key */
+	struct private_key *key;
+
+	/** Server certificate */
+	struct x509_certificate *cert;
+	/** Session ID */
+	uint8_t id[32];
+	/** Length of session ID */
+	size_t id_len;
+	/** Session ticket */
+	void *ticket;
+	/** Length of session ticket */
+	size_t ticket_len;
+	/** Resumption master secret */
+	uint8_t resumption_master_secret[48];
+	/** Length of resumption master secret */
+	size_t resumption_master_secret_len;
+	/** Extended master secret flag */
+	int extended_master_secret;
+
+	/** List of connections */
+	struct list_head conn;
+};
+
+/** HKDF algorithm for ephemeral secrets */
+#define tls_ephemeral_algorithm sha256_algorithm
+
+/** TLS key schedule */
+struct tls_key_schedule {
+	/** Digest algorithm
+	 *
+	 * This is the digest algorithm specified by the cipher suite.
+	 * It is used to construct the handshake running transcript
+	 * digest value, and as the HMAC digest algorithm for key
+	 * derivation.
+	 */
+	struct digest_algorithm *digest;
+	/** Named key exchange group */
+	struct tls_named_group *group;
+	/** Schedule holds secret key material
+	 *
+	 * This flag is set when shared secret key material is
+	 * introduced into the schedule (e.g. when the TLS pre-master
+	 * secret is calculated, or when a session is resumed).
+	 *
+	 * If this flag has not been set, then the key schedule
+	 * contains only public information.
+	 *
+	 * This flag must be cleared whenever the key schedule is
+	 * reset.
+	 */
+	int keyed;
+	/** Server identity to which the schedule has been bound (if any)
+	 *
+	 * This reference to the server certificate is set when the
+	 * shared secret key material has been bound to the identity
+	 * represented by the server's certificate.  It represents the
+	 * successful delegation of authority from the server's
+	 * long-term authentication key to the per-connection shared
+	 * secret key material for the purpose of authenticating the
+	 * connection via a successfully verified server Finished
+	 * message.
+	 *
+	 * Note that this reference may be set before the server
+	 * certificate has been validated.  The validation of the
+	 * server certificate's chain is independent from the binding
+	 * of the key schedule to the server certificate.
+	 *
+	 * The binding may take place in several different ways,
+	 * depending on the protocol version and options:
+	 *
+	 *   - For classic RSA key transport, the binding occurs when
+	 *     the encrypted ClientKeyExchange message is sent and
+	 *     incorporated into the handshake digest.  A subsequent
+	 *     successfully verified server Finished message
+	 *     simultaneously proves knowledge of the certificate's
+	 *     private key and agreement on the shared secret key
+	 *     material.
+	 *
+	 *   - For ephemeral key exchange via ServerKeyExchange, the
+	 *     binding occurs when the signature over the DH
+	 *     parameters within ServerKeyExchange is verified against
+	 *     the certificate's public key.  That signature
+	 *     represents the server's intention to delegate authority
+	 *     to any shared secret constructed from the signed DH
+	 *     parameters.
+	 *
+	 *   - For ephemeral key exchange via ClientHello/ServerHello,
+	 *     the binding occurs when the signature over the
+	 *     handshake digest within the server CertificateVerify is
+	 *     verified against the certificate's public key.  The
+	 *     handshake digest incorporates the ephemeral key
+	 *     exchange and so the signature represents the server's
+	 *     intention to delegate authority to any shared secret
+	 *     constructed from the indirectly signed DH parameters.
+	 *
+	 *   - For session resumption, the binding occurs when the key
+	 *     schedule is resumed from the session secret.  The
+	 *     server's choice to accept the resumption represents its
+	 *     intention to delegate authority to the shared secret
+	 *     derived from the session secret.
+	 *
+	 * This reference may not be set unless the "keyed" flag has
+	 * already been set, and must be cleared whenever the "keyed"
+	 * flag is cleared.
+	 *
+	 * This reference must be cleared whenever the server identity
+	 * represented by the current certificate changes (e.g. when a
+	 * new certificate chain is provided), or whenever the key
+	 * derivation function master secret is overwritten with a
+	 * value that is not cryptographically derived from its
+	 * current value.
+	 */
+	struct x509_certificate *bound;
+	/** Dynamically-allocated storage */
+	void *dynamic;
+	/** Handshake running transcript digest context */
+	void *handshake;
+	/** Key derivation function master secret */
+	void *kdf;
+	/** Ephemeral master secret */
+	uint8_t ephemeral[SHA256_DIGEST_SIZE];
+};
+
+/** TLS transmit state */
+struct tls_tx {
+	/** Cipher specifications */
+	struct tls_cipherspec_pair cipherspec;
+	/** Sequence number */
+	uint64_t seq;
+	/** Pending transmissions */
+	unsigned int pending;
+	/** Transmit process */
+	struct process process;
+};
+
+/** TLS receive state */
+struct tls_rx {
+	/** Cipher specifications */
+	struct tls_cipherspec_pair cipherspec;
+	/** Sequence number */
+	uint64_t seq;
+	/** State machine current state */
+	enum tls_rx_state state;
+	/** Current received record header */
+	struct tls_header header;
+	/** Current received record header (static I/O buffer) */
+	struct io_buffer iobuf;
+	/** List of received data buffers */
+	struct list_head data;
+	/** Received handshake fragment */
+	struct io_buffer *handshake;
+};
+
+/** TLS client state */
+struct tls_client {
+	/** Random bytes */
+	struct tls_client_random random;
+	/** Private key (if used) */
+	struct private_key *key;
+	/** Certificate chain (if used) */
+	struct x509_chain *chain;
+	/** Security negotiation pending operation */
+	struct pending_operation negotiation;
+};
+
+/** TLS server state */
+struct tls_server {
+	/** Random bytes */
+	uint8_t random[32];
+	/** Root of trust */
+	struct x509_root *root;
+	/** Certificate chain */
+	struct x509_chain *chain;
+	/** Certificate validator */
+	struct interface validator;
+	/** Certificate validation pending operation */
+	struct pending_operation validation;
+	/** Security negotiation pending operation */
+	struct pending_operation negotiation;
+};
+
+/** A TLS connection */
+struct tls_connection {
+	/** Reference counter */
+	struct refcnt refcnt;
+
+	/** Session */
+	struct tls_session *session;
+	/** List of connections within the same session */
+	struct list_head list;
+	/** Session ID */
+	uint8_t session_id[32];
+	/** Length of session ID */
+	size_t session_id_len;
+	/** New session ticket */
+	void *new_session_ticket;
+	/** Length of new session ticket */
+	size_t new_session_ticket_len;
+
+	/** Plaintext stream */
+	struct interface plainstream;
+	/** Ciphertext stream */
+	struct interface cipherstream;
+
+	/** Protocol version */
+	uint16_t version;
+	/** Secure renegotiation flag */
+	int secure_renegotiation;
+	/** Extended master secret flag */
+	int extended_master_secret;
+	/** Verification data */
+	struct tls_verify_data verify;
+
+	/** Key schedule */
+	struct tls_key_schedule key;
+	/** Transmit state */
+	struct tls_tx tx;
+	/** Receive state */
+	struct tls_rx rx;
+	/** Client state */
+	struct tls_client client;
+	/** Server state */
+	struct tls_server server;
+};
+
+/** Advertised maximum fragment length */
+#define TLS_MAX_FRAGMENT_LENGTH_VALUE TLS_MAX_FRAGMENT_LENGTH_4096
+
+/** TX maximum fragment length
+ *
+ * TLS requires us to limit our transmitted records to the maximum
+ * fragment length that we attempt to negotiate, even if the server
+ * does not respect this choice.
+ */
+#define TLS_TX_BUFSIZE 4096
+
+/** RX I/O buffer size
+ *
+ * The maximum fragment length extension is optional, and many common
+ * implementations (including OpenSSL) do not support it.  We must
+ * therefore be prepared to receive records of up to 16kB in length.
+ * The chance of an allocation of this size failing is non-negligible,
+ * so we must split received data into smaller allocations.
+ */
+#define TLS_RX_BUFSIZE 4096
+
+/** Minimum RX I/O buffer size
+ *
+ * To simplify manipulations, we ensure that no RX I/O buffer is
+ * smaller than this size.  This allows us to assume that the MAC and
+ * padding are entirely contained within the final I/O buffer.
+ */
+#define TLS_RX_MIN_BUFSIZE 512
+
+/** RX I/O buffer alignment */
+#define TLS_RX_ALIGN 16
+
+extern struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm;
+extern struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm;
+extern struct tls_key_exchange_algorithm tls_ecdhe_exchange_algorithm;
+
+/* TLS 1.3 key schedule primitives (RFC 8446 section 7.1) */
+
+extern void tls13_expand_label ( struct digest_algorithm *digest,
+				 const void *secret, const char *label,
+				 const void *context, size_t context_len,
+				 void *out, size_t len );
+extern void tls13_derive_secret ( struct digest_algorithm *digest,
+				  const void *secret, const char *label,
+				  const void *transcript, size_t transcript_len,
+				  void *out );
+extern void tls13_early_secret ( struct digest_algorithm *digest,
+				 const void *psk, size_t psk_len, void *out );
+extern void tls13_handshake_secret ( struct digest_algorithm *digest,
+				     const void *early, const void *ecdhe,
+				     size_t ecdhe_len, void *out );
+extern void tls13_master_secret ( struct digest_algorithm *digest,
+				  const void *handshake, void *out );
+extern void tls13_traffic_key ( struct digest_algorithm *digest,
+				const void *secret, void *key, size_t key_len,
+				void *iv, size_t iv_len );
+extern void tls13_binder ( struct digest_algorithm *digest,
+			   const void *early_secret, const char *label,
+			   const void *transcript, size_t transcript_len,
+			   void *out );
+extern void tls13_finished ( struct digest_algorithm *digest,
+			     const void *secret, const void *transcript,
+			     size_t transcript_len, void *out );
+extern size_t tls13_client_hello ( void *buf, size_t max_len,
+				   const void *random, const void *public_key,
+				   const void *psk, size_t psk_len,
+				   const char *identity, size_t identity_len,
+				   const char *binder_label );
+
+/** TLS 1.3 ServerHello parsed parameters */
+struct tls13_server_hello {
+	/** Negotiated cipher suite */
+	uint16_t cipher_suite;
+	/** Negotiated version (from the supported_versions extension) */
+	uint16_t version;
+	/** Selected pre-shared key identity */
+	uint32_t selected_identity;
+	/** Pre-shared key was accepted */
+	int has_psk;
+	/** Server X25519 key share public key */
+	uint8_t public_key[32];
+	/** Key share extension was present */
+	int has_key_share;
+};
+
+extern int tls13_parse_server_hello ( const void *msg, size_t len,
+				      struct tls13_server_hello *out );
+
+/** TLS 1.3 record protection nonce length */
+#define TLS13_NONCE_LEN 12
+
+/* TLS 1.3 record protection (RFC 8446 section 5.3) */
+
+extern void tls13_nonce ( const void *iv, uint64_t seq, void *nonce );
+extern size_t tls13_seal ( struct cipher_algorithm *cipher,
+			   const void *key, size_t key_len,
+			   const void *iv, uint64_t seq,
+			   const void *aad, size_t aad_len,
+			   const void *data, size_t len,
+			   unsigned int content_type, void *out );
+extern int tls13_open ( struct cipher_algorithm *cipher,
+			const void *key, size_t key_len,
+			const void *iv, uint64_t seq,
+			const void *aad, size_t aad_len,
+			const void *record, size_t record_len,
+			void *out, size_t *len );
+
+/** TLS 1.3 handshake transcript buffer size */
+#define TLS13_TRANSCRIPT_SIZE 1024
+
+/** A TLS 1.3 ephemeral X25519 key pair */
+struct tls13_key_pair {
+	/** Private key */
+	uint8_t private_key[32];
+	/** Public key */
+	uint8_t public_key[32];
+};
+
+/** A TLS 1.3 pre-shared key handshake context */
+struct tls13_handshake {
+	/** Digest algorithm */
+	struct digest_algorithm *digest;
+	/** Binder label ("ext binder" or "res binder") */
+	const char *binder_label;
+	/** Handshake transcript */
+	uint8_t transcript[TLS13_TRANSCRIPT_SIZE];
+	/** Length of handshake transcript */
+	size_t transcript_len;
+	/** Ephemeral key pair */
+	struct tls13_key_pair key;
+	/** Early Secret */
+	uint8_t early[32];
+	/** Handshake Secret */
+	uint8_t handshake[32];
+	/** Master Secret */
+	uint8_t master[32];
+};
+
+extern int tls13_generate_key ( struct tls13_key_pair *key );
+extern int tls13_shared_secret ( const void *private_key,
+				 const void *partner_key, void *shared );
+extern void tls13_handshake_init ( struct tls13_handshake *hs,
+				   struct digest_algorithm *digest,
+				   const void *psk, size_t psk_len,
+				   const char *binder_label );
+extern int tls13_handshake_update ( struct tls13_handshake *hs,
+				    const void *msg, size_t len );
+extern int tls13_handshake_exchange ( struct tls13_handshake *hs,
+				      const void *partner_key );
+extern void tls13_handshake_derive ( struct tls13_handshake *hs,
+				     const void *secret, const char *label,
+				     void *out );
+extern void tls13_handshake_finished ( struct tls13_handshake *hs,
+				       const void *secret, void *out );
+extern void tls13_handshake_master ( struct tls13_handshake *hs );
+
+extern int add_tls ( struct interface *xfer, const char *name,
+		     struct x509_root *root, struct private_key *key );
+
+#endif /* _IPXE_TLS_H */

@@ -14,11 +14,11 @@
 ## Boot chain
 
 ```
-UEFI → iPXE nvmetcp → NVMe/TCP :4420 → nvmet target
+UEFI → iPXE nvmetcp (TLS 1.3 PSK) → NVMe/TCP :4421 → nvmet target
   → Connect → DH-HMAC-CHAP (Negotiate → Challenge → Reply → Success1)
   → Property Set (CC.EN=1) → Identify Ctrl/NS → I/O queue (qid 1)
   → sanboot (GRUB 2.14) → kernel → initramfs NBFT/NBCT consumer
-  → `nvme connect` reconnect with the firmware's secret → rootfs
+  → `nvme connect --tls` reconnect with the firmware's secret → rootfs
 ```
 
 Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvmeof-research.md).

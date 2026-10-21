@@ -14,11 +14,11 @@
 ## 引导链路
 
 ```
-UEFI → iPXE nvmetcp → NVMe/TCP :4420 → nvmet target
+UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
   → Connect → DH-HMAC-CHAP（Negotiate → Challenge → Reply → Success1）
   → Property Set（CC.EN=1）→ Identify Ctrl/NS → I/O 队列（qid 1）
   → sanboot（GRUB 2.14）→ 内核 → initramfs NBFT/NBCT 消费
-  → 携带固件密钥的 `nvme connect` 重连 → rootfs
+  → 携带固件密钥的 `nvme connect --tls` 重连 → rootfs
 ```
 
 协议设计、消息格式与线缆细节见 [nvmeof-research.md](docs/nvmeof-research.md)。

@@ -56,3 +56,40 @@ fi
 for x in nvme_fabrics nvme_tcp; do
 	manual_add_modules ${x}
 done
+
+# TLS-PSK support for the kernel segment: `tls` provides kTLS, and
+# `nvme-keyring` creates the global ".nvme` keyring that the psk key is
+# injected into (it is pulled in by nvme-tcp, but add it explicitly so the
+# TLS path does not depend on module dependency resolution).
+for x in tls nvme-keyring; do
+	manual_add_modules ${x}
+done
+
+# TLS handshake upcall daemon: the kernel performs the TLS 1.3 handshake via
+# a generic-netlink upcall to tlshd (ktls-utils), so it must be present and
+# running in the initramfs.
+TLSHD_BIN="$(command -v tlshd 2>/dev/null || echo /usr/sbin/tlshd)"
+if [ -x "$TLSHD_BIN" ] ; then
+	copy_exec "$TLSHD_BIN" "${TLSHD_BIN%/*}/"
+	# tlshd exits immediately when its config file is absent, which leaves
+	# the kernel handshake upcall with no netlink listener (nvme connect
+	# then fails with "failed to start TLS: -3").  The packaged default is
+	# all-defaults, so ship the host file if present and otherwise create an
+	# empty one -- the file must merely exist.
+	mkdir -p "${DESTDIR}/etc/tlshd"
+	if [ -r /etc/tlshd/config ] ; then
+		cp -a /etc/tlshd/config "${DESTDIR}/etc/tlshd/config"
+	else
+		: > "${DESTDIR}/etc/tlshd/config"
+	fi
+else
+	echo "nbft hook: tlshd not found, TLS sessions will fail" >&2
+fi
+
+# keyctl injects the NBCT-carried PSK into the .nvme keyring before connect.
+KEYCTL_BIN="$(command -v keyctl 2>/dev/null || echo /usr/bin/keyctl)"
+if [ -x "$KEYCTL_BIN" ] ; then
+	copy_exec "$KEYCTL_BIN" "${KEYCTL_BIN%/*}/"
+else
+	echo "nbft hook: keyctl not found, TLS PSK injection will fail" >&2
+fi

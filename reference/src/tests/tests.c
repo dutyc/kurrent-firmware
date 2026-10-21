@@ -93,6 +93,8 @@ REQUIRE_OBJECT ( cpio_test );
 REQUIRE_OBJECT ( fdt_test );
 REQUIRE_OBJECT ( ecdsa_test );
 REQUIRE_OBJECT ( hkdf_test );
+REQUIRE_OBJECT ( tls13_test );
+REQUIRE_OBJECT ( tls13_conn_test );
 REQUIRE_OBJECT ( ffdhe_test );
 REQUIRE_OBJECT ( mime_test );
 REQUIRE_OBJECT ( datauri_test );

@@ -32,16 +32,22 @@ initramfs/scripts/local-top/nbft  initramfs-tools local-top（网络 + 连接）
 3. 网络应用：DHCP 交 `configure_networking`（dhcpcd/ipconfig）；静态手动应用
    + 写 `/run/net-<iface>.conf`（标记网络就绪，与 ipconfig/dhcpcd 同格式）
 4. 连接 NVMe-oF 子系统：检测固件注入的 NBCT 凭证表
-   （`/sys/firmware/acpi/tables/NBCT*`，见 `patches/0012`）——存在则逐条
+   （`/sys/firmware/acpi/tables/NBCT*`，见 `patches/0009`）——存在则逐条
    `nvme connect` 并附加 `--dhchap-secret`/`--hostnqn`（密钥不落盘、仅随引导
-   会话存活，避免内核侧二次 HTTP 取凭证）；无 NBCT 表时回退
-   `nvme connect-all --nbft`（nvme-cli 2.5+；旧版自动降级 `connect-nbft`）
+   会话存活，避免内核侧二次 HTTP 取凭证）；记录带 `tls_trsvcid` 时改为内核段
+   传输加密：先把 `tls_psk`（hex）解码注入内核全局 `.nvme` keyring（`keyctl
+   padd psk "NVMe0R01 <hostnqn> <subsysnqn>"`），再以 `--tls` 在 TLS 端口重连
+   （不再附 `--dhchap-secret`）；无 NBCT 表时回退 `nvme connect-all --nbft`
+   （nvme-cli 2.5+；旧版自动降级 `connect-nbft`）
 
 ## 母盘安装（一次定制，克隆即用）
 
 ```sh
 # 1. 安装依赖
-sudo apt install nvme-cli jq
+#    nvme-cli 连子系统；jq 解析 NBFT；keyutils 提供 keyctl（TLS-PSK 注入 .nvme keyring）；
+#    ktls-utils 提供 tlshd（内核 TLS 握手 upcall，内核段 TLS 必需）；
+#    hook 会连 /etc/tlshd/config 一并装进 initramfs（tlshd 缺该文件会立刻退出）
+sudo apt install nvme-cli jq keyutils ktls-utils
 
 # 2. 部署种子组件
 sudo install -m 0755 nbft-connect /usr/local/sbin/
@@ -65,7 +71,8 @@ sudo update-grub && sudo update-initramfs -u
 sh -n nbft-connect initramfs/hooks/nbft initramfs/scripts/local-top/nbft
 ./nbft-connect --selftest
 
-# mock 驱动单测：NBCT 逐条 connect（带/不带密钥）、NBFT 回退、坏条目跳过
+# mock 驱动单测：NBCT 逐条 connect（带/不带密钥）、NBFT 回退、坏条目跳过、
+# TLS 记录注入 PSK 并以 --tls 重连
 bash ../test/test-nbft-connect-nbct.sh
 
 # mock 解析测试（无 NBFT 表环境）

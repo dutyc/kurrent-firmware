@@ -462,6 +462,8 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
 #define ERRFILE_devicekey_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
 #define ERRFILE_nbct		      ( ERRFILE_OTHER | 0x00700000 )
+#define ERRFILE_tls13		      ( ERRFILE_OTHER | 0x00710000 )
+#define ERRFILE_tls13_test	      ( ERRFILE_OTHER | 0x00720000 )
 
 /** @} */
 
