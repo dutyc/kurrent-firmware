@@ -37,13 +37,14 @@ Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvm
 ./build/build.sh    # Full build: fetch source -> apply patches -> build -> archive
 ```
 
-Requirements: Linux with `git` / `make` / `gcc`. Artifacts are written to `dist/` (7 UEFI form factors + `SHA256SUMS`); see [build-artifacts.md](docs/build-artifacts.md) for the full list and selection guide.
+Requirements: Linux with `git` / `make` / `gcc`. Artifacts are written to `dist/` (7 UEFI form factors + `SHA256SUMS`). See [Firmware Build and Deployment](https://dutyc.github.io/kurrent/en/firmware/build-deploy.html) for the build and deployment flow.
 
 ## Documentation
 
 Full documentation lives under [`docs/`](./docs/); frequently used entries:
 
 - [NVMe-oF usage](docs/nvmeof-usage.md) — target setup (incl. DH-HMAC-CHAP), `sanboot` usage and QEMU validation
+- [Build artifacts](docs/build-artifacts.md) — artifact list, form-factor selection and checksums
 - [Golden image matrix](docs/golden-image-matrix.md) — per-distro setup scripts, differences and acceptance status
 - [Capability reference for Kurrent](docs/capability-reference.md) — firmware capabilities and interface contracts, credential injection flow
 - [Patch set](patches/README.md) — licensing and upstream baseline upgrade workflow

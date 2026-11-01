@@ -37,13 +37,14 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 ./build/build.sh    # 完整构建：拉取源码 -> 应用补丁 -> 构建 -> 归档
 ```
 
-环境要求 Linux + `git` / `make` / `gcc`；产物输出至 `dist/`（7 种 UEFI 形态 + SHA256SUMS），清单与选用见[构建产物](docs/build-artifacts.zh-CN.md)。
+环境要求 Linux + `git` / `make` / `gcc`；产物输出至 `dist/`（7 种 UEFI 形态 + `SHA256SUMS`）。构建与部署步骤见文档站的[固件构建与部署](https://dutyc.github.io/kurrent/firmware/build-deploy.html)。
 
 ## 文档
 
 完整文档见 [`docs/`](./docs/) 目录，常用入口：
 
 - [NVMe-OF 使用指南](docs/nvmeof-usage.md)——target 配置（含 DH-HMAC-CHAP）、`sanboot` 用法与 QEMU 验证
+- [构建产物](docs/build-artifacts.zh-CN.md)——产物清单、形态选择与校验
 - [母盘定制发行版矩阵](docs/golden-image-matrix.md)——各发行版定制脚本、差异对照与验收状态
 - [能力实现参考（Kurrent 集成用）](docs/capability-reference.md)——固件能力与接口契约、凭据注入链路
 - [补丁集说明](patches/README.zh-CN.md)——授权边界与上游升级流程
