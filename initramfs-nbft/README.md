@@ -82,9 +82,11 @@ PATH=<mock-bin>:$PATH NBFT_SYSFS_PATH=<mock-firmware> ./nbft-connect --entries
 
 全链路验证（QEMU + nvmet + 装有本模块的 initramfs）见仓库验证记录。
 
-注意：`nbft-connect` 须以 dash/ash 运行（initramfs 默认 `/bin/sh`）——NBCT
-字段提取依赖命令替换在首个 NUL 字节截断的语义，bash 4.4+ 会保留 NUL 导致
-空字段误判。
+说明：`nbft-connect` 用 POSIX sh 编写，dash/ash 与 bash 下语义一致。NBCT 是
+固定宽度、NUL 填充的表，字段提取显式 `tr -d '\000'`（不再依赖命令替换在首个
+NUL 处截断的 shell 语义——bash 4.4+ 会保留 NUL）。RHEL 系无 dash，dracut 钩子
+以 `bash` 调用；单测可用 `SHELL_UNDER_TEST=bash test/test-nbft-connect-nbct.sh`
+覆盖验证。
 
 ## 上游纳入路径（种子退役条件）
 

@@ -1,0 +1,85 @@
+{
+  "product": {
+    "id": "openSUSE_Leap"
+  },
+  "hostname": {
+    "static": "golden-leap16"
+  },
+  "root": {
+    "sshPublicKey": "__GOLDEN_SSH_PUBKEY__"
+  },
+  "software": {
+    "packages": [
+      "openssh-server",
+      "sudo",
+      "python3",
+      "tar",
+      "xz",
+      "nvme-cli",
+      "jq",
+      "keyutils",
+      "ktls-utils",
+      "dracut",
+      "NetworkManager",
+      "dosfstools",
+      "xfsprogs",
+      "e2fsprogs"
+    ],
+    "extraRepositories": [
+      {
+        "alias": "tuna-oss",
+        "name": "openSUSE Leap 16.0 OSS (TUNA)",
+        "url": "https://mirrors.tuna.tsinghua.edu.cn/opensuse/distribution/leap/16.0/repo/oss/",
+        "priority": 10
+      }
+    ]
+  },
+  "storage": {
+    "boot": {
+      "configure": false,
+      "device": "vda"
+    },
+    "drives": [
+      {
+        "search": "/dev/vda",
+        "ptableType": "gpt",
+        "partitions": [
+          {
+            "id": "esp",
+            "filesystem": {
+              "type": "vfat",
+              "path": "/boot/efi"
+            },
+            "size": "953 MiB"
+          },
+          {
+            "filesystem": {
+              "type": "xfs",
+              "path": "/boot"
+            },
+            "size": "1024 MiB"
+          },
+          {
+            "filesystem": {
+              "type": "xfs",
+              "path": "/"
+            },
+            "size": {
+              "min": "4 GiB",
+              "max": "7 GiB"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "post": [
+      {
+        "name": "kurrent-bootstrap.sh",
+        "chroot": true,
+        "content": "#!/bin/bash\nset -e\nmkdir -p /etc/ssh/sshd_config.d\nprintf 'PermitRootLogin prohibit-password\\n' > /etc/ssh/sshd_config.d/99-kurrent.conf\nsystemctl enable sshd.service\nsystemctl enable NetworkManager.service\n"
+      }
+    ]
+  }
+}

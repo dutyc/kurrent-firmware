@@ -6,7 +6,7 @@
 >
 > 关联文档：[initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子模块组件说明）、[golden-image-matrix.md](golden-image-matrix.md)（各发行版矩阵与脚本位置）、[production-boot-verification.md](production-boot-verification.md)（全链路验证记录）、[customizations.md](customizations.md)（固件补丁设计）。
 >
-> **支持基线（2026-08-27 裁定）**：Debian 12（+backports 6.12）及以上、Ubuntu 24.04 LTS 及以上、RHEL 9 及以上、SLES 15 及以上、openSUSE Leap 16 及以上、Fedora 44 及以上、Arch rolling。**低于基线的发行版不做适配**（明细见第 10 节）。
+> **支持基线（2026-08-27 裁定）**：Debian 12（+backports 6.12）及以上、Ubuntu 24.04 LTS 及以上、RHEL 9 及以上（AlmaLinux 10 及以上；10.2 已实测）、SLES 15 及以上、openSUSE Leap 16 及以上、Fedora 44 及以上、Arch rolling。**低于基线的发行版不做适配**（明细见第 10 节）。
 >
 > **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/debian12/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：**2026-09-08 起以单文件自包含形态在目标母盘 VM 内端到端实测通过（A–F 全程含 E，随后 SAN 冷启动验收至 GDM）**；早期轨迹：A–D+F 经 chroot（2026-09-02）、本地可引导性经 QEMU（2026-09-02，见 8.1）。
 
@@ -33,7 +33,7 @@ A–F 全部阶段已自动化，**在母盘系统内以 root 运行**：
 # 脚本与 initramfs-nbft 组件需位于同一仓库目录（默认取仓库根的 initramfs-nbft（test/<distro>/ 上两级））
 sudo bash test/debian12/golden-image-setup-debian12.sh          # 全流程（E 阶段交互确认）
 sudo bash test/debian12/golden-image-setup-debian12.sh --yes    # E 阶段不交互
-sudo bash test/debian12/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 E（仅 A-D+F）
+sudo bash test/debian12/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 GPT/ESP 重建（仍刷新 ESP 内容）
 sudo bash test/debian12/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # 注入宿主 2.14 预构建 GRUB（见 6.3）
 sudo bash test/debian12/golden-image-setup-debian12.sh -d /path/to/initramfs-nbft -k 6.12.95+deb12-amd64
 ```
@@ -300,7 +300,7 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 
 - **内核认证**：主线自 6.0 内置 `CONFIG_NVME_AUTH`；全部 LTS（5.10/5.15/6.1/6.6/6.12）2023-09 起 backport——**发行版是否启用才是变量**（Debian 12 的 6.1 即未启用的反例）；
 - **NBFT 消费生态**：SUSE 主导（nvme-stas 2.3 起把 NBFT 作为配置源；dracut 95nvmf 含 NBFT 解析）；nvme-cli 2.5+ 提供 `nvme nbft show`；systemd initrd 的 NBFT 支持仍是未合并的 RFE（systemd #36443）；
-- **对本项目**：种子模块（initramfs-nbft）在**所有非 SUSE 系**上都是必需件；Debian 13 / Ubuntu 26.04 可直接复用现有 `nbft-connect`，无需 6.12 backports 环节；Fedora 44 变体已实测——自建 dracut `95nbft` 模块包装同一 `nbft-connect`（需 `dracut-network` / `systemd-networkd` 包；XFS 母盘须以 4K 逻辑块盘安装）。
+- **对本项目**：种子模块（initramfs-nbft）在**所有非 SUSE 系**上都是必需件；Debian 13 / Ubuntu 26.04 可直接复用现有 `nbft-connect`，无需 6.12 backports 环节；Fedora 44、AlmaLinux 10.2 与 openSUSE Leap 16.0 变体已实测——自建 dracut `95nbft` 模块包装同一 `nbft-connect`（Fedora 用 `dracut-network` / `systemd-networkd`，RHEL 系与 SUSE 系走 NetworkManager；RHEL/SUSE 须把 crypto-policies 的 `gnutls.config` 装进 initrd；XFS 母盘须以 4K 逻辑块盘安装）。
 
 ## 11. 参考资料
 

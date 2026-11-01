@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **九个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
+本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
 
 | # | 补丁 | 内容 |
 |---|---|---|

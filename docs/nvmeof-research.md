@@ -122,14 +122,30 @@ NBFT 表格式来源（按优先级）：① NVMe Boot Specification（NVM Expre
 
 | 发行版 | 接力通道 | 状态 | 备注 |
 |---|---|---|---|
-| SLES 15 SP7+ / openSUSE Leap 15.5+ | NBFT 原生（dracut nvmf + nvme-cli） | ✅ 完整官方支持 | 引导网口 `nbft0/nbft1` 命名；`nvme nbft show` 查看 |
-| RHEL 9.7+ / 10.x（Rocky/Alma/CentOS Stream 同源） | `nm-initrd-generator` NBFT 解析 | ⚠️ Technology Preview | 官方 9.7/10.2 release notes；限厂商平台（HII） |
+| SLES 15 SP7+ / openSUSE Leap 15.5+ | NBFT 原生（dracut nvmf + nvme-cli） | ✅ NBFT 消费完整；**不含凭据** | 引导网口 `nbft0/nbft1` 命名；连接为 `nvme connect-all --nbft`（无 DH-HMAC-CHAP/TLS） |
+| RHEL 9.7+ / 10.x（Rocky/Alma/CentOS Stream 同源） | `nm-initrd-generator` NBFT 解析 | ⚠️ Technology Preview；**不含凭据** | 官方 9.7/10.2 release notes；限厂商平台（HII） |
 | Fedora | dracut 95nvmf（`rd.nvmf.*`） | 🟡 参数驱动 | NBFT 消费未确认（SUSE 扩展为发行版补丁，dracut 已移交 dracut-ng 社区） |
 | Ubuntu 24.04 LTS | subiquity + curtin（initramfs hook 脚本） | 🟡 experimental | rootfs 可远程但 /boot 必须本地；无 NBFT（需手动 connect） |
 | Ubuntu 24.10+ | canonical/nvme-tcp-poc（dracut） | 🟡 PoC | Canonical 官方仓库 |
 | Debian 12/13 | 无内置 | ❌ 空白 | initramfs-tools 无 nvmf 模块，需自备（见 §3.7.4） |
 | Arch / Gentoo / Void | 无内置 | ❌ 空白 | 可自装 dracut + nvmf 模块 |
 | Windows Server 2025+ | in-box NVMe-oF initiator（TCP+RDMA） | ✅ OS 层支持 | boot 层走 EFI Block I/O 暴露（§3.6），不依赖 NBFT |
+
+#### 3.7.2.1 实测核对（2026-10-31，AlmaLinux 10.2 / openSUSE Leap 16.0）
+
+在两份母盘上直接读发行版模块源码（非推测）：
+
+| 发行版 | 原生组件 | NBFT 分支实际命令 | 凭据处理 |
+|---|---|---|---|
+| AlmaLinux 10.2（dracut-107） | `95nvmf/nvmf-autoconnect.sh` | `/usr/sbin/nvme connect-all --nbft` | 无 `--tls`、无 `--dhchap-secret`；`parse-nvmf-boot-connections.sh` 只解析 HFI（IP/MAC/VLAN/网关） |
+| AlmaLinux 10.2 | `nm-initrd-generator` | 内含 `nvme_nbft_read`（NBFT → 网络连接） | 只产出网络配置；官方标注 Technology Preview |
+| openSUSE Leap 16.0（dracut 059+suse） | `95nvmf/nvmf-autoconnect.sh` | 同上：`nvme connect-all --nbft` | 同上，只处理网络 HFI |
+
+结论：原生 NBFT 消费解决的是"用哪个网口、什么地址"，**不解决认证与加密**——
+NBFT 标准表没有 DH-HMAC-CHAP 密钥或 TLS-PSK 字段（这正是本项目用自定义 NBCT 表
+承载凭据的原因）。项目母盘在 dracut 中显式 `--omit nvmf`，由 `95nbft` 读 NBCT 后
+逐条 `nvme connect --dhchap-secret/--tls`；若保留原生模块，它会在认证前抢先做
+无凭据 `connect-all`（被 target `treq=required` 拒绝），并干扰根盘发现时序。
 
 #### 3.7.3 iSCSI（iBFT）参照系：Debian 系已走通
 
@@ -154,13 +170,17 @@ ipxe-all-ready 项目已在 Debian 12 验证 iBFT 全自动接力（`docs/zh/gui
 | Fedora | ❓ 待验证 | 需验证/自备 | ❓ |
 | Debian / Ubuntu / Arch | ❌ 无 | 一次注入 | ✅ 可达 |
 
+> 注：上表的"零/克隆即用"仅指 **NBFT 网络与连接**；DH-HMAC-CHAP / TLS 凭据
+> 不在 NBFT 标准表内，RHEL/SUSE 仍需自定义 NBCT + `95nbft`（见 §3.7.2.1 实测）。
+
 **施工点（无内置支持的发行版）**：统一 NBFT 消费模块，路线 A（框架无关核心 + 薄适配层）。**种子定位**：实现仅供参考与上游提案，目标由各发行版官方包自行纳入（iBFT 先例：open-iscsi 包自带 `local-top/iscsi` + `iscsi_auto` 开关，Debian/Ubuntu/Mint/Deepin 同源继承，上游一处维护，发行版零自研）：
 
 - **核心（一份，框架无关）** `nbft-connect`（POSIX sh）：检测 ACPI NBFT 表（`/sys/firmware/acpi/tables/NBFT`）→ 按 `nvme show-nbft` 输出翻译成 `ip=/ifname` 网络指令（对齐 SUSE dracut nvmf 模块做法）→ `nvme connect-nbft`。解析与连接已由 nvme-cli（跨发行版标准件）承担，核心只做框架无关的网络翻译与调用，单点维护。
 - **薄适配层（各 10-20 行）**：
   - initramfs-tools：`hooks/nbft` + `scripts/local-top/nbft` + `nbft_auto` 内核参数（仿 `iscsi_auto`）
   - mkinitcpio：单个 hook
-  - dracut 系不写适配：SUSE 95nvmf 原生 NBFT、RHEL nm-initrd-generator，种子只覆盖无内置的框架
+  - dracut 系（RHEL/SUSE）：原生模块只消费 NBFT（无凭据，见 §3.7.2.1），
+    本项目提供 `95nbft` 补 NBCT 凭据消费并 `--omit nvmf`；官方若纳入凭据字段即可退役
 - **上游纳入路径（发行版自己维护，种子退役）**：
   - 主路径：随 **nvme-cli（linux-nvme）** 打包 initramfs 集成（仿 open-iscsi 的 local-top/iscsi 模式，Debian 系同源继承）
   - 并行：SUSE dracut 95nvmf NBFT 补丁上游化到 dracut-ng（覆盖全部 dracut 发行版）

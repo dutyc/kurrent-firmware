@@ -12,7 +12,7 @@ Status legend:
 
 - **Well covered** — mature driver or field-tested, safe to use
 - **Conditional** — driver exists with known issues or limitations
-- **Via protocol layer** — no native driver; runs on the NIC-shipped UEFI SNP / BIOS UNDI boot ROM (snponly.efi / undionly.kpxe); carries the SNP caveats listed under Conditional
+- **Via protocol layer** — no native driver; runs on the NIC-shipped UEFI SNP boot ROM (`snponly.efi`); carries the SNP caveats listed under Conditional
 - **Unsupported** — no driver in the baseline (including this project's patch scope)
 
 ## Well Covered
@@ -37,12 +37,12 @@ Status legend:
 
 ## Via Protocol Layer (No Native Driver)
 
-Some server-grade NICs ship their own boot ROM (UEFI SNP / BIOS UNDI); these need no driver port — the protocol-layer firmware (snponly.efi / undionly.kpxe) runs on the NIC-shipped PXE stack and provides full iPXE capability. A native port is intentionally skipped when its cost (e.g. the mlx5 firmware-command architecture) is disproportionate to the benefit.
+Some server-grade NICs ship their own UEFI SNP boot ROM; these need no driver port — the protocol-layer firmware (`snponly.efi`) runs on the NIC-shipped PXE stack and provides full iPXE capability. A native port is intentionally skipped when its cost (e.g. the mlx5 firmware-command architecture) is disproportionate to the benefit. The current build is UEFI-only; legacy BIOS UNDI artifacts are not produced.
 
 | NIC | Path | Notes |
 |---|---|---|
-| **Mellanox ConnectX-4 / 5 / 6 / 7** (25G / 40G / 100G, servers) | snponly.efi (UEFI) / undionly.kpxe (BIOS) | Zero adaptation; carries the SNP caveats under Conditional (iSCSI hang risk) |
-| Broadcom bnx2x family (BCM57710/57711/57712/57800/57810/57840, 10G, NetXtreme II) | snponly.efi (UEFI) / undionly.kpxe (BIOS) | Server NICs ship official Broadcom boot ROM; zero adaptation; carries the SNP caveats under Conditional (iSCSI hang risk) |
+| **Mellanox ConnectX-4 / 5 / 6 / 7** (25G / 40G / 100G, servers) | snponly.efi (UEFI) | Zero adaptation; carries the SNP caveats under Conditional (iSCSI hang risk) |
+| Broadcom bnx2x family (BCM57710/57711/57712/57800/57810/57840, 10G, NetXtreme II) | snponly.efi (UEFI) | Server NICs ship official Broadcom boot ROM; zero adaptation; carries the SNP caveats under Conditional (iSCSI hang risk) |
 
 ## Unsupported (Key Risks)
 

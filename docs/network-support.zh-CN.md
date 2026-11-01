@@ -12,7 +12,7 @@
 
 - **覆盖良好** —— 驱动成熟或实测通过，可放心使用
 - **有条件** —— 驱动存在但有已知问题或限制
-- **协议层支持** —— 无 native 驱动；通过网卡自带 UEFI SNP / BIOS UNDI 引导 ROM 运行（snponly.efi / undionly.kpxe）；附带下方“有条件”中的 SNP 注意事项
+- **协议层支持** —— 无 native 驱动；通过网卡自带 UEFI SNP 引导 ROM 运行（`snponly.efi`）；附带下方“有条件”中的 SNP 注意事项
 - **不支持** —— 基线无驱动（含本项目补丁范围）
 
 ## 覆盖良好
@@ -37,12 +37,12 @@
 
 ## 协议层支持（无 native 驱动）
 
-部分服务器级网卡出厂自带引导 ROM（UEFI SNP / BIOS UNDI），无需移植驱动——协议层固件（snponly.efi / undionly.kpxe）直接运行在网卡自带 PXE 栈之上，获得完整 iPXE 能力。当 native 驱动移植成本（如 mlx5 的固件命令接口架构）与收益不成比例时，有意采用协议层方案。
+部分服务器级网卡出厂自带 UEFI SNP 引导 ROM，无需移植驱动——协议层固件（`snponly.efi`）直接运行在网卡自带 PXE 栈之上，获得完整 iPXE 能力。当 native 驱动移植成本（如 mlx5 的固件命令接口架构）与收益不成比例时，有意采用协议层方案。当前构建仅面向 UEFI，不产出传统 BIOS UNDI 产物。
 
 | 网卡 | 路径 | 备注 |
 |---|---|---|
-| **Mellanox ConnectX-4 / 5 / 6 / 7**（25G / 40G / 100G，服务器） | snponly.efi（UEFI）/ undionly.kpxe（BIOS） | 零适配；附带下方“有条件”中的 SNP 注意事项（iSCSI 挂起风险） |
-| Broadcom bnx2x 系（BCM57710/57711/57712/57800/57810/57840，10G，NetXtreme II） | snponly.efi（UEFI）/ undionly.kpxe（BIOS） | 服务器卡自带 Broadcom 官方引导 ROM；零适配；附带下方“有条件”中的 SNP 注意事项（iSCSI 挂起风险） |
+| **Mellanox ConnectX-4 / 5 / 6 / 7**（25G / 40G / 100G，服务器） | snponly.efi（UEFI） | 零适配；附带下方“有条件”中的 SNP 注意事项（iSCSI 挂起风险） |
+| Broadcom bnx2x 系（BCM57710/57711/57712/57800/57810/57840，10G，NetXtreme II） | snponly.efi（UEFI） | 服务器卡自带 Broadcom 官方引导 ROM；零适配；附带下方“有条件”中的 SNP 注意事项（iSCSI 挂起风险） |
 
 ## 不支持（重点风险）
 

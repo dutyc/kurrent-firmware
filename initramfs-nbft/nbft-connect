@@ -16,10 +16,9 @@
 # Intended as a seed implementation to be adopted upstream, e.g. packaged
 # with nvme-cli like open-iscsi ships its initramfs integration.
 #
-# Must run under dash/ash (the initramfs default /bin/sh): the NBCT
-# field extractor relies on command substitution truncating at the first
-# NUL byte, which dash does (bash 4.4+ keeps NULs and would misparse
-# empty fields).
+# Portable across initramfs shells: NBCT fields are fixed-width, NUL-padded
+# ASCII strings, so the field extractor strips NUL bytes explicitly instead
+# of relying on dash-specific command-substitution truncation.
 
 set -u
 
@@ -106,12 +105,12 @@ detect_nbct() {
 }
 
 # Extract one NUL-terminated field from NBCT entry $2 of table $1.
-# Command substitution truncates the dd output at the first NUL byte
-# under dash/ash, giving exactly the C-string semantics of the firmware
-# (the padding after the terminator never reaches the variable).
+# Fields are fixed-width, NUL-padded ASCII; strip the padding explicitly
+# so the result is identical under dash, busybox ash and bash (bash drops
+# NULs with a warning and would otherwise concatenate across padding).
 nbct_field() {
     dd if="$1" bs=1 skip=$(( NBCT_BODY_OFF + $2 * NBCT_ENTRY_LEN + $3 )) \
-       count="$4" 2>/dev/null
+       count="$4" 2>/dev/null | tr -d '\000'
 }
 
 # --- TLS-PSK injection (kernel global .nvme keyring) ------------------------

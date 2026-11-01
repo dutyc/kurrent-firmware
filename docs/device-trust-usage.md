@@ -76,9 +76,9 @@ sign <data...>
 
 - **前置条件**：`device-key` 已存在。
 - **数据拼接规则**：所有参数按顺序**无分隔拼接**（UTF-8 字节），如
-  `sign 0123...host123` 等价于对字符串
-  `0123456789abcdef52:54:00:12:34:56host123` 签名。推荐调用形态：
-  `sign ${nonce}${net0/mac}${hostname}`（nonce 由控制面下发）。
+  `sign 0123...52:54:00:12:34:56` 等价于对字符串
+  `0123456789abcdef52:54:00:12:34:56` 签名。推荐调用形态：
+  `sign ${nonce}${net0/mac}`（nonce 由控制面下发；主机名不参与签名）。
 - **签名流程**：数据 → SHA-256 → ECDSA P-256 → DER 编码签名。
 - **输出**：标准输出打印 **base64(DER)** 签名，例如：
   ```
@@ -89,12 +89,12 @@ sign <data...>
 - **错误**：`sign: no device key (run keygen first)`（未生成密钥）；
   `sign: could not sign: <err>`（密码学错误，见 §7 排查）。
 
-**控制台交互示例**（数据为 `0123456789abcdef` + `52:54:00:12:34:56` +
-`host123` 无分隔拼接）：
+**控制台交互示例**（数据为 `0123456789abcdef` + `52:54:00:12:34:56`
+无分隔拼接）：
 
 ```
-iPXE> sign 0123456789abcdef52:54:00:12:34:56host123
-MEQCIHgtBUiiwEqaAE8XGNlDdfmZvM/kxuio7p2F341rDupuAiAoa4Gd8tfI3JV6tqoU4M0+Xijj65IKzVEUCmO3Qb9eqg==
+iPXE> sign 0123456789abcdef52:54:00:12:34:56
+MEUCIQCx...EQIgaR...
 ```
 
 ### 2.4 `nvclear` —— 清空设备 NVRAM
@@ -177,12 +177,12 @@ TOFU 在 TLS 握手路径自动生效（无命令、无配置），状态机如�
 ### 5.1 数据格式
 
 ```
-data = nonce ‖ mac ‖ hostname
+data = nonce ‖ mac
 ```
 
 - `nonce`：控制面下发，64 个 hex 字符（32 字节随机数），一次性。
 - `mac`：小写冒号格式 MAC（`52:54:00:12:34:56`），来自 `${net0/mac}`。
-- `hostname`：设备主机名（UTF-8）。
+- 主机名由客户端自报，不参与签名；身份约束由 MAC 到设备台账的绑定与一次性 nonce 保证。
 - 拼接**无分隔符**；固件侧 `sign` 命令的参数即最终字节序列。
 
 ### 5.2 签名与编码
@@ -217,8 +217,8 @@ def verify(pub_hex: str, sig_b64: str, data: bytes) -> bool:
 # 使用示例：控制面拿到固件上报的 pubkey 与 sig 后
 pubkey = "04fe4c..."            # pubkey 命令输出（130 hex）
 sig = "MEUCIQCx..."             # sign 命令输出（base64 DER）
-nonce, mac, hostname = "0123456789abcdef" * 4, "52:54:00:12:34:56", "host123"
-data = (nonce + mac + hostname).encode("utf-8")
+nonce, mac = "0123456789abcdef" * 4, "52:54:00:12:34:56"
+data = (nonce + mac).encode("utf-8")
 print("verify:", verify(pubkey, sig, data))
 ```
 
@@ -233,9 +233,8 @@ pub.verify(sig_der, digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
 
 ## 6. 集成示例（主仓库 boot.ipxe 参考模式）
 
-> 通用约定：`${hostname}` 来自 DHCP 主机名（或脚本内 `set hostname ...`）；
-> 所有 `https://` 端点首次连接时触发 TOFU pin，务必保证全部 HTTPS 目标
-> 共享同一信任锚（见 §4）；`chain --autofree` 下载并执行完即释放。
+> 通用约定：所有 `https://` 端点首次连接时触发 TOFU pin，务必保证全部
+> HTTPS 目标共享同一信任锚（见 §4）；`chain --autofree` 下载并执行完即释放。
 
 ### 6.1 设备注册（首次开机，公钥上报）
 
@@ -271,8 +270,8 @@ chain --autofree https://mgmt.example.com/challenge?mac=${net0/mac} \
     || goto fail
 isset ${nonce} || goto fail
 
-# 2. 签名 nonce‖mac‖hostname（无分隔拼接）
-sign ${nonce}${net0/mac}${hostname} || goto fail
+# 2. 签名 nonce‖mac（无分隔拼接）
+sign ${nonce}${net0/mac} || goto fail
 
 # 3. 回传签名；控制面验签通过后下发引导脚本
 #    （含 nbft-secret、内核参数等敏感变量，仅验签通过者可见）
@@ -342,7 +341,7 @@ chain --autofree \
 chain --autofree https://mgmt.example.com/challenge?mac=${net0/mac} \
     || goto fail
 isset ${nonce} || goto fail
-sign ${nonce}${net0/mac}${hostname} || goto fail
+sign ${nonce}${net0/mac} || goto fail
 chain --autofree \
     https://mgmt.example.com/authorize?mac=${net0/mac}&sig=${sig} \
     || goto fail

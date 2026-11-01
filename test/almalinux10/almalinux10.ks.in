@@ -1,0 +1,56 @@
+# kurrent-firmware: AlmaLinux 10 (RHEL 系) 母盘安装 kickstart 模板
+#
+# 占位符 __GOLDEN_SSH_PUBKEY__ 由 test/almalinux10/run-almalinux10-install.sh
+# 在生成运行时 kickstart 时替换（公钥不属于机密，私钥只留在 .cache/ 不入库）。
+#
+# 安装盘必须是 4K 逻辑块虚拟盘（virtio-blk logical_block_size=4096）：
+# XFS 扇区大小在 mkfs 时固定，512 扇区 XFS 无法在 SAN 的 4096 逻辑块设备上挂载。
+#version=RHEL10
+text
+lang en_US.UTF-8
+keyboard us
+timezone UTC --utc
+rootpw --lock
+selinux --enforcing
+firewall --enabled --service=ssh
+network --bootproto=dhcp --device=link --activate --hostname=golden-alma10
+
+ignoredisk --only-use=vda
+zerombr
+clearpart --all --initlabel --disklabel=gpt
+part /boot/efi --size=953 --fstype=efi
+part /boot --size=1024 --fstype=xfs
+part / --size=6144 --fstype=xfs --grow
+
+bootloader --timeout=5 --append="console=ttyS0,115200 net.ifnames=0 biosdevname=0"
+
+user --name=golden --groups=wheel --lock
+sshkey --username=golden "__GOLDEN_SSH_PUBKEY__"
+
+%packages --ignoremissing
+@^minimal-environment
+openssh-server
+sudo
+python3
+tar
+xz
+nvme-cli
+jq
+keyutils
+dracut-network
+NetworkManager
+grub2-efi-x64
+shim-x64
+efibootmgr
+dosfstools
+xfsprogs
+e2fsprogs
+%end
+
+%post --erroronfail --log=/root/ks-post.log
+echo 'golden ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-golden
+chmod 0440 /etc/sudoers.d/90-golden
+systemctl enable sshd
+%end
+
+poweroff

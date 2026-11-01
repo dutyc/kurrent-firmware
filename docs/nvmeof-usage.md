@@ -8,7 +8,7 @@
 固件内置自研 `nvmetcp` 驱动（补丁 0005），提供 NVMe over TCP 的 SAN 引导能力：
 
 - **协议流程**：ICReq/ICResp 参数协商 → Connect（Admin 队列）→ Property Set（CC.EN=1）→ Identify（控制器/命名空间）→ I/O 队列 Connect → 块读写（R2T 流控）
-- **认证**：DH-HMAC-CHAP（SHA-256，DH 群 0/2048/3072/4096，补丁 0005 内含认证完成时序与状态机竞态修复）
+- **认证**：DH-HMAC-CHAP（SHA-256/384/512，DH 群 0/2048/3072/4096，补丁 0005 内含认证完成时序与状态机竞态修复）
 - **已验证环境**：客户端 QEMU/OVMF（x86_64 UEFI）+ 服务端 Ubuntu 26.04（内核 7.0.0-14）nvmet TCP target + GRUB 2.14 接力引导，全链路通过（wire 层全部命令 `status=0x0000`）
 
 **边界**：仅支持 TCP 传输（无 RDMA/FC）；认证固定 DH-HMAC-CHAP；单控制器单命名空间的引导路径（Identify 解析 512B/4K 块）。
@@ -19,13 +19,14 @@
 
 | 产物 | 引导环境 | 典型部署 |
 |---|---|---|
-| `pxe-uefi/ipxe.efi` | UEFI + PXE | DHCP 菜单 `chain` 加载 |
+| `pxe-uefi/ipxe.efi` | UEFI + PXE | DHCP 菜单 `chain` 加载（native 驱动） |
 | `pxe-uefi/snponly.efi` | UEFI + PXE/本地 | 同左；链加载失败时回退接管全部 SNP/NII/MNP 设备（补丁 0003） |
+| `pxe-uefi/ipxe-debug.efi`、`pxe-uefi/snponly-debug.efi` | UEFI + PXE | 对应产物的 debug 版本 |
 | `direct-uefi/ipxe.efi` | UEFI 本地 | 固件直接引导（如 ESP 下 `\EFI\BOOT\BOOTX64.EFI`）；内置 `embed/auto.ipxe` 自动引导链 |
-| `grub-bios/ipxe.lkrn` | BIOS | GRUB2 `linux16 /boot/ipxe.lkrn` |
-| `undionly.kpxe` | BIOS + PXE | DHCP 菜单（UNDI 驱动） |
-| `usb/ipxe.usb` | 任意 | 写盘后 USB 启动 |
-| `*-debug.efi` | 同上 | 仅含 realtek 调试输出（`DEBUG=realtek:3`）；需要 `nvmetcp` 调试日志时须以 `DEBUG=nvmetcp:3` 重新构建；需要认证模块日志（`authentication succeeded` 等）时须加 `nvmetcp_auth`，即 `DEBUG=nvmetcp,nvmetcp_auth:3`（`DEBUG=` 按源文件名生效） |
+| `direct-uefi/snponly.efi` | UEFI 本地 | 同上，SNP 专用 |
+| `direct-uefi/ipxe-debug.efi` | UEFI 本地 | 对应产物的 debug 版本 |
+
+debug 产物启用 `DEBUG=realtek:3`。需要 `nvmetcp` 调试日志时须以 `DEBUG=nvmetcp:3` 重新构建；需要认证模块日志（`authentication succeeded` 等）时须加 `nvmetcp_auth`，即 `DEBUG=nvmetcp,nvmetcp_auth:3`（`DEBUG=` 按源文件名生效）。
 
 部署要点：
 
@@ -223,7 +224,7 @@ I/O queue established
 
 - 固件必须包含**完整补丁链 0001-0010**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
 - `nvmetcp` 驱动无编译期默认调试输出；需要认证/状态机日志（含 `authentication succeeded`）时以 `DEBUG=nvmetcp,nvmetcp_auth:3` 手动构建（仅 `DEBUG=nvmetcp:3` 看不到 `nvmetcp_auth.c` 的打印）
-- 认证仅支持 DH-HMAC-CHAP（SHA-256），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
+- 认证仅支持 DH-HMAC-CHAP（SHA-256/384/512），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
 - Host NQN 依赖 SMBIOS UUID；无 UUID 平台（如 QEMU+OVMF）回退固定 NQN，服务端需按实际值配置
 - 服务端密钥对 CRC32 校验严格（终值、小端），生成后可用 `test/nvmet-setup.sh` 的内置自检确认
 

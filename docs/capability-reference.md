@@ -24,7 +24,7 @@
 | 3 | 认证凭证控制面注入（`nbft-secret` 动态变量） | `embed/auto.ipxe` + 控制面 `/boot-vars` 端点 | 已验证（test/ 全链路脚本） |
 | 4 | 设备信息采集（SMBIOS 内存、PCI 驱动名 → `${net0/chip}` 等） | 补丁 0004 | 已验证 |
 | 5 | 网卡适配（RTL8125/8126 驱动、snponly 接管回退、UNDI） | 补丁 0001-0003 | 已验证 |
-| 6 | 多形态固件产物（PXE-UEFI/直接 UEFI/BIOS/USB） | `build/build.sh` → `dist/` | 可复现构建 |
+| 6 | UEFI 固件产物（PXE-UEFI / 直接 UEFI，共 7 个） | `build/build.sh` → `dist/` | 可复现构建 |
 | 7 | 测试体系（单测 11762 断言、QEMU 全链路、pcap 分析） | `tests/`（补丁内）、`test/` 目录 | 回归护栏 |
 
 ## 2. 引导链与接口边界
@@ -93,13 +93,13 @@ fabric 命令 `fctype=0x05`（AuthSend）/`0x06`（AuthReceive），协商消息
 
 | 消息 | AuthSend 载荷 | 内容 |
 |---|---|---|
-| 1. Negotiate | `nvmf_auth_dhchap_negotiate_data` | 哈希（SHA-256=01）、DH 群（0/2048/3072/4096）、transaction 随机数 |
+| 1. Negotiate | `nvmf_auth_dhchap_negotiate_data` | 哈希（01=SHA-256，02=SHA-384，03=SHA-512）、DH 群（0/2048/3072/4096）、transaction 随机数 |
 | 2. Challenge | `nvmf_auth_dhchap_challenge_data` | 16 字节 cval、服务端 DH 公钥 |
 | 3. Reply | `nvmf_auth_dhchap_reply_data` | 客户端 DH 公钥 + 响应 rval |
 | 4. Success1 | `nvmf_auth_dhchap_success1_data` | 服务端校验（hl/rvalid 字段） |
 
 - 双向认证（`rvalid=1`）**不支持**，收到即报 `-EPROTO`
-- 哈希仅 SHA-256；DH 群 0（无 DH）/2048/3072/4096（服务端可配 `ffdhe4096` 走完整 DH 交换）
+- 哈希支持 SHA-256/SHA-384/SHA-512（由服务端在 Negotiate 中选择）；DH 群 0（无 DH）/2048/3072/4096（服务端可配 `ffdhe4096` 走完整 DH 交换）
 - 失败路径：任一校验失败返回错误码，会话进入 FAILED
 
 ### 3.4 BlockIo 与 EFI 设备路径（sanboot 协议）
@@ -312,7 +312,7 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 ### 5.3 构建与部署
 
 - 补丁链 `0001-0010`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
-- 产物形态：`pxe-uefi/*.efi`、`direct-uefi/*.efi`（内置 auto.ipxe）、`grub-bios/ipxe.lkrn`、`undionly.kpxe`、`usb/ipxe.usb`、`*-debug.efi`
+- 产物形态：仅 UEFI，共 7 个文件——`pxe-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`、`snponly-debug.efi`；`direct-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`（均内置 `auto.ipxe`）
 - 调试构建：`DEBUG=nvmetcp,nvmetcp_auth:3`（认证日志）、`DEBUG=realtek:3`（网卡）
 - `embed/auto.ipxe` 是配置资产（非源码补丁），修改无需重新生成补丁
 

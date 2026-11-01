@@ -46,9 +46,13 @@ exit 0
 EOF
 chmod +x "$WORK/mock-nvme"
 
+# Shell used to run the consumer.  Override to exercise portability, e.g.
+#   SHELL_UNDER_TEST=bash bash test/test-nbft-connect-nbct.sh
+SHELL_UNDER_TEST=${SHELL_UNDER_TEST:-dash}
+
 run_connect() { # $1 = sysfs dir
 	MOCK_LOG="$MOCK_LOG" NVME="$WORK/mock-nvme" NBFT_SYSFS_PATH="$1" \
-		dash "$SCRIPT" --connect 2>"$WORK/stderr.log"
+		"$SHELL_UNDER_TEST" "$SCRIPT" --connect 2>"$WORK/stderr.log"
 }
 
 # --- synthetic NBCT table builder -------------------------------------------
@@ -179,7 +183,7 @@ chmod +x "$WORK/e/keyctl"
 MOCK_LOG="$MOCK_LOG" NVME="$WORK/mock-nvme" NBFT_SYSFS_PATH="$WORK/e" \
 	KEYCTL="$WORK/e/keyctl" KEYS_FILE="$WORK/e/keys" \
 	KEYCTL_LOG="$WORK/e/keyctl.log" KEYCTL_STDIN="$WORK/e/stdin.bin" \
-	dash "$SCRIPT" --connect 2>"$WORK/stderr.log" || true
+	"$SHELL_UNDER_TEST" "$SCRIPT" --connect 2>"$WORK/stderr.log" || true
 
 check "TLS entry connects on the TLS port with --tls and no DH-HMAC-CHAP" <<'EOF'
 grep -Fq "connect -t tcp -a 192.0.2.20 -s 4421 -n nqn.2026-08.test:disk0 -q nqn.2026-08.test:host --hostid 11111111-2222-3333-4444-555555555555 --tls" "$MOCK_LOG" \

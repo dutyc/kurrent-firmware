@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **nine patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
+Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **ten patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
 
 | # | Patch | Scope |
 |---|---|---|
