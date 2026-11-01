@@ -29,9 +29,15 @@
 | `0009-nvmetcp-nbct-acpi-table.patch` | `src/drivers/block/nbct.c`（新）、`src/include/ipxe/nbct.h`（新）、`src/include/ipxe/errfile.h`、`src/include/ipxe/nvmetcp.h`、`src/net/tcp/nvmetcp.c` | NVMe 引导凭证表（NBCT）：sanboot 时按 iBFT 的 `acpi_model` 注册模式安装自定义 ACPI 表，每个已认证 NVMe/TCP 会话一条定长记录（传输地址、子系统 NQN、host NQN、DH-HMAC-CHAP 密钥，以及内核段 TLS 交接参数 `tls_trsvcid`/`tls_psk`）；initramfs 侧 `nbft-connect`（见 `../initramfs-nbft/`）消费该表，以 `--dhchap-secret`/`--hostnqn` 逐条重连，记录带 `tls_trsvcid` 时改为注入 PSK 并以 `--tls` 重连，避免二次网络获取凭证 |
 | `0010-tls13-psk.patch` | `src/net/tls.c`、`src/include/ipxe/tls.h`、`src/net/tls13.c`（新）、`src/include/ipxe/tls13.h`（新）、`src/net/tcp/nvmetcp.c`、`src/include/ipxe/errfile.h`、`src/tests/tls13_test.c`（新）、`src/tests/tls13_conn_test.c`（新）、`src/tests/tests.c` | 固件引导段的 TLS 1.3（RFC 8446）预共享密钥客户端，分两层。原语层：RFC 8446 第 7.1 节密钥调度（`tls13_expand_label`、`tls13_derive_secret`、`tls13_early_secret`、`tls13_handshake_secret`、`tls13_master_secret`、`tls13_traffic_key`）、Finished/binder 构造（`tls13_finished`、`tls13_binder`）、ClientHello 构造器（`tls13_client_hello`：psk_dhe_ke、单套件、pre_shared_key 置尾、binder 覆盖截断 ClientHello）、ServerHello 解析（`tls13_parse_server_hello`）、X25519 密钥交换（`tls13_generate_key`、`tls13_shared_secret`）、transcript 上下文（`struct tls13_handshake`）、RFC 8446 第 5.3 节记录保护（`tls13_nonce`、`tls13_seal`、`tls13_open`）与 TLS 1.3 版本/扩展/套件常量。连接层：`add_tls13_psk()`（`tls13.c`）作为字节流消费者与 socket 之间的过滤接口，驱动握手并保护其后每一条记录；`nvmetcp` 仅在 `nvmetcp_use_tls()` 判真时把会话接入该过滤层，即引导 URI 带 `tls_psk=` **且** 连接端口等于 `tls_trsvcid`（TLS 交接参数在每次可加密引导时都会下发，故由端口而非参数有无决定固件连接本身是否加密），并推导 `NVMe0R01 <hostnqn> <subsysnqn>` 形式的 PSK identity。RFC 8448 自测（`tls13_test`，第 3、4 节 + ClientHello 扩展块结构遍历）；连接层自测（`tls13_conn_test`）以 mock socket 与 mock 消费者驱动连接层，服务端由测试自身扮演 |
 
+上表为 **L1 补丁序列**，由 `build/build.sh` 与 `build/build-sb.sh` 共同应用。Secure Boot 构建额外应用第二个叠加补丁，普通 glob 不会匹配到它：
+
+| 补丁 | 修改文件 | 内容 |
+|---|---|---|
+| `secureboot/0001-no-tofu.patch` | `src/net/tofu.c` | 固定引导 CA 时 TOFU 必须关闭。`tofu_fingerprint_present()` 恒报告"存在"，使不受信任的证书链直接致命，而不是被接受并存储。仅由 `build/build-sb.sh` 应用；每个 L1 构建保持 0007 的行为逐字节不变 |
+
 > RTL8168 相关研究已于 2026-08 终止，补丁不含 8168 过滤或修复代码（见 `../docs/8168-research-log.md`）。
 >
-> 补丁集已于 2026-09-12 整理合并（原 12 个补丁重打包为补丁 0001-0009；仅修补前序补丁的已并入其源头补丁），并以干净基线重放验证：新序列最终树哈希与旧序列逐位一致（`2151e97b3d0b9029b03ae0f7a3dbfbe88930f206`）。补丁 0010（TLS 1.3 PSK）于 2026-10-06 后续追加；补丁 0003 于 2026-10-17 增加本地引导的 SNP 句柄排除。当前 10 补丁序列（干净基线 + `0001`-`0010`）重放树哈希为 `aeabad7beb6bd7d92657112cd9e88b042f23f6c8`。
+> 补丁集已于 2026-09-12 整理合并（原 12 个补丁重打包为补丁 0001-0009；仅修补前序补丁的已并入其源头补丁），并以干净基线重放验证：新序列最终树哈希与旧序列逐位一致（`2151e97b3d0b9029b03ae0f7a3dbfbe88930f206`）。补丁 0010（TLS 1.3 PSK）于 2026-10-06 后续追加；补丁 0003 于 2026-10-17 增加本地引导的 SNP 句柄排除。当前 10 补丁序列（干净基线 + `0001`-`0010`）重放树哈希为 `aeabad7beb6bd7d92657112cd9e88b042f23f6c8`；Secure Boot 叠加补丁位于 `secureboot/`，只由 `build/build-sb.sh` 应用，因此该树哈希仍描述每一个 L1 构建。
 
 ## 授权说明
 
@@ -42,6 +48,7 @@
 - `0006`/`0007`/`0008` 中的设备身份新文件（`efi_nvs.c`、`tofu.c`、`tofu.h`、`devicekey_cmd.c`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`，与上游 iPXE 双许可一致；
 - `0009` 中的 NBCT 新文件（`nbct.c`、`nbct.h`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( BSD2 )`（类内核许可，对齐上游 iPXE `ibft.c` 的 ACPI 表先例）；
 - `0010` 的 TLS 1.3 改动修改的是携带 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )` 的上游文件（`tls.c`、`tls.h`、`errfile.h`、`nvmetcp.c`、`tests.c`），两个新增文件（`tls13.c`、`tls13.h`）与新增自测（`tls13_test.c`）沿用同一上游双许可；
+- `secureboot/0001-no-tofu.patch` 修改本项目的 `tofu.c`（GPL2_OR_LATER_OR_UBDL），不引入第三方代码；
 - 本仓库整体遵循 GPL-2.0（见 `../LICENSE`），补丁头部均含 SPDX 声明。
 
 ## 升级上游基线流程

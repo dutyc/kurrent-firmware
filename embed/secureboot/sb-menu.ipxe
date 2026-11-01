@@ -1,0 +1,49 @@
+#!ipxe
+
+# Secure Boot menu (EMBED).  Only the NVMe-oF system boot and local recovery
+# actions are included: installers and external tool payloads are outside the
+# signed firmware boundary.
+
+isset ${menu-timeout} || set menu-timeout 0
+isset ${menu-default} || set menu-default boot-os
+
+:start
+menu kurrent secure boot for ${initiator-iqn}
+item --key b boot-os      Boot ${os} (NVMe-oF)
+item shell                Drop to iPXE shell
+item reboot               Reboot computer
+item --key x exit         Exit iPXE and continue firmware boot
+choose --timeout ${menu-timeout} --default ${menu-default} selected || goto cancel
+set menu-timeout 0
+goto ${selected}
+
+:cancel
+echo You cancelled the menu, dropping you to a shell
+shell
+set menu-timeout 0
+goto start
+
+:boot-os
+echo Booting ${os} via NVMe-oF for ${initiator-iqn}
+set netX/gateway ${storager-ip}
+isset ${nbft-tls-port} || goto failed
+isset ${nbft-tls-psk} || goto failed
+isset ${disk-nqn} || goto failed
+set nvme-sep ?
+set root-path nvme://${storager-ip}:${nbft-tls-port}/${disk-nqn}
+isset ${nbft-secret} && set root-path ${root-path}?secret=${nbft-secret} && set nvme-sep & ||
+set root-path ${root-path}${nvme-sep}tls_psk=${nbft-tls-psk}&tls_trsvcid=${nbft-tls-port}
+set keep-san 1
+sanboot ${root-path} || goto failed
+goto start
+
+:reboot
+reboot
+
+:exit
+exit
+
+:failed
+echo Booting failed, dropping to shell
+shell
+goto start

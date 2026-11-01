@@ -1,0 +1,23 @@
+#!ipxe
+
+# Secure Boot first stage (EMBED).
+#
+# The three static scripts are compiled into the signed snponly-sb.efi:
+#   auto.ipxe -> sb-boot.ipxe.cfg -> sb-menu.ipxe
+# Only device-specific data (/devices/report, /devices/challenge, /boot-vars)
+# is fetched at runtime, over HTTPS pinned to the boot CA.
+#
+# DHCP still supplies next-server (the controller address).  An attacker on
+# the same L2 may change it, but cannot present a certificate that chains to
+# the embedded boot CA, so the chain fails closed instead of falling back.
+
+dhcp || goto failed
+chain sb-boot.ipxe.cfg || goto failed
+chain sb-menu.ipxe || goto failed
+exit
+
+:failed
+echo
+echo *** Secure Boot network boot failed: dropping to iPXE shell ***
+echo
+shell
