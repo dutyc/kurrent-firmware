@@ -18,6 +18,12 @@ The build pipeline (`build.sh`) compiles the firmware into 7 UEFI form factors, 
 
 `dist/SHA256SUMS` lists the SHA-256 checksums of all artifacts; verify with `sha256sum -c SHA256SUMS` inside `dist/`.
 
+## Secure Boot profile
+
+`build-sb.sh` produces a separate signed set under `dist/secureboot/`
+(`snponly-sb.efi`, `manifest.json`, `SHA256SUMS`). It does not replace or
+modify the seven artifacts above. See [secureboot.md](secureboot.md).
+
 ## Choosing an Artifact
 
 - **PXE boot environments** (DHCP + boot server): `pxe-uefi/` for UEFI clients.

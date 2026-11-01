@@ -18,6 +18,10 @@
 
 `dist/SHA256SUMS` 为全部产物的 SHA-256 校验清单，在 `dist/` 目录内执行 `sha256sum -c SHA256SUMS` 验证。
 
+## Secure Boot 配置
+
+`build-sb.sh` 在 `dist/secureboot/` 下单独产出一组签名产物（`snponly-sb.efi`、`manifest.json`、`SHA256SUMS`），不替换也不修改上述 7 种产物。详见 [secureboot.md](secureboot.md)。
+
 ## 如何选用
 
 - **PXE 网络引导环境**（DHCP + 引导服务器）：UEFI 客户端用 `pxe-uefi/`。
