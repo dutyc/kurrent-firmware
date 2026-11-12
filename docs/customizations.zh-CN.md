@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
+本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十一个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
 
 | # | 补丁 | 内容 |
 |---|---|---|
@@ -11,11 +11,12 @@
 | 0003 | `0003-snponly-local-boot.patch` | snponly 本地引导支持 |
 | 0004 | `0004-device-info-collection.patch` | 设备信息采集：SMBIOS type 17 内存设置（`mem-total` / `mem-type` / `mem-speed`）+ PCI 设备表名经 `${net0/chip}` 暴露 |
 | 0005 | `0005-nvmeof-adaptation.patch` | NVMe-oF（NVMe over TCP）SAN 协议支持（含认证与状态机修复、`hostnqn` 设置覆盖） |
-| 0006 | `0006-efi-nvs-backend.patch` | EFI 变量 NVS 后端（`device-key` / `server-fingerprint` 重启保留；清空后的空块也落盘，即删除变量） |
+| 0006 | `0006-efi-nvs-backend.patch` | EFI 变量 NVS 后端（`server-fingerprint` 重启保留；清空后的空块也落盘，即删除变量） |
 | 0007 | `0007-tofu-fingerprint.patch` | TOFU 指纹链路（首次接触 TLS 放行、指纹存储） |
-| 0008 | `0008-devicekey-commands.patch` | 设备身份密钥命令（`keygen` / `pubkey` / `sign` / `nvclear`） |
+| 0008 | `0008-nvclear-command.patch` | `nvclear`：清空非易失存储里的 `server-fingerprint` 与 `trust` |
 | 0009 | `0009-nvmetcp-nbct-acpi-table.patch` | NVMe 引导凭证表（NBCT：DH-HMAC-CHAP 密钥 + host NQN 经 ACPI 表交接内核侧） |
 | 0010 | `0010-tls13-psk.patch` | TLS 1.3（RFC 8446）PSK 客户端：握手原语 + `add_tls13_psk()` 过滤连接 + `nvmetcp` 接线，含 RFC 8448 自测 |
+| 0011 | `0011-tpm-attestation.patch` | TPM 2.0 证明密钥（`akgen` / `akpub` / `quote`）与作为设备凭证的 PCR quote |
 
 ## 设计动机
 
@@ -104,12 +105,12 @@ RTL8126 5GbE：
 
 ### 6. EFI 变量 NVS 后端（`0006`）
 
-- **背景**：设备信任根体系需要在非易失存储中保存设备身份密钥与服务端证书指纹；iPXE 默认 NVS 后端（PCI option ROM、SMBIOS）在 EFI 引导路径上缺失或只读，需要基于 EFI NVRAM 变量的专用后端。
-- **修改**：`src/interface/efi/efi_nvs.c`、`src/core/nvo.c`、`src/config/config_efi.c`、`src/include/ipxe/dhcp.h`（`DHCP_EB_DEVICE_KEY` 0x5e、`DHCP_EB_SERVER_FINGERPRINT` 0x5f）、`src/include/ipxe/errfile.h`
+- **背景**：信任根体系需要在非易失存储中保存 TOFU 服务端证书指纹；iPXE 默认 NVS 后端（PCI option ROM、SMBIOS）在 EFI 引导路径上缺失或只读，需要基于 EFI NVRAM 变量的专用后端。
+- **修改**：`src/interface/efi/efi_nvs.c`、`src/core/nvo.c`、`src/config/config_efi.c`、`src/include/ipxe/dhcp.h`（`DHCP_EB_SERVER_FINGERPRINT` 0x5f）、`src/include/ipxe/errfile.h`
   - 新增 `efi_nvs.c` 设置后端：单个 EFI NVRAM 变量（项目命名空间 GUID）承载整个 options 块；store/load/delete 钩子接入 EFI 设置机制
-  - `device-key` 与 `server-fingerprint` 因此重启保留
+  - `server-fingerprint`（及镜像的 `trust` 锚）因此重启保留
   - `src/core/nvo.c`：`nvo_save()` 在 options 块长度归零时下发一次零长度写。`nvs_write()` 是 `while (len)` 循环，零长度时**一次设备写都不做**——于是"存一个空块"是空转：EFI 变量保留上一次的内容，被"删掉"的设置下次开机又回来了。EFI 后端把零长度写实现为删除变量。
-- **验证**：QEMU/OVMF 两轮测试——第 2 轮（保留 NVRAM）密钥仍存在且无需重新生成；`keygen` 拒绝覆盖。整块清空由 `test/run-qemu-nvclear.sh` 三轮验证（第 3 轮开机时三项设置均已不存在）；去掉 `nvo.c` 那段改动后第 3 轮会重新进入清理分支——最后被删的 `trust` 从陈旧变量里复活。
+- **验证**：QEMU/OVMF 多轮——首轮存入的 TOFU 指纹在保留变量存储的下一轮仍然存在。整块清空由 `test/run-qemu-nvclear.sh` 三轮验证（最后一轮开机时被清设置均已不存在）；去掉 `nvo.c` 那段改动后该轮会重新进入清理分支——最后被删的 `trust` 从陈旧变量里复活。该验收在软件设备密钥仍存在时完成；删掉该路径后脚本只覆盖剩下的两项设置。
 
 ### 7. TOFU 指纹链路（`0007`）
 
@@ -119,15 +120,12 @@ RTL8126 5GbE：
   - `tls_validator_done()`：校验失败时，若尚未存有指纹则接受握手并记录指纹（TOFU）；一旦存在指纹，后续任何失败均致命
 - **验证**：在 0006 基础上补丁双向应用通过。
 
-### 8. 设备身份密钥命令（`0008`）
+### 8. 非易失设置命令（`0008`）
 
-- **背景**：信任根体系要求设备侧完成 ECDSA P-256 密钥生成、公钥导出与签名——私钥永不出设备。
-- **修改**：`src/hci/commands/devicekey_cmd.c`、`src/config/general.h`（`DEVICEKEY_CMD`）、`src/config/config.c`（`REQUIRE_OBJECT ( devicekey_cmd )`）、`src/include/ipxe/dhcp.h`（`DHCP_EB_PUBKEY` 0x60、`DHCP_EB_SIG` 0x61）、`src/include/ipxe/errfile.h`
-  - `keygen`：DRBG（以 EFI RNG 熵源为种子）生成 32 字节 P-256 私钥并存入 `device-key`；拒绝覆盖已存在的密钥
-  - `pubkey`：经 P-256 曲线乘法推导未压缩点（`0x04‖X‖Y`，130 hex）
-  - `sign`：数据（参数拼接）SHA-256 摘要 → ECDSA P-256 → base64(DER) 签名，同时存入 `sig` 设置供脚本使用
-  - `nvclear`：一条命令把 `device-key`、`server-fingerprint`、`trust` 三项从非易失 options 块删除，逐项报告（`cleared` / `not present` / 错误）。删除时按 `nvo/<名>` 定位到该块：裸名只清内存副本，存储里的那份仍在。
-- **验证**：QEMU/OVMF 两轮——第 1 轮（清空 NVRAM）：keygen/pubkey/sign 全部成功；主机侧（OpenSSL/python）对打印的公钥与签名独立验签通过（PREHASHED 与 REHASH）；第 2 轮（保留 NVRAM）：keygen 拒绝覆盖，pubkey/sign 输出与第 1 轮完全一致（持久化验证）。`nvclear` 验收：`test/run-qemu-nvclear.sh`（三轮，第 3 轮开机时三项已全部不存在）。
+- **背景**：把设备恢复出厂状态需要清掉 TOFU 服务端指纹与 `trust` 锚；按裸名删除只会清掉内存副本，存储里的那份仍在。
+- **修改**：`src/hci/commands/nvclear_cmd.c`、`src/config/general.h`（`NVCLEAR_CMD`）、`src/config/config.c`（`REQUIRE_OBJECT ( nvclear_cmd )`）、`src/include/ipxe/errfile.h`
+  - `nvclear`：一条命令把 `server-fingerprint` 与 `trust` 从非易失 options 块删除，逐项报告（`cleared` / `not present` / 错误）。删除时按 `nvo/<名>` 定位到该块。
+- **验证**：`test/run-qemu-nvclear.sh`（三轮，最后一轮开机时被清设置均已不存在）。变异检查：去掉 `nvo.c` 的零长度写后该轮会重新进入清理分支——`trust` 从陈旧变量里复活（`diag/nvs-{dbg3,fix3}.serial`）。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`。
 
 ### 9. NVMe 引导凭证表（`0009`）
@@ -158,6 +156,19 @@ RTL8126 5GbE：
   - `nvmetcp`：`nvmetcp_use_tls()` 判真时（引导 URI 带 `tls_psk=`（十六进制解码）**且** 连接端口等于 `tls_trsvcid`）`nvmetcp_open_socket()` 把会话接入 `add_tls13_psk()`，并推导 `NVMe0R01 <hostnqn> <subsysnqn>` 形式的 PSK identity；否则明文路径不变——即带交接参数但仍指向明文端口的 URI 不会让固件连接加密
 - **验证**：`tls13_test` 自测（RFC 8448 第 3、4 节向量——密钥调度、PSK binder、ServerHello 解析、X25519 密钥交换、握手 transcript 上下文、Finished verify_data、记录加解密——外加 ClientHello 扩展块结构遍历与经变异测试的负例）；经 QEMU/OVMF 跑 `bin-x86_64-efi/tests.efi`，110 项断言全绿（Linux 的 `tests.linux` 二进制因 `0006` 引入的 EFI 耦合无法构建）。`tls13_conn_test` 在进程内以 mock socket + mock 消费者驱动连接层，服务端由测试自身扮演：ClientHello → ServerHello → 服务端 Finished → 客户端 Finished → 数据，并在握手态与建立态各验一次明文窗口契约（27 项断言；已变异验证：把窗口通知挪回"仅在发出记录时"、以及删掉 `SERVER_FINISHED → CLIENT_FINISHED` 阶段跃迁，分别令 2 项与 6 项变红）。线级验收：内嵌 `sanboot nvme://…:4421/<nqn>?tls_psk=…` 的 EFI 镜像对真实 `nvmet` TLS 目标完成握手（宿主日志 `Created nvm controller … , TLS.`），注册 SAN 设备并完成读盘，且 `:4421` 上每条客户端连接首字节均为 `0x16`（ClientHello）、明文 ICReq 计数为 0。
 - **授权**：修改的是携带 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )` 的上游文件；新增文件与新增自测沿用同一双许可。
+
+### 11. TPM 2.0 证明（`0011`）
+
+- **动机**：控制面以 TPM quote 识别设备，而不再依赖 NVRAM 里的软件私钥签名。固件可访问存储中的私钥可能被提取；带 `restricted` + `sign` 属性、在 TPM 内创建的证明密钥无法离开 TPM。
+- **改动**：`src/interface/efi/efi_tpm2.c`（新）、`src/include/ipxe/efi/efi_tpm2.h`（新）、`src/hci/commands/ak_cmd.c`（新）、`src/config/general.h`（仅 EFI 的 `AK_CMD`）、`src/config/config.c`、`src/include/ipxe/dhcp.h`（标签 0x60-0x65）、`src/include/ipxe/errfile.h`
+  - TPM 2.0 命令经 `EFI_TCG2_PROTOCOL.SubmitCommand()` 直接提交——这是 EFI 到 TPM 的标准通路；该协议不提供 Quote，故 `TPM2_Quote` 直接下发
+  - 证明密钥：owner 层级下 `TPM2_CreatePrimary`，属性 `fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | restricted | sign`，优先 ECC P-256、回退 RSA-2048；`TPM2_EvictControl` 持久化到 `0x81000001`
+  - 复用：`akgen` 先以 `TPM2_ReadPublic` 探测持久句柄，只有不存在时才创建——不存在覆盖已有 AK 的代码路径。轮换属于管理动作（注销登记并重新入池），不是固件操作
+  - `akgen`：创建或报告已存在的密钥；`akpub`：导出 `ak-public`（SubjectPublicKeyInfo DER）、`ak-name`（TPM2B_NAME：`000b` 后接公钥区的 SHA-256）、`ak-type`（`ecc_p256` / `rsa2048`）与 `sb`（EFI `SecureBoot` 变量，`1` / `0`）；`quote <nonce>`：一次 `TPM2_Quote` 覆盖 PCR 0/2/4/7、以 nonce 作 `qualifyingData`，导出 `quote`（原始 TPMS_ATTEST，无 TPM2B 长度前缀）与 `quote-sig`（ECDSA-SHA256 DER；RSA AK 则为 RSASSA-PKCS1-v1_5）
+  - 六项设置（DHCP 标签 0x60-0x65）仅存于本次开机的内存设置根，不落 EFI 变量 NVS 后端
+  - 无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，不产生其它行为，引导脚本因此可走无 TPM 分支；没有软件回退
+- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.md)。
+- **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`EFI_TCG2_PROTOCOL` 常量为 UEFI 规范标准值。
 
 > 补丁集已于 2026-09-12 整理：RTL8126 适配（原为修补 8125 补丁的独立补丁）并入 `0001`；NVMe/TCP 认证修复与 `hostnqn` 设置（原为独立追加补丁）并入 `0005`。12 补丁序列整合为 9 个；新序列在干净基线上重放，最终树与旧序列逐位一致。
 

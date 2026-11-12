@@ -12,13 +12,13 @@ boundary + TOFU) is unchanged; `build/build.sh` never applies anything from
 | Boot scripts | `auto.ipxe` over TFTP, then HTTPS | Three static scripts embedded in the signed binary |
 | Server identity | TOFU on first contact, leaf pin afterwards | Boot CA certificate and fingerprint baked into the firmware |
 | 443 management entry | Unchanged | Unchanged (the profile uses a separate boot HTTPS port) |
-| Device identity | `keygen` / `report` / `challenge` / `sign` | Same semantics, executed inside signed code |
+| Device identity | `akgen` / `akpub` / `report` / `challenge` / `quote` | Same TPM attestation flow, executed inside signed code |
 
 The static scripts are:
 
 ```
 auto.ipxe          dhcp -> chain sb-boot.ipxe.cfg -> chain sb-menu.ipxe
-sb-boot.ipxe.cfg   endpoint + device identity flow (report/challenge/sign/boot-vars)
+sb-boot.ipxe.cfg   endpoint + TPM attestation flow (report/challenge/quote/boot-vars)
 sb-menu.ipxe       NVMe-oF system boot, shell, reboot, exit
 ```
 
@@ -33,6 +33,7 @@ UEFI db: artifact signing certificate
   └─ snponly-sb.efi (sbsign)
        ├─ auto.ipxe + sb-boot.ipxe.cfg + sb-menu.ipxe
        ├─ embedded boot CA certificate + its SHA-256 fingerprint
+       ├─ TPM: attestation key (0x81000001) + PCR 0/2/4/7 quote
        └─ HTTPS to the boot endpoint
             ├─ /devices/report
             ├─ /devices/challenge
@@ -189,7 +190,7 @@ control.
 
 ## Out of scope
 
-- TPM measurement/sealing and remote attestation (L3).
+- TPM sealing and key release (the quote proves PCR state, it does not release secrets).
 - Anti-rollback, BMC compromise and denial of service.
 - Linux kernel/initramfs Secure Boot chains and third-party installers.
 - Distribution-signed OS loaders: the firmware will reject an unsigned

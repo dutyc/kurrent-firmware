@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **ten patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
+Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **eleven patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
 
 | # | Patch | Scope |
 |---|---|---|
@@ -11,11 +11,12 @@ Every customization in this repository, relative to the upstream iPXE baseline (
 | 0003 | `0003-snponly-local-boot.patch` | snponly local boot support |
 | 0004 | `0004-device-info-collection.patch` | Device info collection: SMBIOS type 17 memory settings (`mem-total` / `mem-type` / `mem-speed`) + PCI device-table name via `${net0/chip}` |
 | 0005 | `0005-nvmeof-adaptation.patch` | NVMe-oF (NVMe over TCP) SAN protocol support (incl. authentication/state-machine fixes and the `hostnqn` setting override) |
-| 0006 | `0006-efi-nvs-backend.patch` | EFI variable NVS backend (`device-key` / `server-fingerprint` persist across reboot; an emptied options block is persisted too, as a variable deletion) |
+| 0006 | `0006-efi-nvs-backend.patch` | EFI variable NVS backend (`server-fingerprint` persists across reboot; an emptied options block is persisted too, as a variable deletion) |
 | 0007 | `0007-tofu-fingerprint.patch` | TOFU fingerprint chain (first-contact TLS acceptance, fingerprint storage) |
-| 0008 | `0008-devicekey-commands.patch` | Device identity key commands (`keygen` / `pubkey` / `sign` / `nvclear`) |
+| 0008 | `0008-nvclear-command.patch` | `nvclear`: clears `server-fingerprint` and `trust` from non-volatile storage |
 | 0009 | `0009-nvmetcp-nbct-acpi-table.patch` | NVMe boot credentials table (NBCT ACPI handoff of DH-HMAC-CHAP secret + host NQN to the kernel side) |
 | 0010 | `0010-tls13-psk.patch` | TLS 1.3 (RFC 8446) PSK client: handshake primitives + `add_tls13_psk()` filter connection + `nvmetcp` wiring, with an RFC 8448 self-test |
+| 0011 | `0011-tpm-attestation.patch` | TPM 2.0 attestation key (`akgen` / `akpub` / `quote`) and PCR quote sent as the device proof |
 
 ## Design Rationale
 
@@ -104,12 +105,12 @@ RTL8126 5GbE:
 
 ### 6. EFI variable NVS backend (`0006`)
 
-- **Rationale**: the device trust-root scheme needs non-volatile storage for the device identity key and the server certificate fingerprint. iPXE's default NVS backends (PCI option ROM, SMBIOS) are absent or read-only in the EFI boot path, so a dedicated backend backed by an EFI NVRAM variable is required.
-- **Changes**: `src/interface/efi/efi_nvs.c`, `src/core/nvo.c`, `src/config/config_efi.c`, `src/include/ipxe/dhcp.h` (`DHCP_EB_DEVICE_KEY` 0x5e, `DHCP_EB_SERVER_FINGERPRINT` 0x5f), `src/include/ipxe/errfile.h`
+- **Rationale**: the trust-root scheme needs non-volatile storage for the TOFU server fingerprint. iPXE's default NVS backends (PCI option ROM, SMBIOS) are absent or read-only in the EFI boot path, so a dedicated backend backed by an EFI NVRAM variable is required.
+- **Changes**: `src/interface/efi/efi_nvs.c`, `src/core/nvo.c`, `src/config/config_efi.c`, `src/include/ipxe/dhcp.h` (`DHCP_EB_SERVER_FINGERPRINT` 0x5f), `src/include/ipxe/errfile.h`
   - New `efi_nvs.c` settings backend: one EFI NVRAM variable (project namespace GUID) holds the whole options block; store/load/delete hooks wired into the EFI settings machinery
-  - `device-key` and `server-fingerprint` therefore survive reboot
+  - `server-fingerprint` (and the mirrored `trust` anchor) therefore survive reboot
   - `src/core/nvo.c`: `nvo_save()` issues a zero-length write when the options block becomes empty. `nvs_write()` is a `while (len)` loop and performs no device write at all for a zero length, so saving an empty block used to be a silent no-op — the EFI variable kept its previous contents and the "deleted" settings reappeared on the next boot. The EFI backend implements a zero-length write as a variable deletion.
-- **Verification**: QEMU/OVMF two-round test — round 2 (kept NVRAM) shows the key still present without regeneration; `keygen` refuses to overwrite. Emptying the whole options block is verified across three rounds by `test/run-qemu-nvclear.sh` (round 3 boots with all three settings absent). Without the `nvo.c` change round 3 re-enters the clear branch, the last deleted setting (`trust`) having been resurrected from the stale variable.
+- **Verification**: QEMU/OVMF rounds — a TOFU pin stored on the first boot is still present on the next boot with the variable store kept. Emptying the whole options block is verified across three rounds by `test/run-qemu-nvclear.sh` (the last boot finds the cleared settings absent); without the `nvo.c` change that round re-enters the clear branch, the last deleted setting (`trust`) having been resurrected from the stale variable. The acceptance was carried out while the software device key still existed; the scripts now cover the two remaining settings.
 
 ### 7. TOFU fingerprint chain (`0007`)
 
@@ -119,15 +120,12 @@ RTL8126 5GbE:
   - `tls_validator_done()`: on validation failure, if no fingerprint is stored yet, accept the handshake and record the fingerprint (TOFU); once a fingerprint exists, any later failure is fatal
 - **Verification**: patch applies bidirectionally on the 0006-based tree.
 
-### 8. Device identity key commands (`0008`)
+### 8. Non-volatile settings command (`0008`)
 
-- **Rationale**: the trust-root scheme requires device-side ECDSA P-256 key generation, public-key export and signing — the private key must never leave the device.
-- **Changes**: `src/hci/commands/devicekey_cmd.c`, `src/config/general.h` (`DEVICEKEY_CMD`), `src/config/config.c` (`REQUIRE_OBJECT ( devicekey_cmd )`), `src/include/ipxe/dhcp.h` (`DHCP_EB_PUBKEY` 0x60, `DHCP_EB_SIG` 0x61), `src/include/ipxe/errfile.h`
-  - `keygen`: DRBG (seeded from the EFI RNG entropy source) generates a 32-byte P-256 private key, stored into `device-key`; refuses to overwrite an existing key
-  - `pubkey`: derives the uncompressed point (`0x04‖X‖Y`, 130 hex) via P-256 curve multiplication
-  - `sign`: SHA-256 digest of the data (arguments concatenated) → ECDSA P-256 → base64(DER) signature, also stored in the `sig` setting for scripts
-  - `nvclear`: deletes `device-key`, `server-fingerprint` and `trust` from the non-volatile options block in one command, reporting per item (`cleared` / `not present` / error). Settings are addressed as `nvo/<name>` inside the block: deleting a bare name would only drop the in-memory copy, leaving the stored one in place.
-- **Verification**: QEMU/OVMF two rounds — round 1 (clean NVRAM): keygen/pubkey/sign all succeed; host-side independent verification (OpenSSL/python) of the printed public key and signature passes (PREHASHED and REHASH); round 2 (kept NVRAM): keygen refuses to overwrite, pubkey/sign output identical to round 1 (persistence proven). `nvclear` acceptance: `test/run-qemu-nvclear.sh` (three rounds; the third boots with every setting already gone).
+- **Rationale**: returning a device to its factory state means clearing the TOFU server fingerprint as well as the `trust` anchor; addressing a bare setting name only removes the in-memory copy and leaves the stored one in place.
+- **Changes**: `src/hci/commands/nvclear_cmd.c`, `src/config/general.h` (`NVCLEAR_CMD`), `src/config/config.c` (`REQUIRE_OBJECT ( nvclear_cmd )`), `src/include/ipxe/errfile.h`
+  - `nvclear`: deletes `server-fingerprint` and `trust` from the non-volatile options block in one command, reporting per item (`cleared` / `not present` / error). Settings are addressed as `nvo/<name>` inside the block.
+- **Verification**: `test/run-qemu-nvclear.sh` (three rounds; the last boot finds every cleared setting gone). Mutation check: without the `nvo.c` zero-length write the last round re-enters the clear branch because `trust` is resurrected from the stale variable (`diag/nvs-{dbg3,fix3}.serial`).
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`.
 
 ### 9. NVMe boot credentials table (`0009`)
@@ -158,6 +156,19 @@ RTL8126 5GbE:
   - `nvmetcp`: `nvmetcp_open_socket()` routes the session through `add_tls13_psk()` when `nvmetcp_use_tls()` says so — the boot URI carries `tls_psk=` (hex-decoded) *and* the connection port equals `tls_trsvcid` — deriving the `NVMe0R01 <hostnqn> <subsysnqn>` PSK identity; the plaintext path is unchanged when it does not, so a URI that delivers the handoff parameters while still pointing at the plaintext port leaves the firmware connection plaintext
 - **Verification**: `tls13_test` self-test (RFC 8448 sections 3 and 4 vectors — key schedule, PSK binder, ServerHello parsing, X25519 key exchange, the handshake transcript context, Finished verify_data and record sealing/opening — plus a ClientHello extension-block walk and mutation-tested negative cases); 110 assertions via `bin-x86_64-efi/tests.efi` under QEMU/OVMF (the Linux `tests.linux` binary cannot be built because of the EFI coupling introduced by `0006`). `tls13_conn_test` drives the connection layer in-process against a mock socket and a mock consumer, with the test itself playing the server side of the handshake: ClientHello → ServerHello → server Finished → client Finished → data, plus the plaintext-window contract in both the handshake and the established state (27 assertions; mutation-verified by reverting the window notification into the transmit branch and by deleting the `SERVER_FINISHED → CLIENT_FINISHED` phase transition, which turn 2 and 6 assertions red respectively). Wire-level acceptance: an EFI image embedding `sanboot nvme://…:4421/<nqn>?tls_psk=…` completes the handshake against a real `nvmet` TLS target (host log `Created nvm controller … , TLS.`), registers the SAN device and reads it, with every `:4421` client connection starting on `0x16` (ClientHello) and zero plaintext ICReq.
 - **Licence**: modifies upstream files carrying `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`; the new files and the new self-tests follow the same dual licence.
+
+### 11. TPM 2.0 attestation (`0011`)
+
+- **Rationale**: the control plane identifies a device by a TPM quote, not by a signature from a software key held in NVRAM. A private key in firmware-accessible storage can be extracted; an attestation key created inside the TPM with the `restricted` + `sign` attributes cannot leave it.
+- **Changes**: `src/interface/efi/efi_tpm2.c` (new), `src/include/ipxe/efi/efi_tpm2.h` (new), `src/hci/commands/ak_cmd.c` (new), `src/config/general.h` (`AK_CMD`, EFI only), `src/config/config.c`, `src/include/ipxe/dhcp.h` (tags 0x60-0x65), `src/include/ipxe/errfile.h`
+  - raw TPM 2.0 commands are submitted through `EFI_TCG2_PROTOCOL.SubmitCommand()`, the standard EFI route to the TPM. The protocol exposes no Quote operation, so `TPM2_Quote` is issued directly
+  - attestation key: `TPM2_CreatePrimary` under the owner hierarchy with attributes `fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | restricted | sign`, ECC P-256 preferred and RSA-2048 as the fallback; `TPM2_EvictControl` makes it persistent at `0x81000001`
+  - reuse: `akgen` first probes the persistent handle (`TPM2_ReadPublic`) and only creates a key when none exists — no code path overwrites an existing AK. Rotation is an administrative action (delete the registration and re-pool the device), not a firmware operation
+  - `akgen`: creates or reports the existing key; `akpub`: exports `ak-public` (SubjectPublicKeyInfo DER), `ak-name` (TPM2B_NAME: `000b` followed by the SHA-256 of the public area), `ak-type` (`ecc_p256` / `rsa2048`) and `sb` (EFI `SecureBoot` variable, `1` / `0`); `quote <nonce>`: one `TPM2_Quote` over PCR 0/2/4/7 with the nonce as `qualifyingData`, exporting `quote` (raw TPMS_ATTEST, no TPM2B length prefix) and `quote-sig` (ECDSA-SHA256 DER, or RSASSA-PKCS1-v1_5 for an RSA AK)
+  - all six settings (DHCP tags 0x60-0x65) live in the in-memory settings root for the current boot only; nothing reaches the EFI variable NVS backend
+  - without a TPM the commands fail with `-ENODEV` / `-ENOENT` and nothing else, so a boot script can take its no-TPM path; there is no software fallback
+- **Verification**: QEMU/OVMF + swtpm (software TPM, not real hardware). The AK survives a cold reboot and a regenerated OVMF variable store with an identical `ak-name`; `test/verify-ak-quote.py` independently parses the TPMS_ATTEST and verifies the signature; the control plane's real `/devices/report` → `/devices/challenge` → `/boot-vars` flow records `device.attest ok`. Negative cases: a firmware change (different PCR 7) yields `pcr_mismatch`, replaying a nonce yields `nonce_invalid`, and a firmware without a TPM reports `no_tpm` without crashing. See [device-trust-usage.md](device-trust-usage.md) for the command and setting contract.
+- **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`; `EFI_TCG2_PROTOCOL` constants are the standard UEFI specification values.
 
 > Patch set consolidated on 2026-09-12: the RTL8126 adaptation (previously a separate patch amending the 8125 patch) merged into `0001`; the NVMe/TCP authentication fixes and the `hostnqn` setting (previously separate follow-up patches) merged into `0005`. The 12-patch sequence became 9 patches; replaying the new sequence against the clean baseline reproduces the old sequence's final tree bit-for-bit.
 
