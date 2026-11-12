@@ -8,8 +8,11 @@
 #
 # Usage: bash test/run-qemu-ak.sh <1|2> [--no-tpm]
 #
-#   --no-tpm   run without a TPM device: akgen/akpub/quote must fail
-#              without crashing and the script must still finish.
+#   --no-tpm       run without a TPM device: akgen/akpub/quote must fail
+#                  without crashing and the script must still finish.
+#   --clean-nvram  regenerate the OVMF variable store from OVMF_VARS
+#                  before booting (the swtpm state is kept), so that an
+#                  unchanged AK proves TPM NV persistence.
 #
 # Prerequisites:
 #   build the firmware with test/ak-test.ipxe embedded and deploy it:
@@ -35,16 +38,17 @@ OVMF_VARS=${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}
 SWTPM=${SWTPM:-swtpm}
 SWTPM_LIBDIR=${SWTPM_LIBDIR:-}
 ESP=$D/tmp
-ROUND= MODE=--tpm
+ROUND= MODE=--tpm CLEAN_NVRAM=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-    1|2) ROUND=$1; shift ;;
+    1|2|3) ROUND=$1; shift ;;
     --no-tpm) MODE=--no-tpm; shift ;;
-    *) echo "usage: $0 <1|2> [--no-tpm]" >&2; exit 1 ;;
+    --clean-nvram) CLEAN_NVRAM=1; shift ;;
+    *) echo "usage: $0 <1|2|3> [--no-tpm] [--clean-nvram]" >&2; exit 1 ;;
     esac
 done
-[ -n "$ROUND" ] || { echo "usage: $0 <1|2> [--no-tpm]" >&2; exit 1; }
+[ -n "$ROUND" ] || { echo "usage: $0 <1|2|3> [--no-tpm] [--clean-nvram]" >&2; exit 1; }
 
 if [ "$MODE" = --no-tpm ]; then
     LOG=$AKD/round$ROUND-notpm.log
@@ -61,6 +65,8 @@ mkdir -p "$AKD"
 # Round 1 always starts from clean TPM and NVRAM state
 if [ "$ROUND" = 1 ]; then
     rm -rf "$STATE"
+fi
+if [ "$ROUND" = 1 ] || [ "$CLEAN_NVRAM" = 1 ]; then
     rm -f "$VARS"
 fi
 if [ ! -e "$VARS" ]; then

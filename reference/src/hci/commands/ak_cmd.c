@@ -178,6 +178,7 @@ static void ak_error ( const char *command, int rc ) {
  * Idempotent: the key is created on first use and reused afterwards.
  */
 static int akgen_exec ( int argc, char **argv ) {
+	int created;
 	int rc;
 
 	( void ) argv;
@@ -189,11 +190,12 @@ static int akgen_exec ( int argc, char **argv ) {
 	}
 
 	/* Create (or reuse) the attestation key */
-	if ( ( rc = efi_tpm2_ak_create() ) != 0 ) {
+	if ( ( rc = efi_tpm2_ak_create ( &created ) ) != 0 ) {
 		printf ( "akgen: %s\n", strerror ( rc ) );
 		return rc;
 	}
-	printf ( "akgen: attestation key ready\n" );
+	printf ( "akgen: attestation key %s\n",
+		 ( created ? "created" : "already present" ) );
 
 	return 0;
 }

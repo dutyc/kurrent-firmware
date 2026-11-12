@@ -32,7 +32,7 @@ enum efi_tpm2_ak_type {
 /** Maximum signature length (RSA-2048) */
 #define EFI_TPM2_SIG_MAX 256
 
-extern int efi_tpm2_ak_create ( void );
+extern int efi_tpm2_ak_create ( int *created );
 extern int efi_tpm2_ak_public ( uint8_t *spki, size_t *spki_len,
 				uint8_t *name, size_t *name_len,
 				enum efi_tpm2_ak_type *type );

@@ -234,7 +234,13 @@ static void efi_tpm2_put_empty ( struct efi_tpm2_writer *w ) {
  */
 static void efi_tpm2_put_password ( struct efi_tpm2_writer *w ) {
 
-	efi_tpm2_put_u32 ( w, 1 );		/* Count */
+	/* The authorization area is prefixed with its own size, which
+	 * counts the session handle and its three variable fields.
+	 */
+	efi_tpm2_put_u32 ( w, ( 4 /* session handle */ +
+				2 /* nonceCaller */ +
+				1 /* sessionAttributes */ +
+				2 /* hmac */ ) );
 	efi_tpm2_put_u32 ( w, TPM_RS_PW );	/* Session handle */
 	efi_tpm2_put_empty ( w );		/* nonceCaller */
 	efi_tpm2_put_u8 ( w, 0 );		/* sessionAttributes */
@@ -350,18 +356,43 @@ static const void * efi_tpm2_get_2b ( struct efi_tpm2_reader *r, size_t *len ) {
 }
 
 /**
+ * Extract a 32-bit big-endian value from a response header
+ *
+ * @v data		Response buffer
+ * @v offset		Offset
+ * @ret value		Value
+ */
+static uint32_t efi_tpm2_header_u32 ( const uint8_t *data, size_t offset ) {
+
+	return ( ( data[offset] << 24 ) | ( data[offset + 1] << 16 ) |
+		 ( data[offset + 2] << 8 ) | data[offset + 3] );
+}
+
+/**
  * Submit a command to the TPM
  *
  * @v cmd		Command
+ * @v handles_len	Length of the handles in the response
  * @v response		Response buffer to fill in (caller must free)
  * @v params		Response parameters
  * @ret rc		Return status code
+ *
+ * The response header is always tag, responseSize and responseCode.
+ * For TPM_ST_SESSIONS responses the parameter area is described in one
+ * of two ways in the field: EDK2's TCG2 SubmitCommand() places a
+ * UINT32 parameterSize after the (leading) handles and before the
+ * parameters, whereas the TPM 2.0 specification puts the parameters
+ * straight after the handles and the authorization area at the end.
+ * A size field is only accepted if it fits within the response, so
+ * both layouts parse correctly.
  */
 static int efi_tpm2_submit ( const struct efi_tpm2_writer *cmd,
-			     uint8_t **response,
+			     size_t handles_len, uint8_t **response,
 			     struct efi_tpm2_reader *params ) {
-	uint32_t parameter_size;
+	uint32_t response_size;
 	uint32_t response_code;
+	uint32_t parameter_size;
+	size_t offset;
 	EFI_STATUS efirc;
 	uint8_t *data;
 	int rc;
@@ -389,16 +420,12 @@ static int efi_tpm2_submit ( const struct efi_tpm2_writer *cmd,
 	}
 
 	/* Parse response header */
-	parameter_size = ( ( data[2] << 24 ) | ( data[3] << 16 ) |
-			   ( data[4] << 8 ) | data[5] );
-	response_code = ( ( data[6] << 24 ) | ( data[7] << 16 ) |
-			  ( data[8] << 8 ) | data[9] );
+	response_size = efi_tpm2_header_u32 ( data, 2 );
+	response_code = efi_tpm2_header_u32 ( data, 6 );
 	if ( response_code != 0 ) {
 		DBGC ( efi_tpm2_protocol, "TPM2 command code %#08x failed: "
 		       "%#08x\n",
-		       ( ( cmd->data[6] << 24 ) | ( cmd->data[7] << 16 ) |
-			 ( cmd->data[8] << 8 ) | cmd->data[9] ),
-		       response_code );
+		       efi_tpm2_header_u32 ( cmd->data, 6 ), response_code );
 		free ( data );
 
 		/* A handle error means that the persistent object is
@@ -408,15 +435,35 @@ static int efi_tpm2_submit ( const struct efi_tpm2_writer *cmd,
 			return -ENOENT;
 		return -EIO;
 	}
-	if ( parameter_size > ( EFI_TPM2_RESPONSE_MAX - 10 ) ) {
-		DBGC ( efi_tpm2_protocol, "TPM2 bad parameter size %d\n",
-		       parameter_size );
+	if ( ( response_size < 10 ) ||
+	     ( response_size > EFI_TPM2_RESPONSE_MAX ) ) {
+		DBGC ( efi_tpm2_protocol, "TPM2 bad response size %d\n",
+		       response_size );
+		free ( data );
+		return -EIO;
+	}
+
+	/* Locate parameter area */
+	offset = ( 10 + handles_len );
+	if ( ( data[0] == ( TPM_ST_SESSIONS >> 8 ) ) &&
+	     ( data[1] == ( TPM_ST_SESSIONS & 0xff ) ) &&
+	     ( ( offset + 4 ) <= response_size ) ) {
+		parameter_size = efi_tpm2_header_u32 ( data, offset );
+		if ( ( parameter_size <= ( response_size - offset - 4 ) ) ) {
+			offset += 4;
+		} else {
+			parameter_size = ( response_size - offset );
+		}
+	} else {
+		parameter_size = ( response_size - offset );
+	}
+	if ( parameter_size > ( EFI_TPM2_RESPONSE_MAX - offset ) ) {
 		free ( data );
 		return -EIO;
 	}
 
 	/* Return response */
-	params->data = ( data + 10 );
+	params->data = ( data + offset );
 	params->len = parameter_size;
 	params->pos = 0;
 	params->rc = 0;
@@ -451,15 +498,15 @@ static void efi_tpm2_put_create_primary ( struct efi_tpm2_writer *w, int rsa ) {
 
 	/* inPublic */
 	if ( rsa ) {
-		efi_tpm2_put_u16 ( w, 20 );
+		efi_tpm2_put_u16 ( w, 22 );
 		efi_tpm2_put_u16 ( w, EFI_TPM2_ALG_RSA );
 		efi_tpm2_put_u16 ( w, TPM_ALG_SHA256 );
 		efi_tpm2_put_u32 ( w, EFI_TPM2_AK_ATTRIBUTES );
 		efi_tpm2_put_empty ( w );	/* authPolicy */
 		efi_tpm2_put_u16 ( w, TPM_ALG_NULL );	/* symmetric */
-		efi_tpm2_put_empty ( w );	/* scheme */
+		efi_tpm2_put_u16 ( w, TPM_ALG_NULL );	/* scheme */
 		efi_tpm2_put_u16 ( w, 2048 );	/* keyBits */
-		efi_tpm2_put_empty ( w );	/* exponent */
+		efi_tpm2_put_u32 ( w, 0 );	/* exponent (default) */
 		efi_tpm2_put_empty ( w );	/* unique */
 	} else {
 		efi_tpm2_put_u16 ( w, 24 );
@@ -471,7 +518,7 @@ static void efi_tpm2_put_create_primary ( struct efi_tpm2_writer *w, int rsa ) {
 		efi_tpm2_put_u16 ( w, TPM_ALG_ECDSA );	/* scheme */
 		efi_tpm2_put_u16 ( w, TPM_ALG_SHA256 );
 		efi_tpm2_put_u16 ( w, TPM_ECC_NIST_P256 );
-		efi_tpm2_put_empty ( w );	/* kdf */
+		efi_tpm2_put_u16 ( w, TPM_ALG_NULL );	/* kdf */
 		efi_tpm2_put_empty ( w );	/* unique.x */
 		efi_tpm2_put_empty ( w );	/* unique.y */
 	}
@@ -505,11 +552,11 @@ static int efi_tpm2_create_primary ( int rsa, uint32_t *handle ) {
 	efi_tpm2_put_trailer ( &w );
 
 	/* Submit command */
-	if ( ( rc = efi_tpm2_submit ( &w, &response, &params ) ) != 0 )
+	if ( ( rc = efi_tpm2_submit ( &w, 4, &response, &params ) ) != 0 )
 		return rc;
 
 	/* Parse response */
-	*handle = efi_tpm2_get_u32 ( &params );
+	*handle = efi_tpm2_header_u32 ( response, 10 );
 	rc = params.rc;
 	free ( response );
 
@@ -543,7 +590,7 @@ static int efi_tpm2_evict ( uint32_t handle ) {
 	efi_tpm2_put_trailer ( &w );
 
 	/* Submit command */
-	if ( ( rc = efi_tpm2_submit ( &w, &response, &params ) ) != 0 )
+	if ( ( rc = efi_tpm2_submit ( &w, 0, &response, &params ) ) != 0 )
 		return rc;
 
 	/* Discard response */
@@ -576,7 +623,7 @@ static void efi_tpm2_flush ( uint32_t handle ) {
 	efi_tpm2_put_trailer ( &w );
 
 	/* Submit command, discarding any error */
-	if ( ( rc = efi_tpm2_submit ( &w, &response, &params ) ) != 0 )
+	if ( ( rc = efi_tpm2_submit ( &w, 0, &response, &params ) ) != 0 )
 		return;
 	free ( response );
 }
@@ -616,7 +663,7 @@ static int efi_tpm2_read_public ( struct efi_tpm2_ak *ak,
 	efi_tpm2_put_trailer ( &w );
 
 	/* Submit command */
-	if ( ( rc = efi_tpm2_submit ( &w, response, params ) ) != 0 )
+	if ( ( rc = efi_tpm2_submit ( &w, 0, response, params ) ) != 0 )
 		return rc;
 
 	/* Parse outPublic */
@@ -645,7 +692,9 @@ static int efi_tpm2_read_public ( struct efi_tpm2_ak *ak,
 		if ( scheme != TPM_ALG_NULL )
 			efi_tpm2_get_u16 ( &public );
 		curve = efi_tpm2_get_u16 ( &public );
-		efi_tpm2_get_2b ( &public, &len );	/* kdf */
+		scheme = efi_tpm2_get_u16 ( &public );	/* kdf */
+		if ( scheme != TPM_ALG_NULL )
+			efi_tpm2_get_u16 ( &public );
 		x = efi_tpm2_get_2b ( &public, &xlen );
 		y = efi_tpm2_get_2b ( &public, &ylen );
 		if ( public.rc != 0 ) {
@@ -666,7 +715,7 @@ static int efi_tpm2_read_public ( struct efi_tpm2_ak *ak,
 		if ( scheme != TPM_ALG_NULL )
 			efi_tpm2_get_u16 ( &public );
 		efi_tpm2_get_u16 ( &public );	/* keyBits */
-		efi_tpm2_get_2b ( &public, &len );	/* exponent */
+		efi_tpm2_get_u32 ( &public );	/* exponent */
 		data = efi_tpm2_get_2b ( &public, &len );
 		if ( public.rc != 0 ) {
 			rc = public.rc;
@@ -706,12 +755,13 @@ static int efi_tpm2_read_public ( struct efi_tpm2_ak *ak,
 /**
  * Create the persistent attestation key
  *
+ * @v created		Set to 1 if a key was created, 0 if one existed
  * @ret rc		Return status code
  *
  * Idempotent: an existing attestation key is left untouched.  ECC
  * P-256 is preferred; RSA-2048 is used only if the TPM refuses ECC.
  */
-int efi_tpm2_ak_create ( void ) {
+int efi_tpm2_ak_create ( int *created ) {
 	struct efi_tpm2_ak ak;
 	struct efi_tpm2_reader params;
 	uint8_t *response;
@@ -719,6 +769,7 @@ int efi_tpm2_ak_create ( void ) {
 	int rc;
 
 	/* Leave an existing key untouched */
+	*created = 0;
 	rc = efi_tpm2_read_public ( &ak, &params, &response );
 	if ( rc == 0 ) {
 		free ( response );
@@ -748,6 +799,7 @@ int efi_tpm2_ak_create ( void ) {
 		       strerror ( rc ) );
 		return rc;
 	}
+	*created = 1;
 	DBGC ( efi_tpm2_protocol, "TPM2 attestation key created and "
 	       "persisted\n" );
 
@@ -916,6 +968,66 @@ static int efi_tpm2_put_der_signature ( uint8_t *out, size_t *out_len,
 
 
 /**
+ * Validate a quotation
+ *
+ * @v quote		TPMS_ATTEST
+ * @v len		Length of TPMS_ATTEST
+ * @ret rc		Return status code
+ *
+ * Confirms that the TPM quoted this platform's requested PCR bank and
+ * selection, rather than merely trusting that it did.
+ */
+static int efi_tpm2_validate_quote ( const void *quote, size_t len ) {
+	struct efi_tpm2_reader r;
+	const uint8_t *size;
+	const void *select;
+	const void *digest;
+	size_t select_size;
+	size_t digest_len;
+
+	/* Initialise reader */
+	r.data = quote;
+	r.len = len;
+	r.pos = 0;
+	r.rc = 0;
+
+	/* Check magic and attestation type */
+	if ( efi_tpm2_get_u32 ( &r ) != 0xff544347 )
+		return -EIO;
+	if ( efi_tpm2_get_u16 ( &r ) != 0x8018 )
+		return -EIO;
+
+	/* Skip qualifiedSigner, extraData, clockInfo and firmwareVersion */
+	efi_tpm2_get_2b ( &r, &digest_len );
+	efi_tpm2_get_2b ( &r, &digest_len );
+	efi_tpm2_get ( &r, 17 );
+	efi_tpm2_get ( &r, 8 );
+
+	/* Check PCR selection */
+	if ( efi_tpm2_get_u32 ( &r ) != 1 )
+		return -EIO;
+	if ( efi_tpm2_get_u16 ( &r ) != TPM_ALG_SHA256 )
+		return -EIO;
+	size = efi_tpm2_get ( &r, 1 );
+	if ( ! size )
+		return -EIO;
+	select_size = *size;
+	select = efi_tpm2_get ( &r, select_size );
+	if ( ! select )
+		return -EIO;
+	if ( ( select_size != sizeof ( efi_tpm2_pcr_select ) ) ||
+	     ( memcmp ( select, efi_tpm2_pcr_select, select_size ) != 0 ) )
+		return -EIO;
+
+	/* Check PCR digest */
+	digest = efi_tpm2_get_2b ( &r, &digest_len );
+	if ( ! digest || ( digest_len != 32 ) )
+		return -EIO;
+
+	return 0;
+}
+
+/**
  * Quote PCR 0, 2, 4 and 7 with the attestation key
  *
  * @v nonce		Qualifying data
@@ -979,7 +1091,7 @@ int efi_tpm2_quote ( const void *nonce, size_t nonce_len,
 	efi_tpm2_put_trailer ( &w );
 
 	/* Submit command */
-	if ( ( rc = efi_tpm2_submit ( &w, &response, &params ) ) != 0 )
+	if ( ( rc = efi_tpm2_submit ( &w, 0, &response, &params ) ) != 0 )
 		return rc;
 
 	/* Parse quotation */
@@ -997,6 +1109,10 @@ int efi_tpm2_quote ( const void *nonce, size_t nonce_len,
 	}
 	if ( attest_len > *quote_len ) {
 		rc = -ENOSPC;
+		goto done;
+	}
+	if ( ( rc = efi_tpm2_validate_quote ( attest, attest_len ) ) != 0 ) {
+		DBGC ( efi_tpm2_protocol, "TPM2 invalid quotation\n" );
 		goto done;
 	}
 	memcpy ( quote, attest, attest_len );
