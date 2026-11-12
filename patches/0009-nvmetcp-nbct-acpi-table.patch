@@ -10,6 +10,7 @@
 # (FILE_LICENCE ( GPL2_ONLY )) are licensed under GPL-2.0 only and may
 # not be redistributed under UBDL.
 
+
 diff --git a/src/drivers/block/nbct.c b/src/drivers/block/nbct.c
 new file mode 100644
 index 000000000..d235e1d7d
@@ -217,13 +218,13 @@ index 000000000..d235e1d7d
 +	.install = nbct_install,
 +};
 diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
-index b62a2a0ae..bb442a81d 100644
+index 6ce8bac85..56073561b 100644
 --- a/src/include/ipxe/errfile.h
 +++ b/src/include/ipxe/errfile.h
 @@ -461,6 +461,7 @@ FILE_SECBOOT ( PERMITTED );
  #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
  #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
- #define ERRFILE_devicekey_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
+ #define ERRFILE_nvclear_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
 +#define ERRFILE_nbct		      ( ERRFILE_OTHER | 0x00700000 )
  
  /** @} */
@@ -253,7 +254,7 @@ index 000000000..08a65b297
 +
 +#endif /* _IPXE_NBCT_H */
 diff --git a/src/include/ipxe/nvmetcp.h b/src/include/ipxe/nvmetcp.h
-index 8607fcd3c..a9c67c7ea 100644
+index 8b568d416..e7aa7bb9b 100644
 --- a/src/include/ipxe/nvmetcp.h
 +++ b/src/include/ipxe/nvmetcp.h
 @@ -34,6 +34,7 @@ FILE_LICENCE ( GPL2_ONLY );
@@ -264,7 +265,7 @@ index 8607fcd3c..a9c67c7ea 100644
  
  /** Default NVMe/TCP port */
  #define NVMETCP_DEFAULT_PORT 4420
-@@ -805,6 +806,8 @@ struct nvmetcp_session {
+@@ -809,6 +810,8 @@ struct nvmetcp_session {
  	char *host_nqn;
  	/** Authentication secret */
  	char *secret;
@@ -274,7 +275,7 @@ index 8607fcd3c..a9c67c7ea 100644
  	/* Protocol parameters (from ICResp) */
  	/** Protocol version format */
 diff --git a/src/net/tcp/nvmetcp.c b/src/net/tcp/nvmetcp.c
-index fa64bb2a6..7cc6c8bb2 100644
+index 505d3d4a9..61ccac0bb 100644
 --- a/src/net/tcp/nvmetcp.c
 +++ b/src/net/tcp/nvmetcp.c
 @@ -45,6 +45,7 @@ FILE_LICENCE ( GPL2_ONLY );
@@ -285,7 +286,7 @@ index fa64bb2a6..7cc6c8bb2 100644
  
  /** Default host NQN prefix (uuid suffix appended) */
  #define NVMETCP_DEFAULT_HOST_NQN "nqn.2014-08.org.ipxe:"
-@@ -1184,6 +1185,18 @@ nvmetcp_describe ( struct nvmetcp_session *nvmetcp ) {
+@@ -1186,6 +1187,18 @@ nvmetcp_describe ( struct nvmetcp_session *nvmetcp ) {
  	return efi_uri_path ( nvmetcp->uri );
  }
  
@@ -304,7 +305,7 @@ index fa64bb2a6..7cc6c8bb2 100644
  /** NVMe/TCP control interface operations */
  static struct interface_operation nvmetcp_control_operations[] = {
  	INTF_OP ( block_read_capacity, struct nvmetcp_session *,
-@@ -1191,6 +1204,8 @@ static struct interface_operation nvmetcp_control_operations[] = {
+@@ -1193,6 +1206,8 @@ static struct interface_operation nvmetcp_control_operations[] = {
  	INTF_OP ( block_read, struct nvmetcp_session *, nvmetcp_block_read ),
  	INTF_OP ( block_write, struct nvmetcp_session *, nvmetcp_block_write ),
  	INTF_OP ( intf_close, struct nvmetcp_session *, nvmetcp_close ),
@@ -313,7 +314,7 @@ index fa64bb2a6..7cc6c8bb2 100644
  	EFI_INTF_OP ( efi_describe, struct nvmetcp_session *, nvmetcp_describe ),
  };
  
-@@ -1396,6 +1411,7 @@ static int nvmetcp_open ( struct interface *parent, struct uri *uri ) {
+@@ -1447,6 +1462,7 @@ static int nvmetcp_open ( struct interface *parent, struct uri *uri ) {
  		    &nvmetcp->refcnt );
  	process_init_stopped ( &nvmetcp->process, &nvmetcp_process_desc,
  			       &nvmetcp->refcnt );

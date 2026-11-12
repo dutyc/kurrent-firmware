@@ -15,6 +15,7 @@
 # which would leave the previously stored (non-empty) block in place and
 # resurrect those options on the next load.
 
+
 diff --git a/src/config/config_efi.c b/src/config/config_efi.c
 index 1278bf5bb..f691d7210 100644
 --- a/src/config/config_efi.c
@@ -31,7 +32,6 @@ index 1278bf5bb..f691d7210 100644
 + */
 +
 +REQUIRE_OBJECT ( efi_nvs );
-
 diff --git a/src/core/nvo.c b/src/core/nvo.c
 index 8e500f816..1fb5e40d0 100644
 --- a/src/core/nvo.c
@@ -71,18 +71,14 @@ index 8e500f816..1fb5e40d0 100644
  	}
  
  	DBGC ( nvo, "NVO %p saved to non-volatile storage\n", nvo );
-
 diff --git a/src/include/ipxe/dhcp.h b/src/include/ipxe/dhcp.h
-index bdbe3b741..e1fea7cbd 100644
+index bdbe3b741..0afbf5df8 100644
 --- a/src/include/ipxe/dhcp.h
 +++ b/src/include/ipxe/dhcp.h
-@@ -425,6 +425,12 @@ struct dhcp_client_uuid {
+@@ -425,6 +425,9 @@ struct dhcp_client_uuid {
  /** Cross-signed certificate source */
  #define DHCP_EB_CROSS_CERT DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5d )
  
-+/** Device identity private key */
-+#define DHCP_EB_DEVICE_KEY DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5e )
-+
 +/** Trusted server certificate fingerprint */
 +#define DHCP_EB_SERVER_FINGERPRINT DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5f )
 +
@@ -103,10 +99,10 @@ index e177ca2b8..5b82b9891 100644
  
 diff --git a/src/interface/efi/efi_nvs.c b/src/interface/efi/efi_nvs.c
 new file mode 100644
-index 000000000..69780f602
+index 000000000..c5205eca2
 --- /dev/null
 +++ b/src/interface/efi/efi_nvs.c
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,224 @@
 +/*
 + * Copyright (C) 2026 kurrent-firmware project contributors.
 + *
@@ -140,8 +136,8 @@ index 000000000..69780f602
 + * A project-private EFI variable (NON_VOLATILE attribute) carries a
 + * single NVO block: one checksum byte followed by DHCP-encoded
 + * options.  The NVO layer provides checksum protection and the
-+ * settings plumbing for the project options (device-key and
-+ * server-fingerprint).
++ * settings plumbing for the project options (server-fingerprint and
++ * the TOFU trust anchor).
 + *
 + * EFI variables are naturally read and written as a whole block,
 + * which matches the NVS abstraction.  There are no block boundaries
@@ -178,15 +174,6 @@ index 000000000..69780f602
 +
 +/** Non-volatile options block */
 +static struct nvo_block efi_nvo;
-+
-+/** Device identity private key setting */
-+const struct setting device_key_setting __setting ( SETTING_CRYPTO,
-+						    device_key ) = {
-+	.name = "device-key",
-+	.description = "Device identity private key (ECDSA P-256)",
-+	.tag = DHCP_EB_DEVICE_KEY,
-+	.type = &setting_type_hexraw,
-+};
 +
 +/** Trusted server certificate fingerprint setting */
 +const struct setting server_fingerprint_setting __setting ( SETTING_CRYPTO,
