@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run one QEMU round of the EFI-variable NVS backend verification:
-#   round "setup":  embed script stores device-key / server-fingerprint
+#   round "setup":  embed script stores server-fingerprint / trust
 #   round "verify": embed script reads them back (persistence check)
 #
 # The two rounds MUST share the same diag/OVMF_VARS.fd.  Delete that

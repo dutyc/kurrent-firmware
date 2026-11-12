@@ -1,0 +1,23 @@
+#!ipxe
+# TPM attestation self-test: akgen -> akpub -> quote
+#
+# Round 1 (fresh swtpm state): akgen creates the attestation key inside
+#   the TPM, akpub exports it, quote signs a fixed nonce.
+# Round 2 (same swtpm state): akgen must find the key already present and
+#   leave it alone; ak-name must be identical to round 1.
+#
+# The nonce is a fixed 64-character hex string, matching the shape the
+# control plane issues; it is quoted verbatim into extraData.
+echo === AK-TEST-BEGIN ===
+akgen
+echo "AKGEN-RC=${?}"
+akpub
+echo "AKPUB-RC=${?}"
+echo "ak-type = ${ak-type}"
+echo "ak-name = ${ak-name}"
+echo "sb = ${sb}"
+quote 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+echo "QUOTE-RC=${?}"
+echo "quote-sig = ${quote-sig}"
+echo === AK-TEST-DONE ===
+exit

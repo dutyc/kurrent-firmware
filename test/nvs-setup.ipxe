@@ -1,9 +1,9 @@
 #!ipxe
-# NVS backend setup phase: store device-key and server-fingerprint
-# into the EFI variable (explicit nvo block), then display them.
-set nvo/device-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+# NVS backend setup phase: store the TOFU settings (server-fingerprint
+# and trust) into the EFI variable (explicit nvo block), then display them.
 set nvo/server-fingerprint aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899
-show nvo/device-key
+set nvo/trust 33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33:33
 show nvo/server-fingerprint
+show nvo/trust
 echo NVS-SETUP-DONE
 exit
