@@ -425,13 +425,26 @@ struct dhcp_client_uuid {
 /** Cross-signed certificate source */
 #define DHCP_EB_CROSS_CERT DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5d )
 
-/** Device identity private key */
-#define DHCP_EB_DEVICE_KEY DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5e )
-
 /** Trusted server certificate fingerprint */
 #define DHCP_EB_SERVER_FINGERPRINT DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x5f )
-#define DHCP_EB_PUBKEY DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x60 )
-#define DHCP_EB_SIG DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x61 )
+
+/** TPM attestation key public key (SPKI DER) */
+#define DHCP_EB_AK_PUBLIC DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x60 )
+
+/** TPM quote (TPMS_ATTEST) */
+#define DHCP_EB_QUOTE DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x61 )
+
+/** TPM quote signature */
+#define DHCP_EB_QUOTE_SIG DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x62 )
+
+/** TPM attestation key name (TPM2B_NAME) */
+#define DHCP_EB_AK_NAME DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x63 )
+
+/** TPM attestation key algorithm type */
+#define DHCP_EB_AK_TYPE DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x64 )
+
+/** Secure Boot state */
+#define DHCP_EB_SB DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x65 )
 
 /** Skip PXE DHCP protocol extensions such as ProxyDHCP
  *
