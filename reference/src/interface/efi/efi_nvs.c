@@ -31,8 +31,8 @@ FILE_SECBOOT ( PERMITTED );
  * A project-private EFI variable (NON_VOLATILE attribute) carries a
  * single NVO block: one checksum byte followed by DHCP-encoded
  * options.  The NVO layer provides checksum protection and the
- * settings plumbing for the project options (device-key and
- * server-fingerprint).
+ * settings plumbing for the project options (server-fingerprint and
+ * the TOFU trust anchor).
  *
  * EFI variables are naturally read and written as a whole block,
  * which matches the NVS abstraction.  There are no block boundaries
@@ -69,15 +69,6 @@ static struct nvs_device efi_nvs;
 
 /** Non-volatile options block */
 static struct nvo_block efi_nvo;
-
-/** Device identity private key setting */
-const struct setting device_key_setting __setting ( SETTING_CRYPTO,
-						    device_key ) = {
-	.name = "device-key",
-	.description = "Device identity private key (ECDSA P-256)",
-	.tag = DHCP_EB_DEVICE_KEY,
-	.type = &setting_type_hexraw,
-};
 
 /** Trusted server certificate fingerprint setting */
 const struct setting server_fingerprint_setting __setting ( SETTING_CRYPTO,

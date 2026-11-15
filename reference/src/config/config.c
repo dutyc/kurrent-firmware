@@ -218,6 +218,12 @@ REQUIRE_OBJECT ( autoboot_cmd );
 #ifdef NVO_CMD
 REQUIRE_OBJECT ( nvo_cmd );
 #endif
+#ifdef NVCLEAR_CMD
+REQUIRE_OBJECT ( nvclear_cmd );
+#endif
+#ifdef AK_CMD
+REQUIRE_OBJECT ( ak_cmd );
+#endif
 #ifdef CONFIG_CMD
 REQUIRE_OBJECT ( config_cmd );
 #endif
@@ -233,9 +239,6 @@ REQUIRE_OBJECT ( image_cmd );
 #endif
 #ifdef IMAGE_TRUST_CMD
 REQUIRE_OBJECT ( image_trust_cmd );
-#endif
-#ifdef DEVICEKEY_CMD
-REQUIRE_OBJECT ( devicekey_cmd );
 #endif
 #ifdef DHCP_CMD
 REQUIRE_OBJECT ( dhcp_cmd );

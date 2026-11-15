@@ -29,7 +29,8 @@ Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvm
 - **DH-HMAC-CHAP authentication** — one-way (SHA-256/384/512, DH groups up to ffdhe4096), DHHC-1 keys with CRC32; per-MAC `hostnqn` enables strict-mode targets (`allow_any_host=0`).
 - **Credential relay (NBCT)** — the firmware writes the per-session secret and host NQN; the initramfs seed module ([initramfs-nbft/](initramfs-nbft/)) reads the table and reconnects with `nvme connect --dhchap-secret` — no second network fetch of credentials.
 - **Golden image matrix** — SAN golden images for Debian 12/13, Ubuntu 24.04/26.04, Fedora 44, AlmaLinux 10.2 and openSUSE Leap 16.0 have all passed cold-boot acceptance: [golden-image-matrix.md](docs/golden-image-matrix.md).
-- **NIC & firmware customizations** — native RTL8125/RTL8126 drivers, SNP local-boot fallback, device identity keys and TOFU fingerprinting; ten patches in total: [customizations.md](docs/customizations.md), [network-support.md](docs/network-support.md).
+- **NIC & firmware customizations** — native RTL8125/RTL8126 drivers, SNP local-boot fallback, device identity keys and TOFU fingerprinting; ten L1 patches plus an optional Secure Boot overlay: [customizations.md](docs/customizations.md), [network-support.md](docs/network-support.md).
+- **Optional Secure Boot profile** — signed firmware with embedded boot scripts and a pinned boot CA, built separately from the default L1 firmware: [secureboot.md](docs/secureboot.md).
 
 ## Quick Start
 
@@ -47,6 +48,7 @@ Full documentation lives under [`docs/`](./docs/); frequently used entries:
 - [Build artifacts](docs/build-artifacts.md) — artifact list, form-factor selection and checksums
 - [Golden image matrix](docs/golden-image-matrix.md) — per-distro setup scripts, differences and acceptance status
 - [Capability reference for Kurrent](docs/capability-reference.md) — firmware capabilities and interface contracts, credential injection flow
+- [Secure Boot profile](docs/secureboot.md) — signed artifacts, embedded scripts, pinned boot CA and provisioning
 - [Patch set](patches/README.md) — licensing and upstream baseline upgrade workflow
 
 ## Platform Repository

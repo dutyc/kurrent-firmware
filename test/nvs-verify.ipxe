@@ -1,7 +1,7 @@
 #!ipxe
-# NVS backend verify phase: confirm that device-key and
-# server-fingerprint survived a reboot (same OVMF_VARS.fd).
-show nvo/device-key
+# NVS backend verify phase: confirm that server-fingerprint and trust
+# survived a reboot (same OVMF_VARS.fd).
 show nvo/server-fingerprint
+show nvo/trust
 echo NVS-VERIFY-DONE
 exit

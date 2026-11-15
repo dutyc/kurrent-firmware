@@ -1,0 +1,28 @@
+# kurrent-firmware Secure Boot overlay 0001: disable TOFU
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# Applied only by build/build-sb.sh; the normal patch series (patches/*.patch)
+# and therefore every L1 build are unaffected.
+#
+# A Secure Boot build embeds a fixed boot CA (TRUST=<ca.pem>).  Patch 0007
+# accepts and pins an otherwise-untrusted certificate on first contact when no
+# server-fingerprint setting exists.  That behaviour would defeat the fixed CA:
+# a wrong-CA handshake would be accepted and pinned.  In an SB build the
+# fingerprint check always reports "present", so TLS skips TOFU and enforces
+# validation against the embedded CA.
+
+diff --git a/src/net/tofu.c b/src/net/tofu.c
+--- a/src/net/tofu.c
++++ b/src/net/tofu.c
+@@ -75,7 +75,8 @@
+  * @ret present		Fingerprint is present
+  */
+ int tofu_fingerprint_present ( void ) {
+-	return setting_exists ( NULL, &server_fingerprint_setting );
++	/* Secure Boot build: the boot CA is pinned at compile time; never TOFU. */
++	return 1;
+ }
+ 
+ /**

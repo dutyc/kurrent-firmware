@@ -1,0 +1,182 @@
+# kurrent-firmware 0008: non-volatile settings commands
+#
+# Copyright (C) 2026 LECREATE <lecreate@foxmail.com>
+# SPDX-License-Identifier: GPL-2.0
+#
+# The nvclear command implementation (src/hci/commands/nvclear_cmd.c) is
+# original kurrent-firmware code carrying
+# FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL ).  Modifications to the iPXE
+# configuration and headers inherit the upstream licence
+# (GPL-2.0-or-later / UBDL).
+
+diff --git a/src/config/config.c b/src/config/config.c
+index 568508d89..03282a17f 100644
+--- a/src/config/config.c
++++ b/src/config/config.c
+@@ -218,6 +218,9 @@ REQUIRE_OBJECT ( autoboot_cmd );
+ #ifdef NVO_CMD
+ REQUIRE_OBJECT ( nvo_cmd );
+ #endif
++#ifdef NVCLEAR_CMD
++REQUIRE_OBJECT ( nvclear_cmd );
++#endif
+ #ifdef CONFIG_CMD
+ REQUIRE_OBJECT ( config_cmd );
+ #endif
+diff --git a/src/config/general.h b/src/config/general.h
+index d6be19920..1ed737d6c 100644
+--- a/src/config/general.h
++++ b/src/config/general.h
+@@ -112,6 +112,7 @@ FILE_SECBOOT ( PERMITTED );
+ //#define NEIGHBOUR_CMD		/* Neighbour management commands */
+ //#define NSLOOKUP_CMD		/* DNS resolving command */
+ #define NTP_CMD			/* NTP commands */
++#define NVCLEAR_CMD		/* Non-volatile settings commands */
+ #define NVO_CMD			/* Non-volatile option storage commands */
+ #define PARAM_CMD		/* Request parameter commands */
+ #define PCI_CMD			/* PCI commands */
+diff --git a/src/hci/commands/nvclear_cmd.c b/src/hci/commands/nvclear_cmd.c
+new file mode 100644
+index 000000000..d3f629bca
+--- /dev/null
++++ b/src/hci/commands/nvclear_cmd.c
+@@ -0,0 +1,127 @@
++/*
++ * Copyright (C) 2026 kurrent-firmware project contributors.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++ * 02110-1301, USA.
++ *
++ * You can also choose to distribute this program under the terms of
++ * the Unmodified Binary Distribution Licence (as given in the file
++ * COPYING.UBDL), provided that you have satisfied its requirements.
++ */
++
++FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
++FILE_SECBOOT ( PERMITTED );
++
++/** @file
++ *
++ * Non-volatile settings commands (nvclear)
++ *
++ * The "nvclear" command returns the device to its factory state by
++ * clearing the TOFU server fingerprint and trust anchor stored in
++ * non-volatile storage (the EFI variable NVS backend).
++ *
++ */
++
++#include <string.h>
++#include <stdio.h>
++#include <errno.h>
++#include <ipxe/command.h>
++#include <ipxe/settings.h>
++#include <ipxe/parseopt.h>
++#include <ipxe/nvo.h>
++
++/** Non-volatile settings cleared by "nvclear", in order */
++static const char *nvclear_settings[] = {
++	"server-fingerprint",
++	"trust",
++};
++
++/**
++ * The "nvclear" command
++ *
++ * @v argc		Argument count
++ * @v argv		Argument list
++ * @ret rc		Return status code
++ *
++ * Clears the settings stored in the non-volatile options block.  Each
++ * setting is addressed by name and deleted from the "nvo" settings
++ * block, so that the deletion reaches the underlying non-volatile
++ * storage: deleting a bare setting name would only remove it from the
++ * generic in-memory block, leaving the stored copy in place.
++ */
++static int nvclear_exec ( int argc, char **argv ) {
++	struct settings *settings;
++	struct named_setting setting;
++	char name[32];
++	unsigned int i;
++	int rcx;
++	int rc = 0;
++
++	( void ) argc;
++	( void ) argv;
++
++	/* Locate non-volatile options block */
++	settings = find_settings ( NVO_SETTINGS_NAME );
++	if ( ! settings ) {
++		printf ( "nvclear: no non-volatile settings\n" );
++		return -ENODEV;
++	}
++
++	/* Clear each setting */
++	for ( i = 0 ; i < ( sizeof ( nvclear_settings ) /
++			    sizeof ( nvclear_settings[0] ) ) ; i++ ) {
++
++		/* Parse setting name */
++		snprintf ( name, sizeof ( name ), "%s", nvclear_settings[i] );
++		if ( ( rcx = parse_setting_name ( name, NULL, &setting.settings,
++						  &setting.setting ) ) != 0 ) {
++			printf ( "nvclear: %s: %s\n", nvclear_settings[i],
++				 strerror ( rcx ) );
++			if ( ! rc )
++				rc = rcx;
++			continue;
++		}
++
++		/* Report absent settings, rather than claiming to clear them */
++		if ( ! setting_exists ( settings, &setting.setting ) ) {
++			printf ( "nvclear: %s: not present\n",
++				 nvclear_settings[i] );
++			continue;
++		}
++
++		/* Delete setting from non-volatile storage */
++		if ( ( rcx = delete_setting ( settings,
++					      &setting.setting ) ) != 0 ) {
++			printf ( "nvclear: %s: could not clear: %s\n",
++				 nvclear_settings[i], strerror ( rcx ) );
++			if ( ! rc )
++				rc = rcx;
++			continue;
++		}
++
++		printf ( "nvclear: %s: cleared\n", nvclear_settings[i] );
++	}
++
++	/* Report result */
++	if ( rc ) {
++		printf ( "nvclear: incomplete\n" );
++		return rc;
++	}
++	printf ( "nvclear: device NVRAM cleared\n" );
++
++	return 0;
++}
++
++COMMAND ( nvclear, nvclear_exec );
+diff --git a/src/include/ipxe/errfile.h b/src/include/ipxe/errfile.h
+index a2927a8fc..6ce8bac85 100644
+--- a/src/include/ipxe/errfile.h
++++ b/src/include/ipxe/errfile.h
+@@ -460,6 +460,7 @@ FILE_SECBOOT ( PERMITTED );
+ #define ERRFILE_cbc		      ( ERRFILE_OTHER | 0x006c0000 )
+ #define ERRFILE_efi_nvs		      ( ERRFILE_OTHER | 0x006d0000 )
+ #define ERRFILE_tofu		      ( ERRFILE_OTHER | 0x006e0000 )
++#define ERRFILE_nvclear_cmd	      ( ERRFILE_OTHER | 0x006f0000 )
+ 
+ /** @} */
+ 

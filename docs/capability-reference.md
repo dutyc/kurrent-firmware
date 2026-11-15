@@ -311,7 +311,7 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 
 ### 5.3 构建与部署
 
-- 补丁链 `0001-0010`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
+- 补丁链 `0001-0011`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
 - 产物形态：仅 UEFI，共 7 个文件——`pxe-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`、`snponly-debug.efi`；`direct-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`（均内置 `auto.ipxe`）
 - 调试构建：`DEBUG=nvmetcp,nvmetcp_auth:3`（认证日志）、`DEBUG=realtek:3`（网卡）
 - `embed/auto.ipxe` 是配置资产（非源码补丁），修改无需重新生成补丁
@@ -342,7 +342,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 - [ ] 引导链脚本（boot.ipxe 链）在 `sanboot` 前先 `chain` `/boot-vars` 拉取变量，`sanboot` 使用 `${nbft-secret}`
 - [ ] 密钥库与 `nvmet-setup.sh` 的 `DHHCP_KEY` 一致；格式 `DHHC-1:XX:`（两位类型）+ CRC32 终值小端；复用自检逻辑
 - [ ] 服务端 `hosts/<HostNQN>/` 与客户端实际 NQN 匹配（SMBIOS UUID 或回退 NQN）
-- [ ] 固件包含完整补丁链 0001-0010（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
+- [ ] 固件包含完整补丁链 0001-0011（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
 - [ ] 认证链路验证：QEMU 轮次 + pcap 证据链（第 6 章）
 - [ ] 内核 NBFT 路径（initramfs-nbft）的认证密钥注入按 4.8 缺口规划
 
@@ -353,7 +353,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | [nvmeof-usage.md](nvmeof-usage.md) | 使用指南（服务端配置、sanboot 用法、QEMU 验证） |
 | [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | test/ 脚本完整测试流程 |
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现 |
-| [device-trust-usage.md](device-trust-usage.md) | 设备信任根能力使用说明（0006-0008：keygen/pubkey/sign/nvclear、TOFU、NVRAM 设置） |
+| [device-trust-usage.md](device-trust-usage.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
 | [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
 | [nvmeof-research.md](nvmeof-research.md) | 协议研究与设计 |
 | [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |

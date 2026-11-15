@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-label="Kurrent 里程碑：NVMe/TCP 全链路零明文">
+  <title>Kurrent 里程碑 —— NVMe/TCP 全链路零明文（2026 国庆）</title>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#0f0f0f" stroke-width="1" opacity="0.045"/>
+    </pattern>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#14161a"/>
+    </marker>
+    <style>
+      .paper { fill:#f6f5f1; }
+      .ink   { fill:#14161a; }
+      .mut   { fill:#6b6f76; }
+      .ln    { stroke:#14161a; fill:none; }
+      .lnm   { stroke:#b9b7b0; fill:none; }
+      text   { font-family: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="paper" x="0" y="0" width="1600" height="1000"/>
+  <rect x="0" y="0" width="1600" height="1000" fill="url(#grid)"/>
+  <rect class="ln" x="24" y="24" width="1552" height="952" stroke-width="3"/>
+  <rect class="lnm" x="40" y="40" width="1520" height="920" stroke-width="1"/>
+
+  <!-- ===== header ===== -->
+  <text class="mut" x="64" y="92" font-size="19" letter-spacing="3.5">KURRENT · FIRMWARE + CONTROL PLANE</text>
+  <text class="ink" x="1536" y="92" font-size="19" letter-spacing="2.5" text-anchor="end">2026-10-01 → 10-06 · 国庆</text>
+  <path class="ln" d="M 64 112 L 1536 112" stroke-width="2.5"/>
+
+  <!-- ===== headline ===== -->
+  <text class="ink" x="64" y="286" font-size="154" font-weight="800" letter-spacing="10">零明文</text>
+  <text class="mut" x="70" y="356" font-size="40" letter-spacing="20">ZERO PLAINTEXT</text>
+  <text class="ink" x="70" y="410" font-size="22" letter-spacing="0.5">NVMe/TCP over TLS 1.3 · 单口 4421 · 缺前置即拒绝引导 · 无明文回退</text>
+
+  <!-- ===== stamp ===== -->
+  <g transform="rotate(-11 1290 250)">
+    <rect class="ln" x="1104" y="176" width="372" height="150" rx="8" stroke-width="6"/>
+    <rect class="lnm" x="1117" y="189" width="346" height="124" rx="4" stroke-width="2.5"/>
+    <text class="ink" x="1290" y="240" font-size="34" font-weight="700" letter-spacing="5" text-anchor="middle">NO PLAINTEXT</text>
+    <text class="ink" x="1290" y="278" font-size="34" font-weight="700" letter-spacing="5" text-anchor="middle">FALLBACK</text>
+    <text class="mut" x="1290" y="303" font-size="18" letter-spacing="1" text-anchor="middle">无明文回退</text>
+  </g>
+
+  <!-- ===== sealed data plane conduit ===== -->
+  <text class="mut" x="64" y="466" font-size="18" letter-spacing="3">SEALED DATA PLANE / 加密数据面</text>
+  <rect class="ln" x="64" y="486" width="1472" height="188" rx="26" stroke-width="4"/>
+
+  <!-- seal + padlock on the seam -->
+  <circle class="paper" cx="152" cy="580" r="44"/>
+  <circle class="ln" cx="152" cy="580" r="44" stroke-width="4"/>
+  <path class="ln" d="M 140 570 v -10 a 12 12 0 0 1 24 0 v 10" stroke-width="5"/>
+  <rect class="ink" x="134" y="570" width="36" height="30" rx="4"/>
+  <circle class="paper" cx="152" cy="585" r="3.5"/>
+
+  <!-- nodes -->
+  <g>
+    <rect class="ln" x="210" y="520" width="270" height="120" rx="10" stroke-width="3"/>
+    <text class="mut" x="230" y="556" font-size="17" letter-spacing="3">01</text>
+    <text class="ink" x="230" y="597" font-size="32" font-weight="700">UEFI</text>
+    <text class="mut" x="230" y="623" font-size="16">固件启动</text>
+
+    <rect class="ln" x="540" y="520" width="270" height="120" rx="10" stroke-width="3"/>
+    <text class="mut" x="560" y="556" font-size="17" letter-spacing="3">02</text>
+    <text class="ink" x="560" y="597" font-size="32" font-weight="700">IPXE</text>
+    <text class="mut" x="560" y="623" font-size="16">nvmetcp · TLS 1.3 PSK</text>
+
+    <rect class="ln" x="870" y="520" width="270" height="120" rx="10" stroke-width="3"/>
+    <text class="mut" x="890" y="556" font-size="17" letter-spacing="3">03</text>
+    <text class="ink" x="890" y="597" font-size="32" font-weight="700">KERNEL</text>
+    <text class="mut" x="890" y="623" font-size="16">nvme connect --tls</text>
+
+    <rect class="ln" x="1200" y="520" width="270" height="120" rx="10" stroke-width="3"/>
+    <text class="mut" x="1220" y="556" font-size="17" letter-spacing="3">04</text>
+    <text class="ink" x="1220" y="597" font-size="32" font-weight="700">ROOTFS</text>
+    <text class="mut" x="1220" y="623" font-size="16">根文件系统</text>
+  </g>
+
+  <!-- flow arrows -->
+  <path class="ln" d="M 486 580 L 532 580" stroke-width="3" marker-end="url(#arw)"/>
+  <path class="ln" d="M 816 580 L 862 580" stroke-width="3" marker-end="url(#arw)"/>
+  <path class="ln" d="M 1146 580 L 1192 580" stroke-width="3" marker-end="url(#arw)"/>
+
+  <!-- ===== evidence strip ===== -->
+  <text class="mut" x="64" y="726" font-size="18" letter-spacing="3">EVIDENCE</text>
+
+  <g>
+    <rect class="ln" x="64" y="746" width="335" height="146" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="88" y="784" font-size="16" letter-spacing="2.5">补丁重放</text>
+    <text class="ink" x="88" y="838" font-size="38" font-weight="700">68ffe8da</text>
+    <text class="mut" x="88" y="868" font-size="15">10 补丁（0001–0010）树哈希</text>
+
+    <rect class="ln" x="419" y="746" width="335" height="146" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="443" y="784" font-size="16" letter-spacing="2.5">固件自测</text>
+    <text class="ink" x="443" y="838" font-size="38" font-weight="700">11762</text>
+    <text class="mut" x="443" y="868" font-size="15">tests.efi all passed</text>
+
+    <rect class="ln" x="774" y="746" width="335" height="146" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="798" y="784" font-size="16" letter-spacing="2.5">线级证据</text>
+    <text class="ink" x="798" y="838" font-size="38" font-weight="700">0x16</text>
+    <text class="mut" x="798" y="868" font-size="15">:4421 首字节全 TLS 记录</text>
+
+    <rect class="ln" x="1129" y="746" width="335" height="146" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="1153" y="784" font-size="16" letter-spacing="2.5">控制面 / WebUI</text>
+    <text class="ink" x="1153" y="838" font-size="38" font-weight="700">371 · 19</text>
+    <text class="mut" x="1153" y="868" font-size="15">pytest · npm test</text>
+  </g>
+
+  <!-- ===== footer ===== -->
+  <path class="ln" d="M 64 918 L 1536 918" stroke-width="2"/>
+  <text class="ink" x="64" y="950" font-size="18" letter-spacing="1.5">KURRENT — 2026 国庆里程碑</text>
+  <text class="mut" x="1536" y="950" font-size="18" letter-spacing="1.5" text-anchor="end">kurrent-firmware · main@d3fbd19 + 未提交</text>
+</svg>

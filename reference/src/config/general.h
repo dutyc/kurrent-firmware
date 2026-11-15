@@ -93,7 +93,6 @@ FILE_SECBOOT ( PERMITTED );
 #define CONFIG_CMD		/* Option configuration console */
 #define CONSOLE_CMD		/* Console command */
 #define DIGEST_CMD		/* Image crypto digest commands */
-#define DEVICEKEY_CMD	/* Device identity key commands */
 #define DHCP_CMD		/* DHCP management commands */
 #define FCMGMT_CMD		/* Fibre Channel management commands */
 #define FORM_CMD		/* Form commands */
@@ -113,6 +112,7 @@ FILE_SECBOOT ( PERMITTED );
 //#define NEIGHBOUR_CMD		/* Neighbour management commands */
 //#define NSLOOKUP_CMD		/* DNS resolving command */
 #define NTP_CMD			/* NTP commands */
+#define NVCLEAR_CMD		/* Non-volatile settings commands */
 #define NVO_CMD			/* Non-volatile option storage commands */
 #define PARAM_CMD		/* Request parameter commands */
 #define PCI_CMD			/* PCI commands */
@@ -142,6 +142,11 @@ FILE_SECBOOT ( PERMITTED );
 /* Commands supported only on x86 CPUs */
 #if defined ( __i386__ ) || defined ( __x86_64__ )
   #define CPUID_CMD		/* x86 CPU feature detection command */
+#endif
+
+/* Commands supported only on EFI platforms */
+#if defined ( PLATFORM_efi )
+  #define AK_CMD		/* TPM attestation key commands */
 #endif
 
 /* Disable commands not historically included in BIOS builds */

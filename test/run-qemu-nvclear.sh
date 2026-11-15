@@ -2,9 +2,9 @@
 # nvclear acceptance: three QEMU/OVMF rounds on one OVMF_VARS.fd, with
 # test/nvs-clear.ipxe embedded in the firmware.
 #
-#   round 1: store device-key / server-fingerprint / trust, read back
+#   round 1: store server-fingerprint / trust, read back
 #   round 2: read back (round 1 persisted) -> nvclear -> read back (empty)
-#   round 3: boots with none of the three present -> the clear reached
+#   round 3: boots with none of the two present -> the clear reached
 #            storage; a surviving setting would re-enter the clear branch
 #
 # Verdict: round 3 must show [PHASE1 SET] and must not show [PHASE2 BEFORE].
