@@ -17,6 +17,7 @@
 # Optional:
 #   BOOT_HTTPS_PORT=4443                   (default; 1-65535)
 #   CONTROLLER_IP=192.0.2.10               (IPv4 only; default: DHCP next-server)
+#   KURRENT_SB_TARGET=snponly              (snponly or ipxe; selects the UEFI build target)
 #   KURRENT_SB_SRC_DIR, KURRENT_SB_OUT_DIR, UPSTREAM_URL, UPSTREAM_COMMIT, JOBS
 #   KURRENT_SB_ALLOW_CUSTOM_OUT=1          (required to rm -rf OUT_DIR outside dist/)
 #
@@ -27,9 +28,11 @@
 #   SB_MS_UEFI_CA_CERT=build/certs/MicrosoftUEFI-CA-2011.pem
 #   SB_OWNER_GUID=a0baa8a3-041d-48a8-bc87-c36d121b5e3d
 #
-# Output: dist/secureboot/snponly-sb.efi,
-#         dist/secureboot/{pxe-uefi,direct-uefi}/snponly-sb.efi,
+# Output: <OUT_DIR>/<target>-sb.efi,
+#         <OUT_DIR>/{pxe-uefi,direct-uefi}/<target>-sb.efi,
 #         manifest.json, SHA256SUMS.
+#   Default target snponly produces dist/secureboot/snponly-sb.efi;
+#   KURRENT_SB_TARGET=ipxe produces the all-drivers first-hop variant.
 
 set -euo pipefail
 
@@ -41,6 +44,7 @@ OUT_DIR="${KURRENT_SB_OUT_DIR:-${FERRY_ROOT}/dist/secureboot}"
 JOBS="${JOBS:-$(nproc)}"
 BOOT_HTTPS_PORT="${BOOT_HTTPS_PORT:-4443}"
 CONTROLLER_IP="${CONTROLLER_IP:-}"
+SB_TARGET="${KURRENT_SB_TARGET:-snponly}"
 SB_MS_UEFI_CA_CERT="${SB_MS_UEFI_CA_CERT:-${FERRY_ROOT}/build/certs/MicrosoftUEFI-CA-2011.pem}"
 SB_OWNER_GUID="${SB_OWNER_GUID:-a0baa8a3-041d-48a8-bc87-c36d121b5e3d}"
 
@@ -55,6 +59,11 @@ command -v sbverify >/dev/null || die "缺少 sbverify（sbsigntool）"
 command -v openssl >/dev/null || die "缺少 openssl"
 command -v python3 >/dev/null || die "缺少 python3"
 command -v realpath >/dev/null || die "缺少 realpath（coreutils）"
+
+case "$SB_TARGET" in
+  snponly|ipxe) ;;
+  *) die "KURRENT_SB_TARGET must be snponly or ipxe" ;;
+esac
 
 [[ -n "${SB_KEY:-}" && -f "${SB_KEY}" ]] || die "SB_KEY missing or not a file"
 [[ -n "${SB_CERT:-}" && -f "${SB_CERT}" ]] || die "SB_CERT missing or not a file"
@@ -175,7 +184,7 @@ render_sbenroll() {
 }
 
 build_and_sign() {
-  local target="bin-x86_64-efi/snponly.efi"
+  local target="bin-x86_64-efi/${SB_TARGET}.efi"
   local embed="embed/secureboot/auto.ipxe,embed/secureboot/sb-boot.ipxe.cfg,embed/secureboot/sb-menu.ipxe"
   log "构建 $target（EMBED 多脚本 + TRUST/CERT=boot CA）"
   rm -f "$SRC_DIR/src/$target"
@@ -187,29 +196,29 @@ build_and_sign() {
   rm -rf "$OUT_DIR"
   mkdir -p "$OUT_DIR/pxe-uefi" "$OUT_DIR/direct-uefi"
   local unsigned="$SRC_DIR/src/$target"
-  local signed="$OUT_DIR/snponly-sb.efi"
+  local signed="$OUT_DIR/${SB_TARGET}-sb.efi"
   sbsign --key "$SB_KEY" --cert "$SB_CERT" --output "$signed" "$unsigned"
   sbverify --cert "$SB_CERT" "$signed"
-  cp "$signed" "$OUT_DIR/pxe-uefi/snponly-sb.efi"
-  cp "$signed" "$OUT_DIR/direct-uefi/snponly-sb.efi"
+  cp "$signed" "$OUT_DIR/pxe-uefi/${SB_TARGET}-sb.efi"
+  cp "$signed" "$OUT_DIR/direct-uefi/${SB_TARGET}-sb.efi"
 }
 
 write_manifest() {
   local signer ca_fp artifact_sha size
   signer="$(openssl x509 -in "$SB_CERT" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
   ca_fp="$(openssl x509 -in "$BOOT_CA_CERT" -noout -fingerprint -sha256 | sed 's/^.*=//' | tr -d ':')"
-  artifact_sha="$(sha256sum "$OUT_DIR/snponly-sb.efi" | awk '{print $1}')"
-  size="$(stat -c '%s' "$OUT_DIR/snponly-sb.efi")"
+  artifact_sha="$(sha256sum "$OUT_DIR/${SB_TARGET}-sb.efi" | awk '{print $1}')"
+  size="$(stat -c '%s' "$OUT_DIR/${SB_TARGET}-sb.efi")"
   python3 - "$OUT_DIR" "$UPSTREAM_COMMIT" "$BOOT_HTTPS_PORT" "$CONTROLLER_DESC" \
-    "$signer" "$ca_fp" "$artifact_sha" "$size" <<'PY'
+    "$signer" "$ca_fp" "$artifact_sha" "$size" "${SB_TARGET}-sb.efi" <<'PY'
 import datetime, json, os, sys
-(out, upstream, port, controller, signer, ca_fp, artifact_sha, size) = sys.argv[1:]
+(out, upstream, port, controller, signer, ca_fp, artifact_sha, size, artifact) = sys.argv[1:]
 doc = {
     "profile": "secureboot",
     "upstream_commit": upstream,
     "boot_https_port": int(port),
     "controller": controller,
-    "artifact": "snponly-sb.efi",
+    "artifact": artifact,
     "artifact_sha256": artifact_sha,
     "artifact_size": int(size),
     "signer": signer,
