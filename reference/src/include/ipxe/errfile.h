@@ -466,6 +466,7 @@ FILE_SECBOOT ( PERMITTED );
 #define ERRFILE_tls13_test	      ( ERRFILE_OTHER | 0x00720000 )
 #define ERRFILE_efi_tpm2	      ( ERRFILE_OTHER | 0x00730000 )
 #define ERRFILE_ak_cmd		      ( ERRFILE_OTHER | 0x00740000 )
+#define ERRFILE_sbenroll_cmd	      ( ERRFILE_OTHER | 0x00750000 )
 
 /** @} */
 

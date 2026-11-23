@@ -20,6 +20,13 @@
 #   KURRENT_SB_SRC_DIR, KURRENT_SB_OUT_DIR, UPSTREAM_URL, UPSTREAM_COMMIT, JOBS
 #   KURRENT_SB_ALLOW_CUSTOM_OUT=1          (required to rm -rf OUT_DIR outside dist/)
 #
+# Optional sbenroll enrollment data (all four together):
+#   SB_PK_KEY, SB_PK_CERT, SB_KEK_KEY, SB_KEK_CERT
+#                                          Build-time PK/KEK descriptors; without
+#                                          them the image reports "failed"
+#   SB_MS_UEFI_CA_CERT=build/certs/MicrosoftUEFI-CA-2011.pem
+#   SB_OWNER_GUID=a0baa8a3-041d-48a8-bc87-c36d121b5e3d
+#
 # Output: dist/secureboot/snponly-sb.efi,
 #         dist/secureboot/{pxe-uefi,direct-uefi}/snponly-sb.efi,
 #         manifest.json, SHA256SUMS.
@@ -34,6 +41,8 @@ OUT_DIR="${KURRENT_SB_OUT_DIR:-${FERRY_ROOT}/dist/secureboot}"
 JOBS="${JOBS:-$(nproc)}"
 BOOT_HTTPS_PORT="${BOOT_HTTPS_PORT:-4443}"
 CONTROLLER_IP="${CONTROLLER_IP:-}"
+SB_MS_UEFI_CA_CERT="${SB_MS_UEFI_CA_CERT:-${FERRY_ROOT}/build/certs/MicrosoftUEFI-CA-2011.pem}"
+SB_OWNER_GUID="${SB_OWNER_GUID:-a0baa8a3-041d-48a8-bc87-c36d121b5e3d}"
 
 log() { echo -e "\033[1;32m[secureboot]\033[0m $*"; }
 die() { echo -e "\033[1;31m[secureboot] ERROR: $*" >&2; exit 1; }
@@ -56,6 +65,25 @@ command -v realpath >/dev/null || die "缺少 realpath（coreutils）"
 SB_KEY="$(realpath "$SB_KEY")"
 SB_CERT="$(realpath "$SB_CERT")"
 BOOT_CA_CERT="$(realpath "$BOOT_CA_CERT")"
+
+sbenroll_vars=0
+for var in SB_PK_KEY SB_PK_CERT SB_KEK_KEY SB_KEK_CERT; do
+  [[ -n "${!var:-}" ]] && sbenroll_vars=$(( sbenroll_vars + 1 ))
+done
+if (( sbenroll_vars != 0 && sbenroll_vars != 4 )); then
+  die "SB_PK_KEY, SB_PK_CERT, SB_KEK_KEY and SB_KEK_CERT must be set together"
+fi
+if (( sbenroll_vars == 4 )); then
+  for var in SB_PK_KEY SB_PK_CERT SB_KEK_KEY SB_KEK_CERT; do
+    [[ -f "${!var}" ]] || die "$var is not a file"
+  done
+  [[ -f "$SB_MS_UEFI_CA_CERT" ]] || die "SB_MS_UEFI_CA_CERT is not a file"
+  SB_PK_KEY="$(realpath "$SB_PK_KEY")"
+  SB_PK_CERT="$(realpath "$SB_PK_CERT")"
+  SB_KEK_KEY="$(realpath "$SB_KEK_KEY")"
+  SB_KEK_CERT="$(realpath "$SB_KEK_CERT")"
+  SB_MS_UEFI_CA_CERT="$(realpath "$SB_MS_UEFI_CA_CERT")"
+fi
 SRC_DIR="$(realpath -m "$SRC_DIR")"
 OUT_DIR="$(realpath -m "$OUT_DIR")"
 
@@ -132,6 +160,20 @@ render_embed() {
   cp "$src/sb-menu.ipxe" "$dst/sb-menu.ipxe"
 }
 
+render_sbenroll() {
+  local header="$SRC_DIR/src/include/ipxe/sbenroll_data.h"
+  if (( sbenroll_vars == 0 )); then
+    log "未设置 SB_PK_KEY/SB_PK_CERT/SB_KEK_KEY/SB_KEK_CERT，sbenroll 不含注册数据"
+    return
+  fi
+  log "生成 sbenroll 注册描述符（PK/KEK/db）"
+  python3 "$FERRY_ROOT/build/sbenroll-gen.py" \
+    --pk-key "$SB_PK_KEY" --pk-cert "$SB_PK_CERT" \
+    --kek-key "$SB_KEK_KEY" --kek-cert "$SB_KEK_CERT" \
+    --db-cert "$SB_CERT" --ms-ca "$SB_MS_UEFI_CA_CERT" \
+    --owner-guid "$SB_OWNER_GUID" --output "$header"
+}
+
 build_and_sign() {
   local target="bin-x86_64-efi/snponly.efi"
   local embed="embed/secureboot/auto.ipxe,embed/secureboot/sb-boot.ipxe.cfg,embed/secureboot/sb-menu.ipxe"
@@ -186,6 +228,7 @@ PY
 
 prepare_source
 render_embed
+render_sbenroll
 build_and_sign
 write_manifest
 log "Secure Boot 构建完成 ✓（port=$BOOT_HTTPS_PORT, controller=$CONTROLLER_DESC）"

@@ -224,6 +224,9 @@ REQUIRE_OBJECT ( nvclear_cmd );
 #ifdef AK_CMD
 REQUIRE_OBJECT ( ak_cmd );
 #endif
+#ifdef SBENROLL_CMD
+REQUIRE_OBJECT ( sbenroll_cmd );
+#endif
 #ifdef CONFIG_CMD
 REQUIRE_OBJECT ( config_cmd );
 #endif

@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十一个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
+本仓库相对上游 iPXE 基线（默认 `e6e51ccb`）的全部定制 = **十二个补丁** + **构建级 EMBED 定制**（`embed/auto.ipxe`，经 `EMBED=` 编译进固件，非补丁）：
 
 | # | 补丁 | 内容 |
 |---|---|---|
@@ -17,6 +17,7 @@
 | 0009 | `0009-nvmetcp-nbct-acpi-table.patch` | NVMe 引导凭证表（NBCT：DH-HMAC-CHAP 密钥 + host NQN 经 ACPI 表交接内核侧） |
 | 0010 | `0010-tls13-psk.patch` | TLS 1.3（RFC 8446）PSK 客户端：握手原语 + `add_tls13_psk()` 过滤连接 + `nvmetcp` 接线，含 RFC 8448 自测 |
 | 0011 | `0011-tpm-attestation.patch` | TPM 2.0 证明密钥（`akgen` / `akpub` / `quote`）与作为设备凭证的 PCR quote |
+| 0012 | `0012-sbenroll.patch` | Secure Boot 密钥注册（`sbenroll`，构建期 PK/KEK/db 描述符） |
 
 ## 设计动机
 
@@ -169,6 +170,17 @@ RTL8126 5GbE：
   - 无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，不产生其它行为，引导脚本因此可走无 TPM 分支；没有软件回退
 - **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.md)。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`EFI_TCG2_PROTOCOL` 常量为 UEFI 规范标准值。
+
+### 12. Secure Boot 密钥注册（`0012`）
+
+- **动机**：逐台经 USB 或固件 Setup 预置 PK/KEK/db 无法规模化。让签名镜像在 Setup Mode（或关闭 Secure Boot）下自行安装平台密钥层级并重启，即可进入验签启动。
+- **改动**：`src/hci/commands/sbenroll_cmd.c`（新）、`src/include/ipxe/sbenroll_data.h`（新，SB 构建时覆盖为生成内容）、`src/config/general.h`（仅 EFI 的 `SBENROLL_CMD`）、`src/config/config.c`、`src/include/ipxe/dhcp.h`（标签 0x66）、`src/include/ipxe/errfile.h`
+  - `sbenroll` 经 `EFI_RUNTIME_SERVICES.SetVariable()` 依次写入 PK、KEK（PK 认证）、db（KEK 认证），三份 `EFI_VARIABLE_AUTHENTICATION_2` 载荷由 `build/sbenroll-gen.py` 在构建期生成
+  - db 含产物签名证书与 Microsoft UEFI CA 2011 证书；镜像内只有证书与签名，私钥留在离线环境
+  - 幂等：已含我们描述符的变量不重写；存在他人 PK 时变量一律不动并报 `foreign`；失败报 `failed`。结果写入 `sbenroll-result`（DHCP 标签 0x66）供阶段脚本上报
+  - `embed/secureboot/sb-boot.ipxe.cfg` 在身份流程之前 `chain ${https-url}boot/phase`：注册窗口开启时控制面下发注册脚本，关闭时返回空脚本
+- **验证**：QEMU/OVMF（全新变量存储、Setup Mode）+ swtpm：签名镜像完成 PK/KEK/db 写入、结果 `ok`、重启后通过 Secure Boot 验签并上报 `sb=1`；再次运行输出 `ok (already enrolled)` 且不写变量；预置厂商 PK 时输出 `foreign`，PK/KEK/db 均未改变（详见 `docs/secureboot.md`）。
+- **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；随仓库分发的 Microsoft UEFI CA 2011 证书为公开信任锚数据。
 
 > 补丁集已于 2026-09-12 整理：RTL8126 适配（原为修补 8125 补丁的独立补丁）并入 `0001`；NVMe/TCP 认证修复与 `hostnqn` 设置（原为独立追加补丁）并入 `0005`。12 补丁序列整合为 9 个；新序列在干净基线上重放，最终树与旧序列逐位一致。
 
