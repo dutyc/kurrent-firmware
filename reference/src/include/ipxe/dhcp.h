@@ -446,6 +446,9 @@ struct dhcp_client_uuid {
 /** Secure Boot state */
 #define DHCP_EB_SB DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x65 )
 
+/** Secure Boot key enrollment result */
+#define DHCP_EB_SBENROLL_RESULT DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0x66 )
+
 /** Skip PXE DHCP protocol extensions such as ProxyDHCP
  *
  * If set to a non-zero value, iPXE will not wait for ProxyDHCP offers

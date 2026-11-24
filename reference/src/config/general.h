@@ -147,6 +147,7 @@ FILE_SECBOOT ( PERMITTED );
 /* Commands supported only on EFI platforms */
 #if defined ( PLATFORM_efi )
   #define AK_CMD		/* TPM attestation key commands */
+  #define SBENROLL_CMD		/* Secure Boot key enrollment */
 #endif
 
 /* Disable commands not historically included in BIOS builds */

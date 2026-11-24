@@ -31,6 +31,8 @@
 
 | `0011-tpm-attestation.patch` | `src/interface/efi/efi_tpm2.c`（新）、`src/include/ipxe/efi/efi_tpm2.h`（新）、`src/hci/commands/ak_cmd.c`（新）、`src/config/general.h`、`src/config/config.c`、`src/include/ipxe/dhcp.h`、`src/include/ipxe/errfile.h` | TPM 2.0 设备证明。`efi_tpm2.c` 经 `EFI_TCG2_PROTOCOL.SubmitCommand()` 直接提交 TPM 2.0 命令：创建受限签名证明密钥（`TPM2_CreatePrimary`，优先 ECC P-256，回退 RSA-2048）、持久化（`TPM2_EvictControl`，句柄 `0x81000001`）并在之后每次开机复用——不存在覆盖已有 AK 的代码路径。`akgen` / `akpub` / `quote <nonce>` 导出 SubjectPublicKeyInfo DER、TPM2B_NAME 与覆盖 PCR 0/2/4/7 的 TPMS_ATTEST quote（摘要与签名来自同一次 `TPM2_Quote` 调用；ECDSA DER 或 RSASSA-PKCS1-v1_5），并读取 EFI `SecureBoot` 全局变量给出安全启动状态。设置 `ak-public` / `quote` / `quote-sig` / `ak-name` / `ak-type` / `sb` 对应 DHCP 标签 0x60-0x65，仅存于本次开机的内存设置。无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，没有软件回退。`AK_CMD` 配置项 |
 
+| `0012-sbenroll.patch` | `src/hci/commands/sbenroll_cmd.c`（新）、`src/include/ipxe/sbenroll_data.h`（新）、`src/config/general.h`、`src/config/config.c`、`src/include/ipxe/dhcp.h`、`src/include/ipxe/errfile.h` | `sbenroll`：经 `EFI_RUNTIME_SERVICES.SetVariable()` 安装 Secure Boot 平台密钥层级——先 PK，再 KEK（PK 认证），最后 db（KEK 认证）。三份 `EFI_VARIABLE_AUTHENTICATION_2` 载荷由 `build/sbenroll-gen.py` 在构建期用离线 PK/KEK 密钥生成，并通过 `src/include/ipxe/sbenroll_data.h` 编入镜像；镜像内只有证书与签名。命令幂等（只补缺），结果 `ok` / `foreign`（存在他人 PK，变量不动）/ `failed` 写入 `sbenroll-result` 设置（DHCP 标签 0x66）。普通构建保留桩头文件，结果 `failed` 且不触碰变量。`SBENROLL_CMD` 配置项（仅 EFI） |
+
 上表为 **L1 补丁序列**，由 `build/build.sh` 与 `build/build-sb.sh` 共同应用。Secure Boot 构建额外应用第二个叠加补丁，普通 glob 不会匹配到它：
 
 | 补丁 | 修改文件 | 内容 |
@@ -39,7 +41,7 @@
 
 > RTL8168 相关研究已于 2026-08 终止，补丁不含 8168 过滤或修复代码（见 `../docs/8168-research-log.md`）。
 >
-> 补丁集已于 2026-09-12 整理合并（原 12 个补丁重打包为补丁 0001-0009；仅修补前序补丁的已并入其源头补丁），并以干净基线重放验证：新序列最终树哈希与旧序列逐位一致（`2151e97b3d0b9029b03ae0f7a3dbfbe88930f206`）。补丁 0010（TLS 1.3 PSK）于 2026-10-06 后续追加；补丁 0003 于 2026-10-17 增加本地引导的 SNP 句柄排除。补丁 0008 于 2026-11-12 收窄为 `nvclear`，同时新增补丁 0011（TPM 2.0 证明），用 TPM 内的证明密钥取代软件私钥。当前 11 补丁序列（干净基线 + `0001`-`0011`）重放树哈希为 `09041870836c208fafc56e1720d3735093ce4157`；Secure Boot 叠加补丁位于 `secureboot/`，只由 `build/build-sb.sh` 应用，因此该树哈希仍描述每一个 L1 构建。
+> 补丁集已于 2026-09-12 整理合并（原 12 个补丁重打包为补丁 0001-0009；仅修补前序补丁的已并入其源头补丁），并以干净基线重放验证：新序列最终树哈希与旧序列逐位一致（`2151e97b3d0b9029b03ae0f7a3dbfbe88930f206`）。补丁 0010（TLS 1.3 PSK）于 2026-10-06 后续追加；补丁 0003 于 2026-10-17 增加本地引导的 SNP 句柄排除。补丁 0008 于 2026-11-12 收窄为 `nvclear`，同时新增补丁 0011（TPM 2.0 证明），用 TPM 内的证明密钥取代软件私钥。补丁 0012（Secure Boot 密钥注册）于 2026-11-23 后续追加。当前 12 补丁序列（干净基线 + `0001`-`0012`）重放树哈希为 `738f43542930ac4bb390b13b8db00ee791ef2a4f`；Secure Boot 叠加补丁位于 `secureboot/`，只由 `build/build-sb.sh` 应用，因此该树哈希仍描述每一个 L1 构建。
 
 ## 授权说明
 
@@ -51,6 +53,7 @@
 - `0009` 中的 NBCT 新文件（`nbct.c`、`nbct.h`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( BSD2 )`（类内核许可，对齐上游 iPXE `ibft.c` 的 ACPI 表先例）；
 - `0010` 的 TLS 1.3 改动修改的是携带 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )` 的上游文件（`tls.c`、`tls.h`、`errfile.h`、`nvmetcp.c`、`tests.c`），两个新增文件（`tls13.c`、`tls13.h`）与新增自测（`tls13_test.c`）沿用同一上游双许可；
 - `0011` 的 TPM 证明新文件（`efi_tpm2.c`、`efi_tpm2.h`、`ak_cmd.c`）为 kurrent-firmware 自研实现，文件头 `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；其中用到的 `EFI_TCG2_PROTOCOL` 定义取自 UEFI 规范的标准常量；
+- `0012`（`sbenroll_cmd.c`、`sbenroll_data.h`）为 kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`build/certs/MicrosoftUEFI-CA-2011.pem` 为公开的 Microsoft UEFI CA 2011 证书，作为信任锚随仓库分发；
 - `secureboot/0001-no-tofu.patch` 修改本项目的 `tofu.c`（GPL2_OR_LATER_OR_UBDL），不引入第三方代码；
 - 本仓库整体遵循 GPL-2.0（见 `../LICENSE`），补丁头部均含 SPDX 声明。
 

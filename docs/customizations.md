@@ -2,7 +2,7 @@
 
 [English](customizations.md) | [中文](customizations.zh-CN.md)
 
-Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **eleven patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
+Every customization in this repository, relative to the upstream iPXE baseline (default `e6e51ccb`), consists of **twelve patches** plus a **build-level EMBED customization** (`embed/auto.ipxe`, compiled into the firmware via `EMBED=`, not a patch).
 
 | # | Patch | Scope |
 |---|---|---|
@@ -17,6 +17,7 @@ Every customization in this repository, relative to the upstream iPXE baseline (
 | 0009 | `0009-nvmetcp-nbct-acpi-table.patch` | NVMe boot credentials table (NBCT ACPI handoff of DH-HMAC-CHAP secret + host NQN to the kernel side) |
 | 0010 | `0010-tls13-psk.patch` | TLS 1.3 (RFC 8446) PSK client: handshake primitives + `add_tls13_psk()` filter connection + `nvmetcp` wiring, with an RFC 8448 self-test |
 | 0011 | `0011-tpm-attestation.patch` | TPM 2.0 attestation key (`akgen` / `akpub` / `quote`) and PCR quote sent as the device proof |
+| 0012 | `0012-sbenroll.patch` | Secure Boot key enrollment (`sbenroll`, build-time PK/KEK/db descriptors) |
 
 ## Design Rationale
 
@@ -169,6 +170,17 @@ RTL8126 5GbE:
   - without a TPM the commands fail with `-ENODEV` / `-ENOENT` and nothing else, so a boot script can take its no-TPM path; there is no software fallback
 - **Verification**: QEMU/OVMF + swtpm (software TPM, not real hardware). The AK survives a cold reboot and a regenerated OVMF variable store with an identical `ak-name`; `test/verify-ak-quote.py` independently parses the TPMS_ATTEST and verifies the signature; the control plane's real `/devices/report` → `/devices/challenge` → `/boot-vars` flow records `device.attest ok`. Negative cases: a firmware change (different PCR 7) yields `pcr_mismatch`, replaying a nonce yields `nonce_invalid`, and a firmware without a TPM reports `no_tpm` without crashing. See [device-trust-usage.md](device-trust-usage.md) for the command and setting contract.
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`; `EFI_TCG2_PROTOCOL` constants are the standard UEFI specification values.
+
+### 12. Secure Boot key enrollment (`0012`)
+
+- **Rationale**: provisioning PK/KEK/db per machine through USB or firmware Setup does not scale. A signed image that boots in Setup Mode (or with Secure Boot off) can install the platform key hierarchy itself and reboot into verified boot.
+- **Changes**: `src/hci/commands/sbenroll_cmd.c` (new), `src/include/ipxe/sbenroll_data.h` (new, stub overwritten by the SB build), `src/config/general.h` (`SBENROLL_CMD`, EFI only), `src/config/config.c`, `src/include/ipxe/dhcp.h` (tag 0x66), `src/include/ipxe/errfile.h`
+  - `sbenroll` writes PK, then KEK (authenticated by PK), then db (authenticated by KEK) through `EFI_RUNTIME_SERVICES.SetVariable()` with `EFI_VARIABLE_AUTHENTICATION_2` payloads generated at build time by `build/sbenroll-gen.py`
+  - db carries the artifact signing certificate and the Microsoft UEFI CA 2011 certificate; only certificates and signatures are embedded, private keys stay offline
+  - idempotent: variables already holding our descriptors are not rewritten; a different PK leaves everything untouched and reports `foreign`; failures report `failed`. The result is published as `sbenroll-result` (DHCP tag 0x66) for the phase script
+  - `embed/secureboot/sb-boot.ipxe.cfg` chains `${https-url}boot/phase` before the identity flow; the control plane serves the enrollment script while a registration window is open and an empty script otherwise
+- **Verification**: QEMU/OVMF (fresh variable store, Setup Mode) + swtpm: the signed image enrolls PK/KEK/db, reports `ok`, reboots, is accepted by Secure Boot and reports `sb=1`; a second run reports `ok (already enrolled)` without touching the variables; a pre-installed vendor PK yields `foreign` with PK/KEK/db unchanged (see `docs/secureboot.md`).
+- **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`; the bundled Microsoft UEFI CA 2011 certificate is public trust-anchor data.
 
 > Patch set consolidated on 2026-09-12: the RTL8126 adaptation (previously a separate patch amending the 8125 patch) merged into `0001`; the NVMe/TCP authentication fixes and the `hostnqn` setting (previously separate follow-up patches) merged into `0005`. The 12-patch sequence became 9 patches; replaying the new sequence against the clean baseline reproduces the old sequence's final tree bit-for-bit.
 

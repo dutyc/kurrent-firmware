@@ -18,7 +18,7 @@ The static scripts are:
 
 ```
 auto.ipxe          dhcp -> chain sb-boot.ipxe.cfg -> chain sb-menu.ipxe
-sb-boot.ipxe.cfg   endpoint + TPM attestation flow (report/challenge/quote/boot-vars)
+sb-boot.ipxe.cfg   endpoint + key enrollment gate (boot/phase) + TPM attestation flow
 sb-menu.ipxe       NVMe-oF system boot, shell, reboot, exit
 ```
 
@@ -71,9 +71,13 @@ BOOT_HTTPS_PORT=4443 \
 | Variable | Meaning |
 |---|---|
 | `SB_KEY`, `SB_CERT` | Artifact signing key/certificate; keep offline, never in the repository or a container. Paths are canonicalised before the build changes directory |
+| `SB_PK_KEY`, `SB_PK_CERT`, `SB_KEK_KEY`, `SB_KEK_CERT` | Optional enrollment key material. When all four are set, `build/sbenroll-gen.py` signs the PK/KEK/db descriptors and embeds them; otherwise `sbenroll` reports `failed`. Only certificates and signatures reach the image |
+| `SB_MS_UEFI_CA_CERT` | Microsoft UEFI CA 2011 certificate added to db (default `build/certs/MicrosoftUEFI-CA-2011.pem`) |
+| `SB_OWNER_GUID` | Signature-owner GUID used in the embedded signature lists |
 | `BOOT_CA_CERT` | Boot CA in PEM, `basicConstraints CA:TRUE`; embedded as both certificate and fingerprint |
 | `BOOT_HTTPS_PORT` | Boot endpoint port baked into the image (default `4443`, range 1-65535) |
 | `CONTROLLER_IP` | Fixed controller IPv4 address; default is DHCP `next-server`. IPv6 literals are rejected |
+| `KURRENT_SB_TARGET` | UEFI build target: `snponly` (default) or `ipxe` (all-drivers first hop). The artifact is named `<target>-sb.efi` |
 | `KURRENT_SB_SRC_DIR` | Source cache; default `.cache/ipxe-sb` |
 | `KURRENT_SB_OUT_DIR` | Output directory; default `dist/secureboot` |
 | `KURRENT_SB_ALLOW_CUSTOM_OUT` | Set to `1` to allow removing an output directory outside `dist/` |
@@ -100,9 +104,10 @@ dist/secureboot/
   SHA256SUMS
 ```
 
-The two directory copies are byte-identical to the root `snponly-sb.efi`: one
-signed binary delivered in both the PXE and direct-boot layouts so consumers
-can use a single path convention.
+The listing shows the default `snponly` target; `KURRENT_SB_TARGET=ipxe`
+produces `ipxe-sb.efi` with the same layout. The two directory copies are
+byte-identical to the root artifact: one signed binary delivered in both the
+PXE and direct-boot layouts so consumers can use a single path convention.
 
 `manifest.json` records the artifact hash and size, signer subject, boot CA
 SHA-256, port and upstream baseline. `verify-sb.sh` checks every signature,
@@ -146,6 +151,16 @@ or a firmware HTTP Boot path when the platform is known to skip that check.
 Positive path: signed artifact accepted by OVMF Secure Boot, embedded scripts
 execute, `/devices/report` and `/boot-vars` succeed over the pinned endpoint,
 and the menu appears.
+
+Enrollment path: with a fresh variable store (Setup Mode) and a registration
+window open, `/boot/phase` returns a script that runs `sbenroll` (PK/KEK/db),
+reports `sbenroll-result` and reboots. The rebooted image is verified against
+the newly installed db, reports `sb=1`, and the next phase fetch returns an
+empty script. A second enrollment run reports `ok (already enrolled)` without
+writing; a pre-installed vendor PK yields `foreign` with the variables
+unchanged. The db variable uses the image security database GUID; the firmware
+may append further certificates, so presence rather than byte equality decides
+whether a write is needed.
 
 Negative cases that must fail before any HTTP request succeeds:
 
