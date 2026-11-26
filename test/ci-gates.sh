@@ -4,7 +4,7 @@
 # Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|replay|build>
 #
 #   syntax      bash -n / sh -n for every tracked shell script
-#   static-gate  ShellCheck at error severity on the same set
+#   shellcheck  ShellCheck at error severity on the same set
 #   embed       every EMBED_B64_* payload matches its repository source
 #   replay      apply patches 0001.. in order to the pinned upstream commit
 #               and compare reference/ byte for byte
