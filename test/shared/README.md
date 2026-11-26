@@ -14,10 +14,12 @@ runs from the repository root; runtime output goes to `diag/` or `.cache/`
 
 `embed-components.py` regenerates the `EMBED_B64_*` blocks (initramfs-nbft
 components, BOOTX64 image and the golden-common copy) from the repository
-sources. Run it after changing any embedded source:
+sources. `verify-embed.py` checks the decoded SHA-256 of every block against
+its source and fails on a missing, duplicated or stale copy:
 
 ```bash
 python3 test/shared/embed-components.py
+python3 test/shared/verify-embed.py
 ```
 
 ## Manual QEMU helpers

@@ -34,6 +34,16 @@ PHASE_E_LVM_PARAM=${PHASE_E_LVM_PARAM:-1}
 
 log() { echo "==> $*"; }
 
+# Single-file fallback extracts temporary trees; remove them on exit.
+GOLDEN_TMP_DIRS=()
+golden_cleanup_tmp() {
+    local d
+    for d in ${GOLDEN_TMP_DIRS[@]+"${GOLDEN_TMP_DIRS[@]}"}; do
+        [ -n "$d" ] && rm -rf "$d"
+    done
+}
+trap golden_cleanup_tmp EXIT
+
 usage() {
     sed -n '2,/^# ==== END USAGE/p' "$0" | sed 's/^# \{0,1\}//' | sed '$d'
     exit 0
@@ -77,6 +87,9 @@ golden_resolve_components() {
     else
         echo "    仓库组件目录不可用，释放脚本内嵌组件..."
         COMPONENT_DIR=$(release_embedded_components) || exit 1
+        # release runs in a command substitution; register the tree here so the
+        # EXIT trap in the parent shell removes it.
+        GOLDEN_TMP_DIRS+=("$COMPONENT_DIR")
     fi
 }
 

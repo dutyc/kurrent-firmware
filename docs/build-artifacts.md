@@ -24,6 +24,26 @@ The build pipeline (`build.sh`) compiles the firmware into 7 UEFI form factors, 
 (`snponly-sb.efi`, `manifest.json`, `SHA256SUMS`). It does not replace or
 modify the seven artifacts above. See [secureboot.md](secureboot.md).
 
+## Golden image helpers
+
+The scripts under `test/*/golden-image-setup-*.sh` embed base64 copies of
+their runtime components: the initramfs-nbft files, the GRUB image and the
+shared library. Regenerate them after changing a source, then verify that
+every copy matches:
+
+```bash
+python3 test/shared/embed-components.py
+python3 test/shared/verify-embed.py
+```
+
+`test/shared/assets/BOOTX64-2.14-generic.EFI` is a GNU GRUB 2.14
+`x86_64-efi` image built with `grub-mkimage` from unmodified upstream
+sources; its module set is the superset of the minimal set recorded in
+[golden-image-customization-debian12.md](golden-image-customization-debian12.md) §6.3.
+GRUB is licensed under GPL-3.0-or-later; the corresponding source is
+upstream GNU GRUB 2.14. The embedded copy has SHA-256
+`d912bcd33be528f5520dbc0121a8197ebad9065c8329ee4afc710a8c2986b691`.
+
 ## Choosing an Artifact
 
 - **PXE boot environments** (DHCP + boot server): `pxe-uefi/` for UEFI clients.
