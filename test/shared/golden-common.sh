@@ -23,6 +23,14 @@ KEEP_SOURCES=${KEEP_SOURCES:-0}
 GRUB_EFI=${GRUB_EFI:-}
 NBFT_SHELL=${NBFT_SHELL:-bash}
 GRUB_CFG=${GRUB_CFG:-/boot/grub2/grub.cfg}
+MKFS_FAT_OPTS=${MKFS_FAT_OPTS:--S 4096}
+GRUB_MKIMAGE=${GRUB_MKIMAGE:-grub2-mkimage}
+GRUB_REGEN=${GRUB_REGEN:-mkconfig}
+GRUB_DEFAULT_ONLY=${GRUB_DEFAULT_ONLY:-0}
+GRUB_DROP_WORDS=${GRUB_DROP_WORDS:-quiet rhgb}
+PHASE_C_NETWORKD=${PHASE_C_NETWORKD:-0}
+PHASE_E_LVM_FALLBACK=${PHASE_E_LVM_FALLBACK:-1}
+PHASE_E_LVM_PARAM=${PHASE_E_LVM_PARAM:-1}
 
 log() { echo "==> $*"; }
 
@@ -161,9 +169,20 @@ PYEOF
     *) echo "WARN: 无法识别 root 设备（$rootdev），跳过 root UUID 校验" ;;
     esac
 
-    # 发行版可选的额外网络配置（Fedora 的 systemd-networkd 单元）
-    if declare -F phase_c_network >/dev/null; then
-        phase_c_network
+    if [ "$PHASE_C_NETWORKD" = 1 ]; then
+        mkdir -p /etc/systemd/network
+        if [ -f /etc/systemd/network/10-dhcp.network ]; then
+            echo "    10-dhcp.network 已存在"
+        else
+            cat > /etc/systemd/network/10-dhcp.network <<'EOF'
+[Match]
+Name=e*
+
+[Network]
+DHCP=yes
+EOF
+            echo "    已写入 10-dhcp.network（全链路 DHCP）"
+        fi
     fi
 
     # hostname 去标识：真实 hostname 由控制面在引导链中下发，母盘不留克隆身份。
@@ -176,20 +195,22 @@ phase_d() {
     log "[D] GRUB 启动参数"
     local grub=/etc/default/grub
     [ -f "$grub" ] || { echo "ERROR: $grub 不存在"; exit 1; }
-    python3 - "$GRUB_ARGS" <<'PYEOF'
+    python3 - "$GRUB_ARGS" "$GRUB_DEFAULT_ONLY" "$GRUB_DROP_WORDS" <<'PYEOF'
 import shutil, sys, time
 path = '/etc/default/grub'
 extra = sys.argv[1]
-drop = {'quiet', 'rhgb'}  # quiet/rhgb 压掉 info 级内核打印（含 nvme 认证），串口场景无益
+default_only = sys.argv[2] == '1'
+drop = set(sys.argv[3].split())
+keys = ('GRUB_CMDLINE_LINUX_DEFAULT',) if default_only else (
+    'GRUB_CMDLINE_LINUX', 'GRUB_CMDLINE_LINUX_DEFAULT')
 lines, out, changed, found = open(path).readlines(), [], False, False
 for ln in lines:
-    key = next((k for k in ('GRUB_CMDLINE_LINUX=', 'GRUB_CMDLINE_LINUX_DEFAULT=')
-                if ln.startswith(k)), None)
+    key = next((k for k in keys if ln.startswith(k + '=')), None)
     if key is None:
         out.append(ln)
         continue
     found = True
-    val = ln[len(key):].strip()
+    val = ln[len(key) + 1:].strip()
     quoted = val.startswith('"') and val.endswith('"') and len(val) >= 2
     inner = val[1:-1] if quoted else val
     toks = [t for t in inner.split() if t not in drop]
@@ -200,7 +221,7 @@ for ln in lines:
     if new == inner:
         out.append(ln)  # 无变化：保持原文（幂等）
     else:
-        out.append(f'{key}"{new}"\n')
+        out.append(f'{key}="{new}"\n')
         changed = True
 if not found:
     out.append(f'GRUB_CMDLINE_LINUX_DEFAULT="{extra}"\n')
@@ -212,16 +233,23 @@ if changed:
 else:
     print('    cmdline 已符合要求（含 SAN 参数且无 quiet/rhgb）')
 PYEOF
-    # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）
-    grub2-mkconfig -o "$GRUB_CFG" >/dev/null || \
-        echo "WARN: grub2-mkconfig 失败（非致命：SAN 引导走 ESP/grub.cfg）"
-    echo "    grub2-mkconfig 完成"
+    if [ "$GRUB_REGEN" = update-grub ]; then
+        update-grub
+        echo "    update-grub 完成"
+    else
+        # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）
+        grub2-mkconfig -o "$GRUB_CFG" >/dev/null || \
+            echo "WARN: grub2-mkconfig 失败（非致命：SAN 引导走 ESP/grub.cfg）"
+        echo "    grub2-mkconfig 完成"
+    fi
 }
 
 # ---------------------------------------------------------------- E ----------
 # 定位整盘（沿 PKNAME 逐级上溯）；无法回溯时输出空。
 # 实现注记（util-linux 实测）：默认输出带树形符号（├─vda1）且行序不保证，
 # 带 -d 时连分区行的 PKNAME 也被清空；故用 -r（raw）按“设备名取自身行”查询。
+# Debian/Ubuntu 原实现用单列 `lsblk -no PKNAME`；在 vda1→vda、dm→分区等
+# 常见链路上与本实现等价，且本实现对多级链路与树形输出更稳健，故统一。
 root_disk() {
     local name=${1#/dev/} p i
     [ -n "$name" ] || return 0
@@ -244,7 +272,9 @@ find_esp() {
     lsblk -no PATH,PARTTYPENAME | awk '$2 ~ /^EFI/ {print $1; exit}'
 }
 
-gpt_sector() { # 输出 512 / 4096 / none（od 转十六进制比对，避免 NUL 字节进命令替换）
+# 输出 512 / 4096 / none。统一用 od 转十六进制比对：Debian/Ubuntu 原实现把
+# 二进制签名放进命令替换，bash 会告警并丢弃 NUL；ASCII 比对结果一致，od 更稳健。
+gpt_sector() {
     local disk=$1 h4 h5
     h4=$(dd if="$disk" bs=1 skip=4096 count=8 2>/dev/null | od -An -tx1 | tr -d ' \n')
     h5=$(dd if="$disk" bs=1 skip=512 count=8 2>/dev/null | od -An -tx1 | tr -d ' \n')
@@ -277,18 +307,22 @@ phase_e() {
     [ -b "$esp" ] || { echo "ERROR: 无法定位 ESP 分区"; exit 1; }
 
     [ "$DO_DISK" = 1 ] && [ "$YES" != 1 ] && {
-        read -r -p "    将重写 GPT 为 4K 语义并重建 ESP，继续？[y/N] " ans || ans=
+        read -r -p "    将重写 GPT 为 4K 语义并重建 ESP；ESP 内容会刷新，继续？[y/N] " ans || ans=
         case "$ans" in y | Y) ;; *) DO_DISK=0 ;; esac
     }
     if [ "$DO_DISK" = 1 ]; then
         if [ "$(ss -tn 2>/dev/null | awk 'NR>1 {print $4}' | grep -c ':4420$' || true)" -gt 0 ]; then
             echo "ERROR: 检测到活跃 NVMe/TCP 连接（:4420），请先断开"; exit 1
         fi
-        # 盘 = root 所在整盘；LVM/dm root 无法沿 PKNAME 回溯（安装器默认布局），
-        # 退化为 ESP 分区所在盘（母盘同盘布局，E 的目标就是引导盘）。
+        # 盘 = root 所在整盘。LVM/dm root 的 PKNAME 为空；RHEL/SUSE 安装器默认
+        # LVM 布局，故退化为 ESP 分区所在盘（母盘同盘布局，E 的目标就是引导盘）。
         disk=$(root_disk "$rootdev")
-        [ -n "$disk" ] || disk=$(root_disk "$esp")
-        [ -b "$disk" ] || { echo "ERROR: 无法定位引导盘（root=$rootdev esp=$esp）"; exit 1; }
+        if [ "$PHASE_E_LVM_FALLBACK" = 1 ]; then
+            [ -n "$disk" ] || disk=$(root_disk "$esp")
+            [ -b "$disk" ] || { echo "ERROR: 无法定位引导盘（root=$rootdev esp=$esp）"; exit 1; }
+        else
+            [ -b "$disk" ] || { echo "ERROR: 无法定位 root 所在盘（$disk）"; exit 1; }
+        fi
         espsize=$(lsblk -bno SIZE "$esp")
         echo "    root: $rootdev  盘: $disk  ESP: $esp ($((espsize / 1024 / 1024)) MiB)"
 
@@ -310,7 +344,9 @@ phase_e() {
         if esp_is_4k_volid "$esp"; then
             echo "    ESP 已是 4K FAT32（volid $ESP_VOLID），跳过 mkfs"
         else
-            mkfs.fat -S 4096 "$esp" >/dev/null   # 106 MiB cloud img ESP 自动 FAT16（EDK2 支持）
+            # Debian/Ubuntu 的 cloud img ESP 可能只有 ~106 MiB 且被识别为 FAT16，
+            # 故 Debian 变体显式 -F 32；RHEL/SUSE 用默认探测。
+            mkfs.fat $MKFS_FAT_OPTS "$esp" >/dev/null
             # FAT32 的 volid 固定在 BPB 偏移 0x43（与 sector size 无关）;
             # mkfs.fat 4.2 的 -i 不生效,因此格式化后直接补写。注意: 偏移 39(0x27)
             # 是历史错误位置,会破坏 FAT32 sectors 字段导致 EDK2 拒挂(0x7f22208e)。
@@ -359,25 +395,27 @@ PYEOF
         # 发行版 grub-mkimage 版本门控：Debian 12 自带 2.06 的产物在 SAN 引导路径
         # 实测卡死（发行版缺陷，与 4K 逻辑块无关；2026-09-04 实测，见文档 6.3）
         local gver
-        gver=$(grub2-mkimage --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1) || gver=""
+        gver=$("$GRUB_MKIMAGE" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1) || gver=""
+        # 版本比较统一用 awk 数值比较（Debian 侧原先用 dpkg --compare-versions，
+        # 对 2.x 形式结果一致）；< 2.12 的产物在 SAN 引导路径实测卡死。
         if [ -z "$gver" ] || ! awk -v v="$gver" 'BEGIN { exit !(v + 0 >= 2.12) }'; then
-            echo "ERROR: 母盘 grub2-mkimage 版本 ${gver:-未知} < 2.12，其 BOOTX64.EFI 在 SAN 引导路径卡死。出路：" >&2
+            echo "ERROR: 母盘 $GRUB_MKIMAGE 版本 ${gver:-未知} < 2.12，其 BOOTX64.EFI 在 SAN 引导路径卡死。出路：" >&2
             echo "       a) 宿主机（grub 2.14+）生成后 --grub-efi 注入；" >&2
-            echo "       b) 母盘升级 grub2 >= 2.12 后重跑本脚本。" >&2
+            echo "       b) 母盘升级 grub2/grub-efi >= 2.12 后重跑本脚本。" >&2
             exit 1
         fi
-        if ! grub2-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods; then
-            echo "WARN: grub2-mkimage 含 echo 失败，降级重试（echo 模块缺失）"
+        if ! "$GRUB_MKIMAGE" -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods; then
+            echo "WARN: $GRUB_MKIMAGE 含 echo 失败，降级重试（echo 模块缺失）"
             grub_mods=${grub_mods/ echo/}
-            grub2-mkimage -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods
+            "$GRUB_MKIMAGE" -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods
         fi
-        echo "    BOOTX64.EFI 生成（grub2-mkimage $gver）"
+        echo "    BOOTX64.EFI 生成（$GRUB_MKIMAGE $gver）"
     fi
 
     local rootuuid rd_lvm="" vglv
     rootuuid=$(blkid -s UUID -o value "$rootdev")
-    # LVM root（安装器默认布局）：需显式激活 VG/LV，否则 dracut 找不到 root
-    if lvs --noheadings -o vg_name,lv_name "$rootdev" >/dev/null 2>&1; then
+    # LVM root（RHEL/SUSE 安装器默认布局）：需显式激活 VG/LV，否则 dracut 找不到 root
+    if [ "$PHASE_E_LVM_PARAM" = 1 ] && lvs --noheadings -o vg_name,lv_name "$rootdev" >/dev/null 2>&1; then
         vglv=$(lvs --noheadings -o vg_name,lv_name "$rootdev" 2>/dev/null | awk '{print $1"/"$2}')
         [ -n "$vglv" ] && rd_lvm="rd.lvm.lv=$vglv"
     fi
