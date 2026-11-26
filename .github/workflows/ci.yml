@@ -28,6 +28,9 @@ jobs:
       - name: Embedded asset consistency
         run: bash test/ci-gates.sh embed
 
+      - name: Initramfs TLS wiring
+        run: bash test/ci-gates.sh boot
+
       - name: Patch replay and reference snapshot
         run: bash test/ci-gates.sh replay
 

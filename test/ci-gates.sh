@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Repository gates shared by CI and local runs.
 #
-# Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|replay|build>
+# Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|boot|replay|build>
 #
 #   syntax      bash -n / sh -n for every tracked shell script
 #   shellcheck  ShellCheck at error severity on the same set
 #   embed       every EMBED_B64_* payload matches its repository source
+#   boot        initramfs TLS wiring: config path shipped, kTLS ciphers added
 #   replay      apply patches 0001.. in order to the pinned upstream commit
 #               and compare reference/ byte for byte
 #   build       full build/build.sh and verify dist/SHA256SUMS
@@ -45,6 +46,36 @@ gate_shellcheck() {
 
 gate_embed() {
     python3 test/shared/verify-embed.py
+}
+
+gate_boot() {
+    # Cache the checks that must hold for kernel-segment TLS to work in an
+    # initramfs: tlshd has to be told where the hook put its config, and the
+    # AEAD modules used by kTLS have to be present (the kernel cannot load
+    # them from the root filesystem before root is mounted).
+    local rc=0 hook=initramfs-nbft/initramfs/hooks/nbft
+    local localtop=initramfs-nbft/initramfs/scripts/local-top/nbft
+    grep -q -- 'tlshd -c /etc/tlshd/config' "$localtop" || {
+        echo "ERROR: $localtop does not pass the shipped tlshd config" >&2
+        rc=1
+    }
+    grep -q -- 'cp -a /etc/tlshd/config' "$hook" || {
+        echo "ERROR: $hook does not ship /etc/tlshd/config" >&2
+        rc=1
+    }
+    local m
+    for m in gcm ccm chacha20poly1305 ghash-generic; do
+        grep -q -- " ${m} " "$hook" || {
+            echo "ERROR: $hook does not add the kTLS cipher $m" >&2
+            rc=1
+        }
+    done
+    grep -q -- 'instmods gcm ccm chacha20poly1305 ghash_generic' test/shared/golden-common.sh || {
+        echo "ERROR: dracut hook does not add the kTLS ciphers" >&2
+        rc=1
+    }
+    [ "$rc" = 0 ] && echo "boot components: OK"
+    return "$rc"
 }
 
 gate_replay() {
@@ -89,10 +120,11 @@ case "${1:-}" in
 syntax) gate_syntax ;;
 shellcheck) gate_shellcheck ;;
 embed) gate_embed ;;
+boot) gate_boot ;;
 replay) gate_replay ;;
 build) gate_build ;;
 *)
-    echo "usage: $0 <syntax|shellcheck|embed|replay|build>" >&2
+    echo "usage: $0 <syntax|shellcheck|embed|boot|replay|build>" >&2
     exit 1
     ;;
 esac
