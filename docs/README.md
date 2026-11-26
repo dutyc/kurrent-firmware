@@ -35,3 +35,4 @@ current code.
 - [nvmeof-research.md](archive/nvmeof-research.md) — NVMe-oF protocol research
 - [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) — unauthenticated SAN boot verification
 - [production-boot-verification.md](archive/production-boot-verification.md) — production boot-chain verification
+- [real-reinstall-tls-coldboot-verification.md](archive/real-reinstall-tls-coldboot-verification.md) — real reinstall and TLS cold-boot verification (Debian 13 / Ubuntu 26.04)
