@@ -21,10 +21,13 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 ROUND=${1:-1}
 LOG=$D/qemu-tofu-$ROUND.log
 TMP=$D/tmp
+VARS=$D/OVMF_VARS.fd
 TLS=$ROOT/test/tls
 PORT=8443
 
@@ -34,17 +37,13 @@ PORT=8443
 }
 
 mkdir -p "$TMP" "$TLS" "$TMP/tlsroot"
-[ -e "$TMP/EFI/BOOT/BOOTX64.EFI" ] || {
-        echo "ERROR: $TMP/EFI/BOOT/BOOTX64.EFI missing (see header)" >&2
-        exit 1
-}
+qemu_require
+qemu_check_firmware "$TMP"
 [ -e "$TMP/tlsroot/test.txt" ] || echo "TOFU test payload" > "$TMP/tlsroot/test.txt"
 
 # Round 1 starts from a clean NVRAM
-[ "$ROUND" = 1 ] && rm -f "$D/OVMF_VARS.fd"
-if [ ! -e "$D/OVMF_VARS.fd" ]; then
-        cp /usr/share/OVMF/OVMF_VARS_4M.fd "$D/OVMF_VARS.fd"
-fi
+[ "$ROUND" = 1 ] && rm -f "$VARS"
+qemu_ensure_vars "$VARS"
 
 # Generate the server certificates if not yet present
 if [ ! -e "$TLS/certA.pem" ]; then
@@ -70,15 +69,14 @@ SRV=$!
 trap 'kill $SRV 2>/dev/null || true' EXIT
 sleep 1
 
-export TMPDIR=$D/tmpqemu
-mkdir -p "$TMPDIR"
+qemu_std_args "$VARS" 1024
+qemu_fat_args "$TMP"
+qemu_net_args 52:54:00:12:34:56
+
 cd "$D"
 timeout 120 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -m 1024 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file="$D/OVMF_VARS.fd" \
-  -drive file=fat:rw:"$TMP",format=raw,media=disk,cache=unsafe \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0,mac=52:54:00:12:34:56 \
+  "${QEMU_STD[@]}" \
+  "${QEMU_FAT[@]}" \
+  "${QEMU_NET[@]}" \
   -serial file:"$LOG" \
   -display none

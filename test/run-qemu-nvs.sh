@@ -22,33 +22,28 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 ROUND=${1:-verify}
 LOG=$D/qemu-nvs-$ROUND.log
 TMP=$D/tmp
+VARS=$D/OVMF_VARS.fd
 
 [ "$ROUND" = setup ] || [ "$ROUND" = verify ] || {
         echo "usage: $0 [setup|verify]" >&2
         exit 1
 }
 
-mkdir -p "$TMP"
-[ -e "$TMP/EFI/BOOT/BOOTX64.EFI" ] || {
-        echo "ERROR: $TMP/EFI/BOOT/BOOTX64.EFI missing (see header)" >&2
-        exit 1
-}
-if [ ! -e "$D/OVMF_VARS.fd" ]; then
-        cp /usr/share/OVMF/OVMF_VARS_4M.fd "$D/OVMF_VARS.fd"
-fi
-export TMPDIR=$D/tmpqemu
-mkdir -p "$TMPDIR"
+qemu_prepare "$TMP" "$VARS"
+qemu_std_args "$VARS" 1024
+qemu_fat_args "$TMP"
+qemu_net_args 52:54:00:12:34:56
+
 cd "$D"
 exec timeout 120 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -m 1024 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file="$D/OVMF_VARS.fd" \
-  -drive file=fat:rw:"$TMP",format=raw,media=disk,cache=unsafe \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0,mac=52:54:00:12:34:56 \
+  "${QEMU_STD[@]}" \
+  "${QEMU_FAT[@]}" \
+  "${QEMU_NET[@]}" \
   -serial file:"$LOG" \
   -display none
