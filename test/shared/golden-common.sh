@@ -67,7 +67,7 @@ golden_parse_args() {
 }
 
 release_embedded_components() {
-    [ -n "$EMBED_B64_CONNECT" ] || { echo "ERROR: 脚本未内嵌组件(运行 bash test/shared/embed-components.py 生成)" >&2; return 1; }
+    [ -n "$EMBED_B64_CONNECT" ] || { echo "ERROR: no embedded components (run bash test/shared/embed-components.py)" >&2; return 1; }
     local d; d=$(mktemp -d /tmp/nbft-components.XXXXXX)
     echo "$EMBED_B64_CONNECT" | base64 -d > "$d/nbft-connect"
     mkdir -p "$d/initramfs/hooks" "$d/initramfs/scripts/local-top"
@@ -85,7 +85,7 @@ golden_resolve_components() {
        && [ -f "$SCRIPT_DIR/../../initramfs-nbft/initramfs/scripts/local-top/nbft" ]; then
         COMPONENT_DIR=$(cd "$SCRIPT_DIR/../../initramfs-nbft" && pwd)
     else
-        echo "    仓库组件目录不可用，释放脚本内嵌组件..."
+        echo "    repository components unavailable, extracting the embedded copies..."
         COMPONENT_DIR=$(release_embedded_components) || exit 1
         # release runs in a command substitution; register the tree here so the
         # EXIT trap in the parent shell removes it.
@@ -95,10 +95,10 @@ golden_resolve_components() {
 
 golden_check_nbft_component() {
     [ -f "$COMPONENT_DIR/nbft-connect" ] || {
-        echo "ERROR: 缺少组件 $COMPONENT_DIR/nbft-connect（-d 指定目录）"; exit 1
+        echo "ERROR: missing $COMPONENT_DIR/nbft-connect (see -d)"; exit 1
     }
     grep -q -- '--hostid' "$COMPONENT_DIR/nbft-connect" || {
-        echo "ERROR: nbft-connect 缺少 hostid 修复（文档 3.1），请先更新组件"; exit 1
+        echo "ERROR: nbft-connect lacks the hostid fix (doc 3.1); update the component"; exit 1
     }
 }
 
@@ -111,9 +111,9 @@ golden_install_tlshd_config() {
 golden_init() {
     golden_parse_args "$@"
     golden_resolve_components
-    [ "$(id -u)" = 0 ] || { echo "ERROR: 请以 root 运行（母盘内）"; exit 1; }
+    [ "$(id -u)" = 0 ] || { echo "ERROR: run as root (inside the golden image)"; exit 1; }
     case "$KVER" in
-    '') echo "ERROR: 内核版本为空（-k 或 uname -r）" >&2; exit 1 ;;
+    '') echo "ERROR: empty kernel version (-k or uname -r)" >&2; exit 1 ;;
     esac
     INITRD_SRC=${INITRD_SRC_TEMPLATE//@KVER@/$KVER}
     INITRD_ESP_NAME=${INITRD_ESP_NAME_TEMPLATE//@KVER@/$KVER}
@@ -121,7 +121,7 @@ golden_init() {
 
 # ---------------------------------------------------------------- C ----------
 phase_c() {
-    log "[C] 系统配置（fstab / hostname）"
+    log "[C] system configuration (fstab / hostname)"
     python3 - <<'PYEOF'
 import shutil, time
 path = '/etc/fstab'
@@ -143,21 +143,21 @@ for ln in lines:
 if changed:
     shutil.copy(path, f"{path}.golden-{time.strftime('%Y%m%d%H%M%S')}.bak")
     open(path, 'w').writelines(out)
-    print('    fstab: 已注释 /boot/efi 行（备份 .golden-*.bak）')
+    print('    fstab: commented out /boot/efi (backup .golden-*.bak)')
 else:
-    print('    fstab: /boot/efi 已注释或不存在，无需改动')
+    print('    fstab: /boot/efi already commented out or absent')
 PYEOF
 
     rootdev=$(lsblk -no SOURCE / 2>/dev/null || findmnt -no SOURCE / 2>/dev/null || true)
     case "$rootdev" in
     UUID=*)
-        echo "    root 已用 UUID 挂载（$rootdev）"
+        echo "    root already mounted by UUID ($rootdev)"
         ;;
     /dev/*)
         rootuuid=$(blkid -s UUID -o value "$rootdev")
-        [ -n "$rootuuid" ] || { echo "ERROR: 无法获取 $rootdev 的 UUID"; exit 1; }
+        [ -n "$rootuuid" ] || { echo "ERROR: cannot read the UUID of $rootdev"; exit 1; }
         if grep -qE "^[^#].*[[:space:]]/[[:space:]]" /etc/fstab && [ -z "$(awk '$2=="/" && $1 !~ /^UUID=/' /etc/fstab)" ]; then
-            echo "    fstab 的 / 行已是 UUID=$rootuuid"
+            echo "    fstab / entry already uses UUID=$rootuuid"
         else
             python3 - "$rootuuid" <<'PYEOF'
 import shutil, sys, time
@@ -173,19 +173,19 @@ for ln in lines:
 if changed:
     shutil.copy(path, f"{path}.golden-{time.strftime('%Y%m%d%H%M%S')}.bak")
     open(path, 'w').writelines(out)
-    print(f'    fstab: / 行已写死 UUID={uuid}（备份 .golden-*.bak）')
+    print(f'    fstab: / entry pinned to UUID={uuid} (backup .golden-*.bak)')
 else:
-    print(f'    fstab: / 行已符合要求（UUID={uuid}）')
+    print(f'    fstab: / entry already compliant (UUID={uuid})')
 PYEOF
         fi
         ;;
-    *) echo "WARN: 无法识别 root 设备（$rootdev），跳过 root UUID 校验" ;;
+    *) echo "WARN: unknown root device ($rootdev), skipping the UUID check" ;;
     esac
 
     if [ "$PHASE_C_NETWORKD" = 1 ]; then
         mkdir -p /etc/systemd/network
         if [ -f /etc/systemd/network/10-dhcp.network ]; then
-            echo "    10-dhcp.network 已存在"
+            echo "    10-dhcp.network already present"
         else
             cat > /etc/systemd/network/10-dhcp.network <<'EOF'
 [Match]
@@ -194,20 +194,20 @@ Name=e*
 [Network]
 DHCP=yes
 EOF
-            echo "    已写入 10-dhcp.network（全链路 DHCP）"
+            echo "    wrote 10-dhcp.network (DHCP on all links)"
         fi
     fi
 
     # hostname 去标识：真实 hostname 由控制面在引导链中下发，母盘不留克隆身份。
     printf 'localhost\n' > /etc/hostname
-    echo "    hostname 占位: localhost（生产 hostname 由控制面下发）"
+    echo "    hostname placeholder: localhost (the control plane sets the production name)"
 }
 
 # ---------------------------------------------------------------- D ----------
 phase_d() {
-    log "[D] GRUB 启动参数"
+    log "[D] GRUB boot parameters"
     local grub=/etc/default/grub
-    [ -f "$grub" ] || { echo "ERROR: $grub 不存在"; exit 1; }
+    [ -f "$grub" ] || { echo "ERROR: $grub missing"; exit 1; }
     python3 - "$GRUB_ARGS" "$GRUB_DEFAULT_ONLY" "$GRUB_DROP_WORDS" <<'PYEOF'
 import shutil, sys, time
 path = '/etc/default/grub'
@@ -242,18 +242,18 @@ if not found:
 if changed:
     shutil.copy(path, f"{path}.golden-{time.strftime('%Y%m%d%H%M%S')}.bak")
     open(path, 'w').writelines(out)
-    print('    GRUB cmdline 已更新（追加 SAN 参数、移除 quiet/rhgb，备份 .golden-*.bak）')
+    print('    GRUB cmdline updated (SAN parameters added, quiet/rhgb removed, backup .golden-*.bak)')
 else:
-    print('    cmdline 已符合要求（含 SAN 参数且无 quiet/rhgb）')
+    print('    cmdline already compliant (SAN parameters present, no quiet/rhgb)')
 PYEOF
     if [ "$GRUB_REGEN" = update-grub ]; then
         update-grub
-        echo "    update-grub 完成"
+        echo "    update-grub done"
     else
         # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）
         grub2-mkconfig -o "$GRUB_CFG" >/dev/null || \
-            echo "WARN: grub2-mkconfig 失败（非致命：SAN 引导走 ESP/grub.cfg）"
-        echo "    grub2-mkconfig 完成"
+            echo "WARN: grub2-mkconfig failed (non-fatal: SAN boot uses ESP/grub.cfg)"
+        echo "    grub2-mkconfig done"
     fi
 }
 
@@ -311,51 +311,51 @@ PYEOF
 }
 
 phase_e() {
-    log "[E] 磁盘格式（4K 原生 GPT + 4K FAT32 ESP）"
+    log "[E] disk layout (4K native GPT + 4K FAT32 ESP)"
     local rootdev disk esp espsize
     # 兼容链：个别环境 lsblk 不支持 SOURCE 列（或 chroot 内无设备上下文）时降级 findmnt，
     # 均失败则跳过 root UUID 校验（保持安全）
     rootdev=$(lsblk -no SOURCE / 2>/dev/null || findmnt -no SOURCE / 2>/dev/null || true)
     esp=$(find_esp)
-    [ -b "$esp" ] || { echo "ERROR: 无法定位 ESP 分区"; exit 1; }
+    [ -b "$esp" ] || { echo "ERROR: cannot locate the ESP partition"; exit 1; }
 
     [ "$DO_DISK" = 1 ] && [ "$YES" != 1 ] && {
-        read -r -p "    将重写 GPT 为 4K 语义并重建 ESP；ESP 内容会刷新，继续？[y/N] " ans || ans=
+        read -r -p "    Rewrite the GPT with 4K sectors and rebuild the ESP; its content will be refreshed. Continue? [y/N] " ans || ans=
         case "$ans" in y | Y) ;; *) DO_DISK=0 ;; esac
     }
     if [ "$DO_DISK" = 1 ]; then
         if [ "$(ss -tn 2>/dev/null | awk 'NR>1 {print $4}' | grep -c ':4420$' || true)" -gt 0 ]; then
-            echo "ERROR: 检测到活跃 NVMe/TCP 连接（:4420），请先断开"; exit 1
+            echo "ERROR: active NVMe/TCP connection on :4420, disconnect it first"; exit 1
         fi
         # 盘 = root 所在整盘。LVM/dm root 的 PKNAME 为空；RHEL/SUSE 安装器默认
         # LVM 布局，故退化为 ESP 分区所在盘（母盘同盘布局，E 的目标就是引导盘）。
         disk=$(root_disk "$rootdev")
         if [ "$PHASE_E_LVM_FALLBACK" = 1 ]; then
             [ -n "$disk" ] || disk=$(root_disk "$esp")
-            [ -b "$disk" ] || { echo "ERROR: 无法定位引导盘（root=$rootdev esp=$esp）"; exit 1; }
+            [ -b "$disk" ] || { echo "ERROR: cannot locate the boot disk (root=$rootdev esp=$esp)"; exit 1; }
         else
-            [ -b "$disk" ] || { echo "ERROR: 无法定位 root 所在盘（$disk）"; exit 1; }
+            [ -b "$disk" ] || { echo "ERROR: cannot locate the disk holding root ($disk)"; exit 1; }
         fi
         espsize=$(lsblk -bno SIZE "$esp")
-        echo "    root: $rootdev  盘: $disk  ESP: $esp ($((espsize / 1024 / 1024)) MiB)"
+        echo "    root: $rootdev  disk: $disk  ESP: $esp ($((espsize / 1024 / 1024)) MiB)"
 
         # 4K FAT32 需要 >= 65525 簇（4K 簇 → 约 256 MiB），不足则拒绝（不自动扩分区）
         if [ "$espsize" -lt $((256 * 1024 * 1024)) ]; then
-            echo "ERROR: ESP 仅 $((espsize / 1024 / 1024)) MiB，4K FAT32 需 >= 256 MiB（文档 6.2），请先扩分区"; exit 1
+            echo "ERROR: ESP is only $((espsize / 1024 / 1024)) MiB; 4K FAT32 needs >= 256 MiB (doc 6.2), enlarge it first"; exit 1
         fi
 
         local sec
         sec=$(gpt_sector "$disk")
         case "$sec" in
-        4096) echo "    GPT 已是 4K 语义，跳过转换" ;;
+        4096) echo "    GPT already uses 4K sectors, skipping the conversion" ;;
         512)  convert_gpt_4k "$disk" ;;
-        none) echo "ERROR: $disk 上未找到 GPT（512 或 4K 均无）"; exit 1 ;;
+        none) echo "ERROR: no GPT found on $disk (neither 512 nor 4K)"; exit 1 ;;
         esac
 
         # ESP 重建（4K FAT32，固定 volid；fstab 已注释故系统内不再挂载）
         umount /boot/efi 2>/dev/null || true
         if esp_is_4k_volid "$esp"; then
-            echo "    ESP 已是 4K FAT32（volid $ESP_VOLID），跳过 mkfs"
+            echo "    ESP already 4K FAT32 (volid $ESP_VOLID), skipping mkfs"
         else
             # Debian/Ubuntu 的 cloud img ESP 可能只有 ~106 MiB 且被识别为 FAT16，
             # 故 Debian 变体显式 -F 32；RHEL/SUSE 用默认探测。
@@ -369,23 +369,23 @@ with open(sys.argv[1], 'r+b') as f:
     f.seek(0x43)
     f.write(struct.pack('<I', int(sys.argv[2], 16)))
 v = sys.argv[2]
-print(f'    volid 已写入 BPB 0x43（{v[:4]}-{v[4:]}）')
+print(f'    volid written at BPB 0x43 ({v[:4]}-{v[4:]})')
 PYEOF
-            echo "    ESP 已重建为 4K FAT32（volid $ESP_VOLID）"
+            echo "    ESP rebuilt as 4K FAT32 (volid $ESP_VOLID)"
         fi
     else
         # --skip-disk 只跳过 GPT/ESP 重建，ESP 内容仍每次刷新：
         # 新 initrd 不落 ESP 是"改动不生效"的最常见来源（AGENTS §9）。
-        echo "    --skip-disk：跳过 GPT 转换与 ESP 重建，仅刷新 ESP 内容"
+        echo "    --skip-disk: GPT conversion and ESP rebuild skipped, content refreshed"
     fi
 
-    [ -f "/boot/vmlinuz-$KVER" ] || { echo "ERROR: /boot/vmlinuz-$KVER 不存在"; exit 1; }
-    [ -f "$INITRD_SRC" ] || { echo "ERROR: $INITRD_SRC 不存在"; exit 1; }
+    [ -f "/boot/vmlinuz-$KVER" ] || { echo "ERROR: /boot/vmlinuz-$KVER missing"; exit 1; }
+    [ -f "$INITRD_SRC" ] || { echo "ERROR: $INITRD_SRC missing"; exit 1; }
 
     if ! findmnt /boot/efi >/dev/null 2>&1; then
         mkdir -p /boot/efi
         mount "$esp" /boot/efi
-        echo "    挂载 ESP → /boot/efi"
+        echo "    mounted ESP at /boot/efi"
     fi
     find /boot/efi -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
@@ -398,12 +398,12 @@ PYEOF
         # 默认: 脚本内嵌的 GRUB 2.14 产物(实测引导基线),零宿主依赖
         GRUB_EFI=$(mktemp /tmp/BOOTX64.XXXXXX.EFI)
         echo "$EMBED_B64_BOOTX64" | base64 -d > "$GRUB_EFI"
-        echo "    使用脚本内嵌 GRUB 2.14 产物"
+        echo "    using the embedded GRUB 2.14 image"
     fi
     if [ -n "${GRUB_EFI:-}" ]; then
-        [ -f "$GRUB_EFI" ] || { echo "ERROR: --grub-efi 文件不存在: $GRUB_EFI"; exit 1; }
+        [ -f "$GRUB_EFI" ] || { echo "ERROR: --grub-efi file missing: $GRUB_EFI"; exit 1; }
         install -m 0644 "$GRUB_EFI" /boot/efi/EFI/BOOT/BOOTX64.EFI
-        echo "    BOOTX64.EFI 使用预构建注入（$GRUB_EFI）"
+        echo "    BOOTX64.EFI injected from $GRUB_EFI"
     else
         # 发行版 grub-mkimage 版本门控：Debian 12 自带 2.06 的产物在 SAN 引导路径
         # 实测卡死（发行版缺陷，与 4K 逻辑块无关；2026-09-04 实测，见文档 6.3）
@@ -412,17 +412,17 @@ PYEOF
         # 版本比较统一用 awk 数值比较（Debian 侧原先用 dpkg --compare-versions，
         # 对 2.x 形式结果一致）；< 2.12 的产物在 SAN 引导路径实测卡死。
         if [ -z "$gver" ] || ! awk -v v="$gver" 'BEGIN { exit !(v + 0 >= 2.12) }'; then
-            echo "ERROR: 母盘 $GRUB_MKIMAGE 版本 ${gver:-未知} < 2.12，其 BOOTX64.EFI 在 SAN 引导路径卡死。出路：" >&2
-            echo "       a) 宿主机（grub 2.14+）生成后 --grub-efi 注入；" >&2
-            echo "       b) 母盘升级 grub2/grub-efi >= 2.12 后重跑本脚本。" >&2
+            echo "ERROR: golden image $GRUB_MKIMAGE version ${gver:-unknown} < 2.12; its BOOTX64.EFI hangs on the SAN boot path. Options:" >&2
+            echo "       a) build it on the host (grub 2.14+) and inject with --grub-efi;" >&2
+            echo "       b) upgrade grub2/grub-efi to >= 2.12 in the image and rerun." >&2
             exit 1
         fi
         if ! "$GRUB_MKIMAGE" -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods; then
-            echo "WARN: $GRUB_MKIMAGE 含 echo 失败，降级重试（echo 模块缺失）"
+            echo "WARN: $GRUB_MKIMAGE with echo failed, retrying without it"
             grub_mods=${grub_mods/ echo/}
             "$GRUB_MKIMAGE" -O x86_64-efi -o /boot/efi/EFI/BOOT/BOOTX64.EFI -p /EFI/BOOT $grub_mods
         fi
-        echo "    BOOTX64.EFI 生成（$GRUB_MKIMAGE $gver）"
+        echo "    BOOTX64.EFI generated ($GRUB_MKIMAGE $gver)"
     fi
 
     local rootuuid rd_lvm="" vglv
@@ -441,17 +441,17 @@ menuentry '${MENU_LABEL} (SAN, ${KVER})' {
     initrd /${INITRD_ESP_NAME}
 }
 EOF
-    echo "    grub.cfg 已生成（ESP UUID=$ESP_UUID, root UUID=$rootuuid${rd_lvm:+，$rd_lvm}）"
+    echo "    grub.cfg written (ESP UUID=$ESP_UUID, root UUID=$rootuuid${rd_lvm:+, $rd_lvm})"
 
     umount /boot/efi
-    echo "    ESP 内容就绪，已卸载"
+    echo "    ESP content ready, unmounted"
 }
 
 # 512 扇区 GPT → 4K 原生 GPT（设备版；与 diag/convert-gpt-4k.sh 同源，仅输入为块设备）
 convert_gpt_4k() {
     local disk=$1 bak=/root/golden-image-gpt-512-$(date +%Y%m%d%H%M%S).bak size
     size=$(blockdev --getsize64 "$disk")
-    echo "    GPT 512 → 4K 转换（盘 $((size / 1024 / 1024)) MiB），备份到 $bak"
+    echo "    GPT 512 -> 4K conversion (disk $((size / 1024 / 1024)) MiB), backup at $bak"
     python3 - "$disk" "$size" "$bak" <<'PYEOF'
 import struct, sys, zlib
 disk, size, bak = sys.argv[1], int(sys.argv[2]), sys.argv[3]
@@ -547,41 +547,41 @@ with open(disk, 'rb') as f:                      # verify
     assert h[0:8] == b'EFI PART', 'verify: header signature missing'
     hcrc = bytearray(h[:92]); hcrc[16:20] = b'\x00\x00\x00\x00'
     assert struct.unpack('<I', h[16:20])[0] == crc(hcrc), 'verify: header CRC mismatch'
-print('    4K GPT 写入并验证通过（转换前 GPT 已备份）')
+print('    4K GPT written and verified (pre-conversion GPT backed up)')
 PYEOF
 }
 
 # ---------------------------------------------------------------- F ----------
 phase_f() {
-    log "[F] 无状态校验"
+    log "[F] stateless checks"
     local dirs=("$@")
     if grep -rnE 'hostnqn|dhchap|secret|kurrent:host|tls_psk' \
         /etc/hostname /etc/hosts /etc/fstab /etc/default/grub "${dirs[@]}" 2>/dev/null; then
-        echo "WARN: 上述位置疑似身份硬编码，请人工确认"
+        echo "WARN: possible identity hard-coding in the paths above, review manually"
     else
-        echo "    身份检查：系统配置中无 hostnqn/dhchap/secret/tls_psk 硬编码"
+        echo "    identity: no hostnqn/dhchap/secret/tls_psk hard-coded in system config"
     fi
     # 连接信息（target 地址/端口/NQN）只允许出现在内存中的 NBCT：
     if grep -rlnE 'nvme://|traddr|trsvcid|tls_psk|nbft-secret' /etc 2>/dev/null \
         | grep -vE '^/etc/(ssl|pki|crypto-policies)/' | head -5 | grep -q .; then
-        echo "WARN: /etc 下疑似连接信息硬编码（见上）"
+        echo "WARN: possible connection hard-coding under /etc (see above)"
     else
-        echo "    连接信息检查：/etc 下无 nvme:// / traddr / trsvcid / tls_psk"
+        echo "    connection: no nvme:// / traddr / trsvcid / tls_psk under /etc"
     fi
     for f in /etc/nvme/hostnqn /etc/nvme/hostid /etc/nvme/discovery.conf; do
-        [ -e "$f" ] && echo "WARN: $f 存在（host NQN 应由 NBCT 每次下发，不应落盘）"
+        [ -e "$f" ] && echo "WARN: $f exists (the host NQN must come from NBCT every boot, not from disk)"
     done
-    echo "    hostname 占位: $(cat /etc/hostname)"
+    echo "    hostname placeholder: $(cat /etc/hostname)"
     cat <<EOF
 
-==> 定制完成。验收清单（克隆分发后 SAN 冷启动一轮）：
-  1. 固件段：sanboot 握手（DH-HMAC-CHAP 或 TLS 1.3 PSK）后注册 SAN 设备
-  2. 内核段：nbft-connect 按 NBCT 逐条 connect（--dhchap-secret / --tls），
-     target 端 dmesg 出现 "Created nvm controller ... , TLS."（固件段 + 内核段各一次）
-  3. nvme0n1 分区 → rootfs 挂载 → login:
-  4. 无 keep-alive 错误、无 emergency mode
-  注意：本盘已转为 4K 语义，512 环境（VMware/QEMU 默认虚拟盘）不再可读；
-       仅 SAN（nvmet 4K 块）或 4Kn 环境可引导。
+==> Customization complete. Acceptance checklist (one cold SAN boot after distribution):
+  1. firmware: sanboot handshake (DH-HMAC-CHAP or TLS 1.3 PSK), then the SAN device registers
+  2. kernel: nbft-connect connects each NBCT entry (--dhchap-secret / --tls);
+     the target dmesg shows "Created nvm controller ... , TLS." (once per stage)
+  3. nvme0n1 partitions -> rootfs mounted -> login:
+  4. no keep-alive errors, no emergency mode
+  Note: this disk now uses 4K sectors; 512-byte environments (VMware/QEMU default
+        disks) can no longer read it. Only SAN (nvmet 4K blocks) or 4Kn can boot it.
 EOF
 }
 
@@ -753,7 +753,7 @@ EOF
 
 # Full B stage for the NetworkManager variants (shared package-independent part).
 phase_b_dracut_nm() {
-    log "[B] initramfs 种子模块（dracut 95nbft：NBCT 凭据 + 内核段 TLS）"
+    log "[B] initramfs seed module (dracut 95nbft: NBCT credentials + kernel TLS)"
     golden_check_nbft_component
     install -m 0755 "$COMPONENT_DIR/nbft-connect" /usr/libexec/nbft-connect
     golden_install_tlshd_config
@@ -769,8 +769,8 @@ phase_b_dracut_nm() {
     nbft_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'nbft' || true)
     nm_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'NetworkManager' || true)
     tls_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'tlshd' || true)
-    [ "$nbft_count" -gt 0 ] || { echo "ERROR: $img 中未找到 nbft 组件"; exit 1; }
-    [ "$nm_count" -gt 0 ] || { echo "ERROR: $img 中未找到 NetworkManager（initrd DHCP 承担者）"; exit 1; }
-    [ "$tls_count" -gt 0 ] || { echo "ERROR: $img 中未找到 tlshd（内核段 TLS 必需）"; exit 1; }
-    echo "    $img 已含 nbft（$nbft_count 项）、NetworkManager（$nm_count 项）、tlshd（$tls_count 项）"
+    [ "$nbft_count" -gt 0 ] || { echo "ERROR: $img has no nbft component"; exit 1; }
+    [ "$nm_count" -gt 0 ] || { echo "ERROR: $img has no NetworkManager (initrd DHCP owner)"; exit 1; }
+    [ "$tls_count" -gt 0 ] || { echo "ERROR: $img has no tlshd (required for kernel TLS)"; exit 1; }
+    echo "    $img contains nbft ($nbft_count), NetworkManager ($nm_count), tlshd ($tls_count)"
 }

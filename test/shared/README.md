@@ -39,3 +39,19 @@ python3 test/shared/verify-embed.py
 
 `assets/BOOTX64-2.14-generic.EFI` is the GRUB image embedded into the golden
 scripts; see `docs/build-artifacts.md` for its origin and licence.
+
+## Test NQNs
+
+Fixtures use the project test domain:
+
+| Role | NQN |
+|---|---|
+| subsystem | `nqn.2026-07.com.kurrent:test` |
+| host | `nqn.2026-07.com.kurrent:host.test` |
+| extra namespaces | `nqn.2026-07.com.kurrent:disk0`, `:disk1` |
+
+These replace the old `nqn.2026-08.org.ipxe-stateless:*` and
+`nqn.2026-08.test:*` names. `nqn.2014-08.org.ipxe:ipxe` is the upstream iPXE
+fallback host NQN used when the platform provides no SMBIOS UUID; it is not a
+project name. Historical verification records under `docs/` keep the values
+observed at the time.

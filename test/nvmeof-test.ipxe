@@ -10,7 +10,7 @@ chain http://10.0.2.2:8001/hello.txt && echo HTTP-8001-OK || echo HTTP-8001-FAIL
 echo === HTTP-TCP-TEST end ===
 
 echo === NVME-TCP-TEST: sanboot begin ===
-sanboot nvme://10.0.2.2:4420/nqn.2026-08.org.ipxe-stateless:test
+sanboot nvme://10.0.2.2:4420/nqn.2026-07.com.kurrent:test
 echo === NVME-TCP-TEST: sanboot rc = ${?} ===
 echo === NVME-TCP-TEST: sanboot failed, no GRUB handover ===
 shell

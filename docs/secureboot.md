@@ -1,5 +1,7 @@
 # Secure Boot boot profile
 
+[English](secureboot.md) | [中文](secureboot.zh-CN.md)
+
 This is an **optional** build profile. The default L1 firmware (network
 boundary + TOFU) is unchanged; `build/build.sh` never applies anything from
 `patches/secureboot/`.

@@ -95,9 +95,9 @@ build_nbct_header() { # $1=tbl $2=count
 build_nbct() { # $1=dir  ->  $1/NBCT with two entries (auth + plain)
 	local t="$1/NBCT"
 	build_nbct_header "$t" 2
-	build_entry "$t" '192.0.2.10' '4420' 'nqn.2026-08.test:disk0' \
-		'nqn.2026-08.test:host' '00112233445566778899aabbccddeeff' '' ''
-	build_entry "$t" '192.0.2.11' '' 'nqn.2026-08.test:disk1' '' '' '' ''
+	build_entry "$t" '192.0.2.10' '4420' 'nqn.2026-07.com.kurrent:disk0' \
+		'nqn.2026-07.com.kurrent:host.test' '00112233445566778899aabbccddeeff' '' ''
+	build_entry "$t" '192.0.2.11' '' 'nqn.2026-07.com.kurrent:disk1' '' '' '' ''
 }
 
 # --- scenario A: NBCT path --------------------------------------------------
@@ -107,11 +107,11 @@ build_nbct "$WORK/a"
 run_connect "$WORK/a" || true   # rc checked via mock log assertions below
 
 check "entry0 connects with host NQN and secret" <<'EOF'
-grep -Fq "connect -t tcp -a 192.0.2.10 -s 4420 -n nqn.2026-08.test:disk0 -q nqn.2026-08.test:host --hostid 11111111-2222-3333-4444-555555555555 --dhchap-secret 00112233445566778899aabbccddeeff" "$MOCK_LOG"
+grep -Fq "connect -t tcp -a 192.0.2.10 -s 4420 -n nqn.2026-07.com.kurrent:disk0 -q nqn.2026-07.com.kurrent:host.test --hostid 11111111-2222-3333-4444-555555555555 --dhchap-secret 00112233445566778899aabbccddeeff" "$MOCK_LOG"
 EOF
 
 check "entry1 (unauthenticated) connects without secret options" <<'EOF'
-grep -Fq "connect -t tcp -a 192.0.2.11 -s 4420 -n nqn.2026-08.test:disk1" "$MOCK_LOG" && ! grep -Fq -- "--dhchap-secret" <(grep "disk1" "$MOCK_LOG")
+grep -Fq "connect -t tcp -a 192.0.2.11 -s 4420 -n nqn.2026-07.com.kurrent:disk1" "$MOCK_LOG" && ! grep -Fq -- "--dhchap-secret" <(grep "disk1" "$MOCK_LOG")
 EOF
 
 check "no connect-all --nbft fallback when NBCT present" <<'EOF'
@@ -165,8 +165,8 @@ mkdir -p "$WORK/e"
 TLS_PSK_HEX='000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
 # build_nbct_header truncates/creates the table; build_entry appends to it.
 build_nbct_header "$WORK/e/NBCT" 1
-build_entry "$WORK/e/NBCT" '192.0.2.20' '4420' 'nqn.2026-08.test:disk0' \
-	'nqn.2026-08.test:host' '' '4421' "$TLS_PSK_HEX"
+build_entry "$WORK/e/NBCT" '192.0.2.20' '4420' 'nqn.2026-07.com.kurrent:disk0' \
+	'nqn.2026-07.com.kurrent:host.test' '' '4421' "$TLS_PSK_HEX"
 
 # Fake /proc/keys listing carrying the .nvme keyring (hex serial 1a2b3c4d).
 printf '1a2b3c4d I--Q---   1 perm 3f010000  1000 keyring  .nvme: 2\n' \
@@ -186,12 +186,12 @@ MOCK_LOG="$MOCK_LOG" NVME="$WORK/mock-nvme" NBFT_SYSFS_PATH="$WORK/e" \
 	"$SHELL_UNDER_TEST" "$SCRIPT" --connect 2>"$WORK/stderr.log" || true
 
 check "TLS entry connects on the TLS port with --tls and no DH-HMAC-CHAP" <<'EOF'
-grep -Fq "connect -t tcp -a 192.0.2.20 -s 4421 -n nqn.2026-08.test:disk0 -q nqn.2026-08.test:host --hostid 11111111-2222-3333-4444-555555555555 --tls" "$MOCK_LOG" \
+grep -Fq "connect -t tcp -a 192.0.2.20 -s 4421 -n nqn.2026-07.com.kurrent:disk0 -q nqn.2026-07.com.kurrent:host.test --hostid 11111111-2222-3333-4444-555555555555 --tls" "$MOCK_LOG" \
 	&& ! grep -Fq -- "--dhchap-secret" "$MOCK_LOG"
 EOF
 
 check "TLS entry injects the PSK under the NVMe0R01 identity into .nvme" <<'EOF'
-grep -Fq "padd psk NVMe0R01 nqn.2026-08.test:host nqn.2026-08.test:disk0 0x1a2b3c4d" "$WORK/e/keyctl.log"
+grep -Fq "padd psk NVMe0R01 nqn.2026-07.com.kurrent:host.test nqn.2026-07.com.kurrent:disk0 0x1a2b3c4d" "$WORK/e/keyctl.log"
 EOF
 
 check "injected PSK payload is the raw bytes decoded from the hex field" <<'EOF'

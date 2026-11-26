@@ -20,7 +20,7 @@ echo "uuid = ${uuid}"
 echo === CRED-FETCH end ===
 
 echo === NVME-TCP-AUTH-TEST: sanboot begin ===
-sanboot nvme://10.0.2.2:4420/nqn.2026-08.org.ipxe-stateless:test?secret=${nbft-secret}
+sanboot nvme://10.0.2.2:4420/nqn.2026-07.com.kurrent:test?secret=${nbft-secret}
 echo === NVME-TCP-AUTH-TEST: sanboot rc = ${?} ===
 echo === NVME-TCP-AUTH-TEST: sanboot failed, no GRUB handover ===
 shell

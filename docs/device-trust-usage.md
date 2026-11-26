@@ -1,95 +1,107 @@
-# 设备信任根能力使用文档（主仓库参考）
+# Device Trust Root Capabilities Usage (Main Repository Reference)
 
-> 面向 Kurrent 主仓库的固件侧能力使用说明：TPM 2.0 设备身份（AK 与
-> PCR quote）、TOFU HTTPS 信任、NVRAM 持久化设置与证明接口契约。对应
-> 固件补丁 0006/0007/0008/0011（见 [patches/README.md](../patches/README.md)
-> 与 [customizations.md](customizations.md) 的 ## 6/7/8/11）。
+[English](device-trust-usage.md) | [中文](device-trust-usage.zh-CN.md)
 
-## 1. 能力总览
+> Firmware-side capability notes for the Kurrent main repository: TPM 2.0 device
+> identity (AK and PCR quote), TOFU HTTPS trust, NVRAM-persisted settings and the
+> attestation interface contract. Corresponds to firmware patches
+> 0006/0007/0008/0011 (see [patches/README.md](../patches/README.md) and sections
+> ## 6/7/8/11 of [customizations.md](customizations.md)).
 
-固件侧交付的能力（R1-R6），全部为**命令/设置层能力**——业务逻辑（注册、
-挑战-签发、证明校验）由主仓库引导脚本与控制面实现，固件不感知。
+## 1. Capability Overview
 
-| 需求 | 固件能力 | 使用入口 |
+The capabilities delivered by the firmware side (R1-R6) are all **command and
+setting layer capabilities**—business logic (registration, challenge-issuance,
+attestation verification) is implemented by the main repository boot scripts and
+the control plane, and is not visible to the firmware.
+
+| Requirement | Firmware capability | Entry point |
 |---|---|---|
-| R1 | HTTPS 下载（TLS 1.2，iPXE 原生实现） | `imgfetch` / `chain` `https://...` |
-| R2 | TOFU 信任（首次接触放行 + 指纹 pin） | 自动生效（无命令） |
-| R3 | EFI 变量 NVS 后端（重启保留） | `server-fingerprint` / `trust` 设置 |
-| R4 | TPM 内创建 / 复用设备身份密钥 | `akgen` 命令（幂等） |
-| R5 | 导出 AK 公钥、名称、算法与 Secure Boot 状态 | `akpub` 命令 |
-| R6 | 对 PCR 0/2/4/7 做 SHA-256 quote | `quote <nonce>` 命令 |
+| R1 | HTTPS download (TLS 1.2, native iPXE implementation) | `imgfetch` / `chain` `https://...` |
+| R2 | TOFU trust (first-contact acceptance + fingerprint pinning) | Automatic (no command) |
+| R3 | EFI variable NVS backend (survives reboot) | `server-fingerprint` / `trust` settings |
+| R4 | Create / reuse the device identity key inside the TPM | `akgen` command (idempotent) |
+| R5 | Export the AK public key, name, algorithm and Secure Boot state | `akpub` command |
+| R6 | SHA-256 quote over PCRs 0/2/4/7 | `quote <nonce>` command |
 
-设备身份**没有软件私钥**：AK 的私钥由 TPM 生成并保管、不可导出，固件
-只导出公钥与签名。没有 TPM 时上述命令以非零状态退出（`-ENODEV`），
-不存在软件回退。
+The device identity has **no software private key**: the AK private key is
+generated and held by the TPM, cannot be exported, and the firmware exports only
+the public key and signatures. Without a TPM these commands exit with a non-zero
+status (`-ENODEV`); no software fallback exists.
 
-## 2. 命令参考
+## 2. Command Reference
 
-### 2.1 `akgen` —— 创建 / 复用 AK
+### 2.1 `akgen` — Create / Reuse the AK
 
 ```
 akgen
 ```
 
-- **行为**：在 TPM 内创建 restricted signing 密钥（优先 ECC P-256，
-  TPM 拒绝时回退 RSA-2048），用 `TPM2_EvictControl` 持久化到句柄
-  `0x81000001`，随后释放临时句柄。私钥永不出 TPM，固件也不读取。
-- **幂等性**：已存在 AK 时只读确认、不重建、不覆盖，输出
-  `akgen: attestation key already present` 并返回 0；首次创建输出
-  `akgen: attestation key created`。
-- **持久化**：AK 在 TPM NV 中，与 EFI 变量无关——清空 OVMF 变量存储
-  后重启仍复用同一把 AK。
-- **典型用法**：引导脚本开头无条件调用一次：`akgen || echo "identity: 错误"`。
-- **换 AK**：固件无覆盖路径。只能走管理员恢复（删除设备登记后重新
-  入池），或清除/更换 TPM。
+- **Behaviour**: creates a restricted signing key inside the TPM (ECC P-256
+  preferred, falling back to RSA-2048 when the TPM rejects it), persists it to
+  handle `0x81000001` with `TPM2_EvictControl`, then releases the transient
+  handle. The private key never leaves the TPM, and the firmware never reads it.
+- **Idempotence**: when an AK already exists it is only read and confirmed—never
+  rebuilt or overwritten—printing `akgen: attestation key already present` and
+  returning 0; the first creation prints `akgen: attestation key created`.
+- **Persistence**: the AK lives in TPM NV and is independent of EFI variables—after
+  wiping the OVMF variable store and rebooting, the same AK is still reused.
+- **Typical use**: call it unconditionally once at the start of the boot script:
+  `akgen || echo "identity: error"`.
+- **Replacing the AK**: the firmware has no overwrite path. Only administrator
+  recovery is available (delete the device registration and re-enrol the device),
+  or clearing/replacing the TPM.
 
-### 2.2 `akpub` —— 导出身份并发布 Secure Boot 状态
+### 2.2 `akpub` — Export the Identity and Publish the Secure Boot State
 
 ```
 akpub
 ```
 
-- **前置条件**：`akgen` 已成功（否则
-  `akpub: no attestation key (run akgen first)`）。
-- **输出与设置**（仅本次启动的内存设置，重启即失）：
+- **Precondition**: `akgen` has succeeded (otherwise
+  `akpub: no attestation key (run akgen first)`).
+- **Outputs and settings** (in-memory settings for the current boot only, lost on
+  reboot):
 
-  | 输出行 | 设置名 | 内容 |
+  | Output line | Setting name | Content |
   |---|---|---|
-  | `ak-public:` | `ak-public` | 公钥 SubjectPublicKeyInfo DER 的 hex |
-  | `ak-name:` | `ak-name` | TPM2B_NAME，68 hex（`000b` + 公钥结构 SHA-256） |
-  | `ak-type:` | `ak-type` | `ecc_p256` 或 `rsa2048`（字符串） |
-  | `sb:` | `sb` | `1` / `0`：读取 EFI 全局变量 `SecureBoot` 得出 |
+  | `ak-public:` | `ak-public` | Hex of the public key SubjectPublicKeyInfo DER |
+  | `ak-name:` | `ak-name` | TPM2B_NAME, 68 hex (`000b` + SHA-256 of the public key structure) |
+  | `ak-type:` | `ak-type` | `ecc_p256` or `rsa2048` (string) |
+  | `sb:` | `sb` | `1` / `0`: derived from the EFI global variable `SecureBoot` |
 
-- `sb` 在导出公钥之前写入，因此即便 TPM 不可用，只要 `akpub` 被执行过，
-  `${sb}` 也有值；无 TPM 时 `${ak-public}` / `${ak-name}` / `${ak-type}` 为空。
-- 脚本内访问：`${ak-public}`、`${ak-name}`、`${ak-type}`、`${sb}`。
+- `sb` is written before the public key is exported, so even if the TPM is
+  unavailable, `${sb}` has a value as long as `akpub` has been executed; without
+  a TPM `${ak-public}` / `${ak-name}` / `${ak-type}` are empty.
+- Access from scripts: `${ak-public}`, `${ak-name}`, `${ak-type}`, `${sb}`.
 
-### 2.3 `quote <nonce>` —— PCR 证明
+### 2.3 `quote <nonce>` — PCR Attestation
 
 ```
 quote <nonce>
 ```
 
-- **前置条件**：AK 已存在。
-- **行为**：一次 `TPM2_Quote` 调用内完成 PCR 0/2/4/7（SHA-256 银行）的
-  读取与签名；`nonce` 原样作为 `qualifyingData` 写入 `extraData`（64 个
-  hex 字符 = 64 个 ASCII 字节，**不做 hex 解码**）。
-- **输出与设置**：
+- **Precondition**: the AK exists.
+- **Behaviour**: a single `TPM2_Quote` call reads and signs PCRs 0/2/4/7 (SHA-256
+  bank); `nonce` is written verbatim as `qualifyingData` into `extraData` (64 hex
+  characters = 64 ASCII bytes, **no hex decoding**).
+- **Outputs and settings**:
 
-  | 输出行 | 设置名 | 内容 |
+  | Output line | Setting name | Content |
   |---|---|---|
-  | `quote:` | `quote` | TPMS_ATTEST 原始字节 hex（不含 TPM2B 长度前缀） |
-  | `quote-sig:` | `quote-sig` | 对 quote 原始字节的签名 hex（ECC：ASN.1 DER；RSA：PKCS#1 v1.5） |
+  | `quote:` | `quote` | Hex of the raw TPMS_ATTEST bytes (without the TPM2B length prefix) |
+  | `quote-sig:` | `quote-sig` | Hex of the signature over the raw quote bytes (ECC: ASN.1 DER; RSA: PKCS#1 v1.5) |
 
-- 固件在导出前自检：magic `0xFF544347`、type `0x8018`、单条 SHA-256 选择、
-  位图 `95 00 00`（PCR 0/2/4/7）、32 字节 PCR 摘要。
-- `nonce` 长度限制 1–64 字节；控制面固定下发 64 个 hex 字符。
+- Before exporting, the firmware self-checks: magic `0xFF544347`, type `0x8018`, a
+  single SHA-256 selection, bitmap `95 00 00` (PCRs 0/2/4/7), 32-byte PCR digest.
+- `nonce` length is limited to 1–64 bytes; the control plane always delivers 64
+  hex characters.
 
-### 2.4 `nvclear` —— 清空设备 NVRAM
+### 2.4 `nvclear` — Clear the Device NVRAM
 
-一条命令清空本项目在非易失存储里的全部设置（`server-fingerprint`、
-`trust`），把设备的 TOFU 状态还原到出厂态。设备身份在 TPM 中，不受
-`nvclear` 影响。
+A single command clears every setting this project stores in non-volatile storage
+(`server-fingerprint`, `trust`), restoring the device's TOFU state to factory
+defaults. The device identity lives in the TPM and is unaffected by `nvclear`.
 
 ```
 iPXE> nvclear
@@ -98,108 +110,124 @@ nvclear: trust: not present
 nvclear: device NVRAM cleared
 ```
 
-- 逐项报告三种结果：`cleared` / `not present`（本就为空）/ `could not
-  clear: <errno>`；任一项失败时末行输出 `nvclear: incomplete` 并返回
-  非零，供脚本判定。
-- 清理效果**重启后仍然成立**（补丁 0006 让长度归零的选项块也真正下发
-  写操作，见 [customizations.md](customizations.md) 的 §6）。
-- 只动本项目这两个设置，不触碰其它 UEFI 变量。
-- 等价的手工写法是逐项 `clear nvo/<设置名>`——**必须带 `nvo/` 块前缀**；
-  裸 `clear server-fingerprint` 只清掉内存影子，见 §3 与 §7。
-- 验收：`test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh`（§8）。
+- Each item is reported with one of three results: `cleared` / `not present`
+  (already empty) / `could not clear: <errno>`; if any item fails, the last line
+  reads `nvclear: incomplete` and the command returns non-zero so scripts can act
+  on it.
+- The clearing effect **persists across reboots** (patch 0006 makes zero-length
+  option blocks actually issue a write; see §6 of
+  [customizations.md](customizations.md)).
+- Only these two settings of this project are touched; no other UEFI variables are
+  modified.
+- The equivalent manual form is `clear nvo/<setting>` per item—**the `nvo/` block
+  prefix is mandatory**; a bare `clear server-fingerprint` only clears the
+  in-memory shadow, see §3 and §7.
+- Acceptance: `test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh` (§8).
 
-## 3. 设置项参考
+## 3. Settings Reference
 
-| 设置名 | 类型 | 标签 | 持久性 | 来源 |
+| Setting name | Type | Tag | Persistence | Source |
 |---|---|---|---|---|
-| `server-fingerprint` | hexraw | DHCP 0x5f | **NVRAM（重启保留）** | 0006 定义，TOFU 写入 |
-| `trust` | hex | DHCP 0x5a | 上游既有（NVRAM 覆盖根证书表） | TOFU 镜像 |
-| `ak-public` | hexraw | DHCP 0x60 | 内存（本次启动） | `akpub` |
-| `quote` | hexraw | DHCP 0x61 | 内存（本次启动） | `quote` |
-| `quote-sig` | hexraw | DHCP 0x62 | 内存（本次启动） | `quote` |
-| `ak-name` | hexraw | DHCP 0x63 | 内存（本次启动） | `akpub` |
-| `ak-type` | string | DHCP 0x64 | 内存（本次启动） | `akpub` |
-| `sb` | string | DHCP 0x65 | 内存（本次启动） | `akpub` |
+| `server-fingerprint` | hexraw | DHCP 0x5f | **NVRAM (survives reboot)** | Defined by 0006, written by TOFU |
+| `trust` | hex | DHCP 0x5a | Pre-existing upstream (NVRAM overrides the root certificate table) | TOFU mirror |
+| `ak-public` | hexraw | DHCP 0x60 | Memory (current boot) | `akpub` |
+| `quote` | hexraw | DHCP 0x61 | Memory (current boot) | `quote` |
+| `quote-sig` | hexraw | DHCP 0x62 | Memory (current boot) | `quote` |
+| `ak-name` | hexraw | DHCP 0x63 | Memory (current boot) | `akpub` |
+| `ak-type` | string | DHCP 0x64 | Memory (current boot) | `akpub` |
+| `sb` | string | DHCP 0x65 | Memory (current boot) | `akpub` |
 
-- 脚本内访问：`${server-fingerprint}`、`${trust}`、`${ak-public}`、
-  `${quote}`、`${quote-sig}`、`${ak-name}`、`${ak-type}`、`${sb}`。
-- 身份与证明设置均为**同一次启动内**的命令输出暂存，不落 NVRAM。
-- 清空持久设置即删除，**必须带 `nvo/` 块前缀**（NVO 设置均为封装
-  tag，从根路由不匹配）：`clear nvo/server-fingerprint` 删除指纹。
-  裸 `clear server-fingerprint` 或 `set server-fingerprint`（无值）对
-  NVS 后端**无效**（实测），见 §7。一次清空两项用 `nvclear`（§2.4）。
-- 手工给 `trust` 赋值时要注意类型是 `hex`（`33:33:…` 冒号分隔），
-  不是 `hexraw`；写成无分隔的 `3333…` 会被拒（`Invalid argument`）。
+- Access from scripts: `${server-fingerprint}`, `${trust}`, `${ak-public}`,
+  `${quote}`, `${quote-sig}`, `${ak-name}`, `${ak-type}`, `${sb}`.
+- Identity and attestation settings are command outputs staged **within the same
+  boot** and never reach NVRAM.
+- Clearing a persistent setting means deleting it, and **the `nvo/` block prefix is
+  mandatory** (NVO settings are all encapsulated tags and do not match from the
+  root route): `clear nvo/server-fingerprint` deletes the fingerprint. A bare
+  `clear server-fingerprint` or `set server-fingerprint` (no value) has **no
+  effect** on the NVS backend (measured), see §7. To clear both at once use
+  `nvclear` (§2.4).
+- When assigning `trust` manually, note that its type is `hex` (`33:33:…`,
+  colon-separated), not `hexraw`; an unseparated `3333…` is rejected
+  (`Invalid argument`).
 
-## 4. TOFU（HTTPS 信任）行为
+## 4. TOFU (HTTPS Trust) Behaviour
 
-TOFU 在 TLS 握手路径自动生效（无命令、无配置），状态机如下：
+TOFU takes effect automatically in the TLS handshake path (no command, no
+configuration); the state machine is as follows:
 
-| 阶段 | 条件 | 行为 |
+| Phase | Condition | Behaviour |
 |---|---|---|
-| 首次接触 | 无 `server-fingerprint` 且证书校验失败 | **接受握手**，将叶证书 SHA-256 指纹写入 `server-fingerprint`（NVRAM）并镜像至 `trust` |
-| 已 pin 且匹配 | 指纹存在，服务器证书指纹一致 | `trust` 覆盖根证书表（`ALLOW_TRUST_OVERRIDE`），证书校验通过，正常下载 |
-| 已 pin 且不匹配 | 指纹存在，服务器证书指纹不一致 | 校验失败 → **拒绝**（不覆盖已有指纹） |
+| First contact | No `server-fingerprint` and certificate verification fails | **Handshake accepted**; the SHA-256 fingerprint of the leaf certificate is written to `server-fingerprint` (NVRAM) and mirrored to `trust` |
+| Pinned and matching | Fingerprint present; the server certificate fingerprint matches | `trust` overrides the root certificate table (`ALLOW_TRUST_OVERRIDE`), certificate verification succeeds, download proceeds normally |
+| Pinned and mismatched | Fingerprint present; the server certificate fingerprint differs | Verification fails → **rejected** (the existing fingerprint is not overwritten) |
 
-要点：
+Key points:
 
-- **指纹 = 叶证书 DER 的 SHA-256**（与 `openssl x509 -outform DER |
-  sha256sum` 结果一致）。
-- 首次接触窗口期后，服务器证书被**固定**；换证书（如证书轮换）需先
-  清除 NVRAM 指纹（重置设备或控制面下发重置流程）。
-- 生产环境服务端证书可自签（TOFU 消解 CA 层级），但 **TLS 版本 ≤ 1.2**
-  （iPXE 原生 TLS 实现上限）。
-- 指纹写入与 pin 判定均在握手层完成：不匹配时 HTTP 请求不会发出。
-- **pin 为全局单锚**：`server-fingerprint` 一旦存在，任何 TLS 校验失败
-  都致命——固件只能信任首个 https 连接中被 pin 的那个证书。因此
-  所有 HTTPS 目标必须共享该信任锚：统一入口网关（多域名共用同一
-  证书）或证书链可链到被 pin 证书；其余流量可走 TFTP/HTTP。
-- 清空 `server-fingerprint`（`clear nvo/server-fingerprint`）即解除
-  pin，下次 https 连接重新进入注册窗口（见 §6.4）。
+- **The fingerprint is the SHA-256 of the leaf certificate DER** (identical to the
+  result of `openssl x509 -outform DER | sha256sum`).
+- After the first-contact window the server certificate is **pinned**; changing the
+  certificate (e.g. on rotation) requires clearing the NVRAM fingerprint first
+  (reset the device, or a reset procedure delivered by the control plane).
+- In production the server certificate may be self-signed (TOFU removes the CA
+  hierarchy), but **TLS version ≤ 1.2** (the upper limit of the native iPXE TLS
+  implementation).
+- Both fingerprint writing and pinning decisions happen at the handshake layer: on
+  mismatch the HTTP request is never sent.
+- **Pinning is a single global anchor**: once `server-fingerprint` exists, any TLS
+  verification failure is fatal—the firmware can only trust the certificate pinned
+  by the first https connection. All HTTPS targets must therefore share that trust
+  anchor: a unified ingress gateway (multiple domains sharing one certificate) or a
+  certificate chain that terminates at the pinned certificate; other traffic can
+  use TFTP/HTTP.
+- Clearing `server-fingerprint` (`clear nvo/server-fingerprint`) releases the pin;
+  the next https connection re-enters the registration window (see §6.4).
 
-## 5. 证明接口契约（主仓库验证侧）
+## 5. Attestation Interface Contract (Verification Side, Main Repository)
 
-### 5.1 `quote` 内容
+### 5.1 `quote` Contents
 
-`quote` 是 TPMS_ATTEST 的原始字节（hex 传输，**不含** TPM2B_ATTEST 的
-2 字节长度前缀），由一次 `TPM2_Quote` 产生：
+`quote` holds the raw TPMS_ATTEST bytes (hex transport, **without** the 2-byte
+length prefix of TPM2B_ATTEST), produced by a single `TPM2_Quote`:
 
-| 字段 | 值 |
+| Field | Value |
 |---|---|
 | `magic` | `0xFF544347` |
-| `type` | `0x8018`（TPM_ST_ATTEST_QUOTE） |
-| `qualifiedSigner` | AK 的 TPM2B_NAME（34 字节） |
-| `extraData` | `nonce` 字符串的 ASCII 字节（64 个 hex 字符 = 64 字节） |
-| PCR 选择 | 仅 SHA-256，位图 `95 00 00`（PCR 0/2/4/7） |
-| `pcrDigest` | 32 字节 SHA-256 |
-| `firmwareVersion` / `clockInfo` | TPM 自身信息，验证侧跳过 |
+| `type` | `0x8018` (TPM_ST_ATTEST_QUOTE) |
+| `qualifiedSigner` | TPM2B_NAME of the AK (34 bytes) |
+| `extraData` | ASCII bytes of the `nonce` string (64 hex characters = 64 bytes) |
+| PCR selection | SHA-256 only, bitmap `95 00 00` (PCRs 0/2/4/7) |
+| `pcrDigest` | 32-byte SHA-256 |
+| `firmwareVersion` / `clockInfo` | TPM's own information, skipped by the verification side |
 
-PCR 读取与签名在同一次 TPM 调用内完成，两次读取之间的测量变化不存在。
+PCR reading and signing complete within the same TPM call, so no measurement
+change can occur between the two reads.
 
-### 5.2 签名与编码
+### 5.2 Signature and Encoding
 
-| AK 算法 | 签名编码 |
+| AK algorithm | Signature encoding |
 |---|---|
-| `ecc_p256` | ASN.1 DER（`SEQUENCE { INTEGER r, INTEGER s }`），ECDSA-SHA256 |
-| `rsa2048` | PKCS#1 v1.5，SHA-256 |
+| `ecc_p256` | ASN.1 DER (`SEQUENCE { INTEGER r, INTEGER s }`), ECDSA-SHA256 |
+| `rsa2048` | PKCS#1 v1.5, SHA-256 |
 
-签名对象是**完整的 TPMS_ATTEST 字节**（即 `quote` 解码后的字节），
-传输编码为 hex。
+The signed object is the **complete TPMS_ATTEST byte string** (i.e. the decoded
+`quote` bytes); the transport encoding is hex.
 
-### 5.3 公钥与名称
+### 5.3 Public Key and Name
 
-- `ak-public` 是 SubjectPublicKeyInfo DER：ECC 为
-  `id-ecPublicKey + prime256v1`（91 字节），RSA 为 `rsaEncryption`
-  （294 字节）。
-- `ak-name` 是 TPM2B_NAME：`000b` + 公钥结构的 SHA-256（共 34 字节 /
-  68 hex），控制面只校验长度与算法前缀。
-- `ak-type` 必须与实际公钥算法一致，否则身份视为无效。
+- `ak-public` is SubjectPublicKeyInfo DER: `id-ecPublicKey + prime256v1` for ECC
+  (91 bytes), `rsaEncryption` for RSA (294 bytes).
+- `ak-name` is TPM2B_NAME: `000b` + SHA-256 of the public key structure (34 bytes /
+  68 hex in total); the control plane only verifies the length and the algorithm
+  prefix.
+- `ak-type` must match the actual public key algorithm, otherwise the identity is
+  considered invalid.
 
-### 5.4 主机侧验证示例（Python + cryptography）
+### 5.4 Host-Side Verification Example (Python + cryptography)
 
 ```python
 #!/usr/bin/env python3
-"""验证固件 quote 的签名、nonce 绑定与 PCR 选择"""
+"""Verify the signature, nonce binding and PCR selection of a firmware quote"""
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -214,26 +242,28 @@ def verify(ak_public_hex, ak_type, quote_hex, sig_hex, nonce):
         key.verify(sig, quote, ec.ECDSA(hashes.SHA256()))
     else:
         key.verify(sig, quote, padding.PKCS1v15(), hashes.SHA256())
-    # 结构校验：magic/type/extraData/PCR 选择/摘要长度
+    # Structural checks: magic/type/extraData/PCR selection/digest length
     assert quote[:4] == bytes.fromhex("ff544347")
-    # ...（完整实现见控制面 attestation 模块）
+    # ... (full implementation in the control plane attestation module)
     return True
 ```
 
-仓库内可直接运行的独立校验器：`test/verify-ak-quote.py`（§8）。
+A standalone verifier that can be run directly from the repository:
+`test/verify-ak-quote.py` (§8).
 
-## 6. 集成示例（主仓库 boot.ipxe 参考模式）
+## 6. Integration Examples (Main Repository boot.ipxe Reference Patterns)
 
-> 通用约定：所有 `https://` 端点首次连接时触发 TOFU pin，务必保证全部
-> HTTPS 目标共享同一信任锚（见 §4）；`chain --autofree` 下载并执行完即释放。
+> General convention: every `https://` endpoint triggers TOFU pinning on first
+> connection; make sure all HTTPS targets share the same trust anchor (see §4);
+> `chain --autofree` releases a download once it has been fetched and executed.
 
-### 6.1 设备身份与注册上报（首次开机）
+### 6.1 Device Identity and Registration Report (First Boot)
 
 ```ipxe
-# 幂等：首次创建 AK，之后复用；失败（无 TPM）不影响后续脚本
+# Idempotent: the AK is created on first use and reused afterwards; a failure (no TPM) does not affect subsequent script lines
 akgen || echo "identity: no TPM"
 
-# 导出身份；无 TPM 时转到无身份上报路径
+# Export the identity; without a TPM go to the identity-less report path
 akpub || goto report-fingerprint
 
 chain --autofree \
@@ -241,88 +271,89 @@ chain --autofree \
     || goto report-done
 
 :report-fingerprint
-# 无 AK 的上报让控制面把设备记为 no_tpm；指纹仍会被合并
+# A report without an AK makes the control plane record the device as no_tpm; the fingerprint is still merged
 chain --autofree \
     https://mgmt.example.com/devices/report?mac=${netX/mac}&sb=${sb} ||
 :report-done
 ```
 
-### 6.2 挑战-证明（引导凭证下发）
+### 6.2 Challenge-Attestation (Boot Credential Delivery)
 
 ```ipxe
-# 1. 获取一次性 nonce（响应体为 #!ipxe：set nonce <64hex>）
+# 1. Obtain a one-time nonce (response body is #!ipxe: set nonce <64hex>)
 :challenge
 chain --autofree https://mgmt.example.com/devices/challenge?mac=${mac} \
     && goto quoted || goto bootvars
 
-# 2. 对 nonce 做 PCR quote（写入 ${quote} / ${quote-sig}）
+# 2. Perform a PCR quote over the nonce (writes ${quote} / ${quote-sig})
 :quoted
 quote ${nonce} || goto bootvars
 chain --autofree https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostname}&nonce=${nonce}&quote=${quote}&quote_sig=${quote-sig} \
     || goto retry
 goto vars-done
 
-# 3. 认证/TLS 握手失败时用同一 nonce/quote 重取一次，最多一次
+# 3. If authentication/TLS handshake fails, fetch again with the same nonce/quote, at most once
 :retry
 chain --autofree https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostname}&nonce=${nonce}&quote=${quote}&quote_sig=${quote-sig} \
     || goto bootvars
 goto vars-done
 
-# 降级路径：无证明，控制面不下发凭据
+# Fallback path: no attestation, the control plane delivers no credentials
 :bootvars
 chain --autofree https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostname} \
     || goto vars-done
 ```
 
-控制面 `/devices/challenge` 响应示例（`#!ipxe` 脚本体）：
+Example control plane `/devices/challenge` response (an `#!ipxe` script body):
 
 ```ipxe
 set nonce 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-### 6.3 HTTPS 资产拉取与启动（TOFU 生效）
+### 6.3 HTTPS Asset Fetch and Boot (TOFU in Effect)
 
 ```ipxe
-# 首次接触：握手被 TOFU 接受，指纹落 NVRAM；此后固定该证书
+# First contact: the handshake is accepted by TOFU and the fingerprint lands in NVRAM; the certificate is pinned from then on
 imgfetch --name vmlinuz \
     https://boot.example.com/assets/vmlinuz || goto fail
 imgload vmlinuz || goto fail
 chain vmlinuz initrd=initrd.img || goto fail
 ```
 
-### 6.4 状态查询与 TOFU 重置（运维）
+### 6.4 Status Query and TOFU Reset (Operations)
 
 ```ipxe
-# 状态查询（不产生任何私钥输出）
+# Status query (produces no private key output)
 isset ${ak-type} && echo "identity: ${ak-type} ${ak-name}" \
     || echo "identity: no TPM"
 isset ${server-fingerprint} && echo "tofu: pinned" \
     || echo "tofu: not pinned"
 
-# 显示指纹（可与 openssl 独立计算结果比对）
+# Show the fingerprint (can be compared with an independent openssl calculation)
 show server-fingerprint
 
-# ---- TOFU 重置（敏感，需管理面授权流程，见 §9） ----
+# ---- TOFU reset (sensitive; requires the management plane authorization flow, see §9) ----
 nvclear
-# 或按需单项：NVO 设置是封装 tag，必须带 nvo/ 块前缀；裸 clear 无效
-# clear nvo/server-fingerprint # 解除 TOFU pin：下次 https 连接重新进入注册窗口
+# Or an individual item as needed: NVO settings are encapsulated tags and require the nvo/ block prefix; a bare clear has no effect
+# clear nvo/server-fingerprint # release the TOFU pin: the next https connection re-enters the registration window
 ```
 
-AK 不能从这里重置：换 AK 只能删除控制面登记后重新入池，或更换 TPM。
+The AK cannot be reset from here: replacing the AK requires deleting the control
+plane registration and re-enrolling, or replacing the TPM.
 
-### 6.5 完整引导链参考模板
+### 6.5 Complete Boot Chain Reference Template
 
 ```ipxe
 #!ipxe
-# 设备信任根完整引导链（主仓库参考模板）
+# Complete device trust root boot chain (main repository reference template)
 
-# 阶段 0：网络就绪
+# Stage 0: network ready
 dhcp || goto fail
 
-# 阶段 1：TPM 身份（幂等）
+# Stage 1: TPM identity (idempotent)
 akgen || echo "identity: no TPM"
 
-# 阶段 2：身份导出与注册上报
+# Stage 2: identity export and registration report
 akpub || goto report-fingerprint
 chain --autofree \
     https://mgmt.example.com/devices/report?mac=${netX/mac}&ak_public=${ak-public}&ak_name=${ak-name}&ak_type=${ak-type}&sb=${sb} \
@@ -331,7 +362,7 @@ chain --autofree \
 chain --autofree https://mgmt.example.com/devices/report?mac=${netX/mac}&sb=${sb} ||
 :report-done
 
-# 阶段 3：挑战-证明获取引导凭证
+# Stage 3: challenge-attestation to obtain boot credentials
 :challenge
 chain --autofree https://mgmt.example.com/devices/challenge?mac=${mac} \
     && goto quoted || goto bootvars
@@ -340,7 +371,7 @@ quote ${nonce} || goto bootvars
 chain --autofree \
     "https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostname}&nonce=${nonce}&quote=${quote}&quote_sig=${quote-sig}" \
     || goto bootvars
-# /boot-vars 证明通过后下发引导脚本（设置 nbft-secret、内核参数等）
+# After the attestation passes, /boot-vars delivers the boot script (sets nbft-secret, kernel parameters, etc.)
 :bootvars
 chain --autofree https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostname} \
     || goto fail
@@ -349,63 +380,74 @@ chain --autofree https://mgmt.example.com/boot-vars?mac=${mac}&hostname=${hostna
 echo TRUSTROOT-BOOT-FAILED
 ```
 
-## 7. 故障排查
+## 7. Troubleshooting
 
-| 现象 | 原因 | 处理 |
+| Symptom | Cause | Remedy |
 |---|---|---|
-| `akgen: No such device` | 平台没有 TPM，或固件拿不到 `EFI_TCG2_PROTOCOL` | 确认固件与固件设置中的 TPM 已启用；无 TPM 设备按 no_tpm 路径处理 |
-| `akgen: Input/output error` | TPM 拒绝 `CreatePrimary`/`EvictControl`（如句柄被占用） | 抓串口日志中的 TPM 返回码；确认 `0x81000001` 未被其它对象占用 |
-| `akgen: attestation key already present` | 已存在 AK（正常幂等路径） | 无需处理；换 AK 走管理员恢复（§2.1） |
-| `akpub: no attestation key` | 未执行过 `akgen` 或 TPM 被清除 | 先执行 `akgen` |
-| `quote: no attestation key` | 同上 | 同上 |
-| `quote: nonce must be 1 to 64 bytes` | 传入的 nonce 超长/为空 | 使用控制面下发的 64 hex 字符 |
-| `${ak-public}` / `${quote}` 为空 | 命令失败或设置未写入 | 检查命令输出；这些设置仅同次启动内有效 |
-| 控制面报 `quote_invalid` | quote 结构/签名/`ak_type` 不符 | 用 `test/verify-ak-quote.py` 本地复验 |
-| 控制面报 `nonce_invalid` | nonce 过期或已消费（重放） | 重新取 challenge；不要复用 quote |
-| 控制面报 `pcr_mismatch` | PCR 0/2/4/7 摘要与基线不同（固件/安全启动配置变化） | 确认平台变更；管理员可重新批准基线 |
-| 控制面报 `no_tpm` | 上报未携带有效 AK | 确认 TPM 可用且 `akpub` 成功 |
-| 控制面报 `sb_disabled` | 自报 `sb=0`，新设备需 Secure Boot 开启 | 开启 Secure Boot 并重新入池 |
-| HTTPS 拉取被拒（`TOFU-FETCH-FAIL` 类现象） | 服务器证书与 NVRAM 中 pin 的指纹不一致 | 确认服务器证书未轮换；需轮换时重置 NVRAM 指纹 |
-| 访问第二个 HTTPS 主机被拒 | pin 为全局单锚：固件只信任首个 https 连接被 pin 的证书 | 统一 HTTPS 入口/证书，其余流量走 TFTP/HTTP（见 §4） |
-| TLS 握手失败 | 服务端 TLS > 1.2 或密码套件不受支持 | 服务端限制 `TLS ≤ 1.2`（见 [test/https-server.py](../test/https-server.py) 的套件清单） |
-| `clear server-fingerprint` 后指纹仍在 | 裸 `clear`/`set` 对 NVS 封装 tag 无效 | 必须用 `clear nvo/server-fingerprint`（块前缀，见 §6.4）或 `nvclear`（§2.4） |
-| `nvclear` 报 `not present` | 该项本就为空 | 正常，无需处理 |
-| `nvclear` 报 `could not clear` / 末行 `incomplete` | 后端写失败（EFI `SetVariable` 出错） | 抓串口日志看具体 errno；检查 NVRAM 空间与只读策略 |
-| 清空后重启，设置又回来了 | 旧固件在选项块长度归零时不下发写操作（`nvo_save` 空转） | 升级到含补丁 0006 该修复的固件；验收 `test/run-qemu-nvclear.sh` |
+| `akgen: No such device` | The platform has no TPM, or the firmware cannot obtain `EFI_TCG2_PROTOCOL` | Confirm the TPM is enabled in the firmware and its settings; handle TPM-less devices through the no_tpm path |
+| `akgen: Input/output error` | The TPM rejects `CreatePrimary`/`EvictControl` (e.g. the handle is occupied) | Capture the TPM return code from the serial log; confirm `0x81000001` is not occupied by another object |
+| `akgen: attestation key already present` | An AK already exists (normal idempotent path) | No action needed; replacing the AK requires administrator recovery (§2.1) |
+| `akpub: no attestation key` | `akgen` has never run, or the TPM was cleared | Run `akgen` first |
+| `quote: no attestation key` | Same as above | Same as above |
+| `quote: nonce must be 1 to 64 bytes` | The nonce passed in is too long or empty | Use the 64 hex characters delivered by the control plane |
+| `${ak-public}` / `${quote}` empty | The command failed or the setting was not written | Check the command output; these settings are valid only within the same boot |
+| Control plane reports `quote_invalid` | The quote structure/signature/`ak_type` does not match | Re-verify locally with `test/verify-ak-quote.py` |
+| Control plane reports `nonce_invalid` | The nonce expired or was already consumed (replay) | Request a new challenge; do not reuse a quote |
+| Control plane reports `pcr_mismatch` | The PCR 0/2/4/7 digest differs from the baseline (firmware/Secure Boot configuration change) | Confirm the platform change; an administrator can approve a new baseline |
+| Control plane reports `no_tpm` | The report carried no valid AK | Confirm the TPM is available and `akpub` succeeded |
+| Control plane reports `sb_disabled` | The device self-reported `sb=0`, and new devices require Secure Boot | Enable Secure Boot and re-enrol the device |
+| HTTPS fetch rejected (`TOFU-FETCH-FAIL` class of symptom) | The server certificate does not match the fingerprint pinned in NVRAM | Confirm the server certificate has not been rotated; if rotation is required, reset the NVRAM fingerprint |
+| Access to a second HTTPS host rejected | Pinning is a single global anchor: the firmware only trusts the certificate pinned by the first https connection | Unify the HTTPS ingress/certificate and send other traffic over TFTP/HTTP (see §4) |
+| TLS handshake fails | Server TLS > 1.2, or the cipher suite is unsupported | Restrict the server to `TLS ≤ 1.2` (see the cipher suite list in [test/https-server.py](../test/https-server.py)) |
+| Fingerprint still present after `clear server-fingerprint` | A bare `clear`/`set` has no effect on NVS encapsulated tags | Use `clear nvo/server-fingerprint` (block prefix, see §6.4) or `nvclear` (§2.4) |
+| `nvclear` reports `not present` | The item was already empty | Normal, no action needed |
+| `nvclear` reports `could not clear` / last line `incomplete` | Backend write failure (EFI `SetVariable` error) | Capture the serial log for the specific errno; check NVRAM space and read-only policy |
+| After clearing, a reboot brings the setting back | Older firmware issues no write when an option block length drops to zero (`nvo_save` no-op) | Upgrade to firmware containing that fix from patch 0006; accept with `test/run-qemu-nvclear.sh` |
 
-## 8. 验证与测试资产（固件仓库内）
+## 8. Verification and Test Assets (Inside the Firmware Repository)
 
-- `test/ak-test.ipxe` + `test/run-qemu-ak.sh`：AK 两轮自测（round 1 在
-  全新 swtpm 状态上创建；round 2 用 `--clean-nvram` 清空 OVMF 变量后
-  仍复用同一 AK）；`--no-tpm` 验证无 TPM 时三个命令失败但不崩溃。
-- `test/ak-e2e.ipxe`：连接运行中的控制面，走
-  report → challenge → `quote` → `/boot-vars` 的完整证明链。
-- `test/verify-ak-quote.py`：独立校验器，检查 quote 结构、`extraData`
-  与 nonce、PCR 选择、签名与（可选）基线。
-- `test/tofu-test.ipxe` + `test/run-qemu-tofu.sh`：TOFU 三轮验证
-  （首次接受 + 指纹落盘 → 指纹匹配下载 → 证书更换拒绝）。
-- `test/https-server.py`：TLS 1.2 HTTPS 测试端点（Python 标准库实现，
-  密码套件与 iPXE 兼容）。
-- `test/dump-nvram.py`：OVMF NVRAM 变量内容检查（验证指纹落盘字节与
-  openssl 独立计算结果一致）。
-- `test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh`：`nvclear` 三轮
-  验证（写入两项 → 清理 → 复读；第 3 轮开机两项都不存在即证明清理
-  已落盘）。
+- `test/ak-test.ipxe` + `test/run-qemu-ak.sh`: two-round AK self-test (round 1
+  creates the AK on a fresh swtpm state; round 2 still reuses the same AK after
+  `--clean-nvram` wipes the OVMF variables); `--no-tpm` verifies that the three
+  commands fail without a TPM but do not crash.
+- `test/ak-e2e.ipxe`: connects to a running control plane and walks the complete
+  attestation chain report → challenge → `quote` → `/boot-vars`.
+- `test/verify-ak-quote.py`: standalone verifier that checks the quote structure,
+  `extraData` against the nonce, the PCR selection, the signature and
+  (optionally) the baseline.
+- `test/tofu-test.ipxe` + `test/run-qemu-tofu.sh`: three-round TOFU verification
+  (first contact accepted + fingerprint persisted → download with matching
+  fingerprint → certificate replacement rejected).
+- `test/https-server.py`: TLS 1.2 HTTPS test endpoint (implemented with the Python
+  standard library, with cipher suites compatible with iPXE).
+- `test/dump-nvram.py`: inspection of OVMF NVRAM variable contents (verifies that
+  the persisted fingerprint bytes match an independent openssl calculation).
+- `test/nvs-clear.ipxe` + `test/run-qemu-nvclear.sh`: three-round `nvclear`
+  verification (write two items → clear → read back; absence of both items on the
+  third boot proves the clearing was persisted).
 
-## 9. 安全边界
+## 9. Security Boundaries
 
-- **AK 私钥不出 TPM**：固件不生成、不读取、不导出私钥；导出物只有
-  公钥、TPM2B_NAME、quote 与签名。
-- **证明可重放防护依赖 nonce**：控制面必须保证 nonce 一次性、短 TTL、
-  绑定 MAC；quote 覆盖 PCR 0/2/4/7，不覆盖运行期。
-- **AK 不可覆盖**：固件没有重建路径；换 AK 只能删除登记后重新入池，
-  或更换/清除 TPM。
-- **TOFU 信任锚**：首次接触无认证——注册窗口内的中间人风险由部署
-  网络隔离承担；pin 之后具备完整性校验。
-- **`sb` 是自报值**：控制面只把它用于注册放行，启动期准入以 TPM 证明
-  为准，不信任自报。
-- **生产端点约束**：`/devices/report`、`/devices/challenge`、
-  `/boot-vars` 应置于受控内网并限速；固件侧无额外加密层。
-- **重置操作授权**：`nvclear`（清空 TOFU 状态）与
-  `clear nvo/server-fingerprint`（解除 pin，重开注册窗口）均为敏感
-  操作，应只由管理面授权流程触发（如控制面下发专用重置脚本）。
+- **The AK private key never leaves the TPM**: the firmware does not generate,
+  read or export it; the exported material is only the public key, TPM2B_NAME,
+  quote and signature.
+- **Replay protection for attestation depends on the nonce**: the control plane
+  must guarantee a one-time nonce, a short TTL and binding to the MAC; the quote
+  covers PCRs 0/2/4/7 and does not cover runtime state.
+- **The AK cannot be overwritten**: the firmware has no rebuild path; replacing
+  the AK requires deleting the registration and re-enrolling, or replacing/clearing
+  the TPM.
+- **TOFU trust anchor**: first contact is unauthenticated—the man-in-the-middle
+  risk inside the registration window is borne by deployment network isolation;
+  once pinned, integrity verification is in place.
+- **`sb` is a self-reported value**: the control plane uses it only to admit
+  registration; boot-time admission is based on TPM attestation and does not trust
+  self-reporting.
+- **Production endpoint constraints**: `/devices/report`, `/devices/challenge` and
+  `/boot-vars` should sit on a controlled internal network with rate limiting; the
+  firmware side has no additional encryption layer.
+- **Reset authorization**: `nvclear` (clears the TOFU state) and
+  `clear nvo/server-fingerprint` (releases the pin and reopens the registration
+  window) are both sensitive operations and should only be triggered by a
+  management plane authorization flow (e.g. a dedicated reset script delivered by
+  the control plane).

@@ -1,15 +1,18 @@
-# 母盘定制发行版矩阵
+# Golden Image Distribution Matrix
 
-本仓库的母盘（golden image）资产按发行版组织：每个发行版一个自包含一键脚本，共享同一套
-A-F 六阶段定制流程（流程原理与手工步骤见
-[golden-image-customization-debian12.md](golden-image-customization-debian12.md)）；
-宿主侧辅助脚本与打包器统一在 `test/shared/`。
+[English](golden-image-matrix.md) | [中文](golden-image-matrix.zh-CN.md)
 
-所有 `golden-image-setup-*.sh` 均已内嵌 initramfs-nbft 三组件与 GRUB 2.14 产物
-（base64），单文件即可拷入母盘运行；组件或 GRUB 产物更新后重跑
-`python3 test/shared/embed-components.py` 重新内嵌（幂等）。
+The golden image assets in this repository are organized by distribution: each distribution has one
+self-contained one-shot script, and all of them share the same six-stage A-F customization flow
+(rationale and manual steps in
+[golden-image-customization-debian12.md](golden-image-customization-debian12.md));
+host-side helper scripts and the packer are collected under `test/shared/`.
 
-## 目录布局
+Every `golden-image-setup-*.sh` embeds the three initramfs-nbft components and the GRUB 2.14 artifact
+(base64), so a single file can be copied into a golden image and run; after the components or the GRUB
+artifact change, re-run `python3 test/shared/embed-components.py` to re-embed them (idempotent).
+
+## Directory Layout
 
 ```
 test/
@@ -18,183 +21,189 @@ test/
 ├── ubuntu2404/golden-image-setup-ubuntu2404.sh
 ├── ubuntu2604/golden-image-setup-ubuntu2604.sh
 ├── fedora44/golden-image-setup-fedora44.sh
-├── almalinux10/                 # RHEL 系
-│   ├── almalinux10.ks.in        # kickstart 模板（注入公钥）
+├── almalinux10/                 # RHEL family
+│   ├── almalinux10.ks.in        # kickstart template (public key injection)
 │   ├── run-almalinux10-install.sh
 │   └── golden-image-setup-almalinux10.sh
-├── opensuse-leap16/             # SUSE 系
-│   ├── leap16-profile.json      # Agama profile 模板（注入公钥）
+├── opensuse-leap16/             # SUSE family
+│   ├── leap16-profile.json      # Agama profile template (public key injection)
 │   ├── run-leap16-install.sh
 │   └── golden-image-setup-leap16.sh
-└── shared/                      # 各发行版通用
-    ├── embed-components.py      # 单文件打包器（组件 + GRUB 产物内嵌）
-    ├── golden-vm-run.sh         # 定制阶段 VM 启动（OVMF + slirp + SSH 2222 + QMP）
-    ├── golden-ubuntu-vm-run.sh  # Ubuntu 定制 VM（seed 挂载 + 自动扩容 + SSH 2222）
-    ├── golden-vm-sendkey.py     # QMP→HMP 键盘注入（无 sshd 时的交互通道）
-    ├── golden-net-rebuild.sh    # 宿主重启后网络重建（br0/tap0 + NAT）
-    ├── golden-nvmet-enable.sh   # nvmet namespace 启用（必须宿主 mount ns）
-    ├── golden-esp-verify.sh     # 4K ESP 内容校验（512 逻辑扇区 + 偏移 loop）
-    ├── fwtest-net.sh            # 隔离验收网桥 br-fwtest + tap0fw（root）
-    ├── fwtest-nvmet-tls.sh      # 验收靶：DH-HMAC-CHAP host + TLS1.3/required 端口 + PSK
-    ├── fwtest-boot.sh           # 隔离 PXE 冷启动（dnsmasq 容器 + QEMU/OVMF + 抓包）
-    ├── pcap-flows.py            # 抓包判据：流首字节 0x16 / 明文凭据 / :4420 计数
-    └── assets/BOOTX64-2.14-generic.EFI   # GRUB 2.14 产物（实测引导基线）
+└── shared/                      # common to all distributions
+    ├── embed-components.py      # single-file packer (component + GRUB artifact embedding)
+    ├── golden-vm-run.sh         # customization-stage VM launch (OVMF + slirp + SSH 2222 + QMP)
+    ├── golden-ubuntu-vm-run.sh  # Ubuntu customization VM (seed mount + automatic resize + SSH 2222)
+    ├── golden-vm-sendkey.py     # QMP→HMP keyboard injection (interactive channel without sshd)
+    ├── golden-net-rebuild.sh    # network rebuild after a host reboot (br0/tap0 + NAT)
+    ├── golden-nvmet-enable.sh   # nvmet namespace enablement (host mount ns required)
+    ├── golden-esp-verify.sh     # 4K ESP content verification (512-byte logical sectors + offset loop)
+    ├── fwtest-net.sh            # isolated acceptance bridge br-fwtest + tap0fw (root)
+    ├── fwtest-nvmet-tls.sh      # acceptance target: DH-HMAC-CHAP host + TLS1.3/required port + PSK
+    ├── fwtest-boot.sh           # isolated PXE cold boot (dnsmasq container + QEMU/OVMF + capture)
+    ├── pcap-flows.py            # capture criteria: stream first byte 0x16 / plaintext credentials / :4420 count
+    └── assets/BOOTX64-2.14-generic.EFI   # GRUB 2.14 artifact (measured boot baseline)
 ```
 
-## 适配状态总览
+## Adaptation Status Overview
 
-| 发行版 | 版本 | 安装介质 | 无人值守 | 定制脚本 | 软件源 | 内核 | 验收状态 |
+| Distribution | Version | Installation medium | Unattended | Customization script | Software source | Kernel | Acceptance status |
 |---|---|---|---|---|---|---|---|
-| Debian 12 | bookworm | netinst ISO | preseed（d-i） | `test/debian12/` | 阿里云（bookworm + backports） | 6.12.95+deb12-amd64（backports） | ✅ 2026-09-08 PXE 认证冷启动 → GDM |
-| Debian 13 | 13.6.0 | netinst ISO | preseed（d-i） | `test/debian13/` | 阿里云（trixie，免 backports） | 6.12.94+deb13（自带） | ✅ 2026-09-10 PXE 认证冷启动 → login |
-| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2404/` | noble（deb822 ubuntu.sources） | 6.8 系（GA） | ✅ 2026-09-10 PXE 认证冷启动 → login |
-| Ubuntu 26.04 | 26.04.1 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2604/` | suite 运行时检测（deb822） | 7.0.0-31-generic | ✅ 2026-09-11 PXE 认证冷启动 → login |
-| Fedora 44 | 44（Server DVD 1.7） | DVD ISO | kickstart（Anaconda） | `test/fedora44/` | dnf：阿里云（fedora + updates） | 6.19.10-300.fc44（自带） | ✅ 2026-09-12 PXE 认证冷启动 → login |
-| AlmaLinux 10.2 | 10.2（minimal ISO） | minimal ISO | kickstart（Anaconda，HTTP） | `test/almalinux10/` | dnf：华为云（BaseOS/AppStream/CRB/Extras） | 6.12.0-211.7.3.el10_2（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login（两轮） |
-| openSUSE Leap 16.0 | 16.0（online installer） | online ISO（Agama） | Agama profile（`inst.auto=`） | `test/opensuse-leap16/` | zypper：TUNA OSS | 6.12.0-160000（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login |
+| Debian 12 | bookworm | netinst ISO | preseed (d-i) | `test/debian12/` | Alibaba Cloud (bookworm + backports) | 6.12.95+deb12-amd64 (backports) | ✅ 2026-09-08 PXE authenticated cold boot → GDM |
+| Debian 13 | 13.6.0 | netinst ISO | preseed (d-i) | `test/debian13/` | Alibaba Cloud (trixie, no backports) | 6.12.94+deb13 (shipped) | ✅ 2026-09-10 PXE authenticated cold boot → login |
+| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall (subiquity) | `test/ubuntu2404/` | noble (deb822 ubuntu.sources) | 6.8 series (GA) | ✅ 2026-09-10 PXE authenticated cold boot → login |
+| Ubuntu 26.04 | 26.04.1 LTS | live-server ISO | autoinstall (subiquity) | `test/ubuntu2604/` | suite detected at runtime (deb822) | 7.0.0-31-generic | ✅ 2026-09-11 PXE authenticated cold boot → login |
+| Fedora 44 | 44 (Server DVD 1.7) | DVD ISO | kickstart (Anaconda) | `test/fedora44/` | dnf: Alibaba Cloud (fedora + updates) | 6.19.10-300.fc44 (shipped) | ✅ 2026-09-12 PXE authenticated cold boot → login |
+| AlmaLinux 10.2 | 10.2 (minimal ISO) | minimal ISO | kickstart (Anaconda, HTTP) | `test/almalinux10/` | dnf: Huawei Cloud (BaseOS/AppStream/CRB/Extras) | 6.12.0-211.7.3.el10_2 (shipped, `CONFIG_NVME_TCP_TLS=y`) | ✅ 2026-10-31 PXE TLS cold boot → login (two rounds) |
+| openSUSE Leap 16.0 | 16.0 (online installer) | online ISO (Agama) | Agama profile (`inst.auto=`) | `test/opensuse-leap16/` | zypper: TUNA OSS | 6.12.0-160000 (shipped, `CONFIG_NVME_TCP_TLS=y`) | ✅ 2026-10-31 PXE TLS cold boot → login |
 
-验收判据（各发行版一致）：target 端出现 **两条**控制器记录——固件段与内核段各一次；
-认证/加密按控制面下发的路径记录：DH-HMAC-CHAP 路径为 `..., DH-HMAC-CHAP`，
-TLS 1.3 路径为 `..., TLS.`。串口出现登录提示。
-TLS 路径另加抓包判据：到数据端口（4422/4421）的每条客户端 TCP 流首字节为 `0x16`，
-PSK / DH-HMAC-CHAP 密钥不出现在明文载荷中，到明文端口 4420 的包数为 0
-（`test/shared/pcap-flows.py` 自动判定）。
+Acceptance criteria (identical across distributions): the target logs **two** controller records — one
+for the firmware segment and one for the kernel segment; authentication/encryption follows the path
+delivered by the control plane: the DH-HMAC-CHAP path records `..., DH-HMAC-CHAP` and the TLS 1.3 path
+records `..., TLS.`. The serial console shows a login prompt.
+The TLS path adds a packet-capture criterion: the first byte of every client TCP stream to the data
+port (4422/4421) is `0x16`, PSK and DH-HMAC-CHAP keys do not appear in plaintext payloads, and the
+packet count to plaintext port 4420 is 0 (decided automatically by `test/shared/pcap-flows.py`).
 
-> 原生 NBFT 消费 ≠ 原生认证：RHEL 的 `nm-initrd-generator`/`95nvmf` 与 SUSE 的
-> dracut `nvmf` 都能从 NBFT 自动建链，但 **NBFT 标准表不含 DH-HMAC-CHAP 密钥与
-> TLS-PSK**，其代码路径是无凭据的 `nvme connect-all --nbft`。本仓库的
-> `95nbft` 消费自定义 **NBCT** 表（携带凭据）并逐条 `nvme connect --dhchap-secret/--tls`；
-> 构建时显式 `--omit nvmf`，避免原生模块抢先做无认证连接。
+> Native NBFT consumption ≠ native authentication: RHEL's `nm-initrd-generator`/`95nvmf` and SUSE's
+> dracut `nvmf` can both establish the connection automatically from NBFT, but **the standard NBFT
+> table carries neither DH-HMAC-CHAP keys nor TLS-PSK**, and their code path is the credential-less
+> `nvme connect-all --nbft`. The `95nbft` in this repository consumes the custom **NBCT** table (which
+> carries credentials) and issues `nvme connect --dhchap-secret/--tls` per entry; the build explicitly
+> passes `--omit nvmf` so that the native module cannot establish an unauthenticated connection first.
 
-## 发行版差异对照
+## Distribution Differences
 
-| 差异点 | Debian 系（12 / 13） | Ubuntu 系（24.04 / 26.04） |
+| Difference | Debian family (12 / 13) | Ubuntu family (24.04 / 26.04) |
 |---|---|---|
-| 安装器 | debian-installer | subiquity |
-| 无人值守数据 | preseed.cfg（HTTP 提供） | autoinstall user-data + meta-data（nocloud-net HTTP） |
-| APT 配置格式 | `/etc/apt/sources.list`（三行） | deb822（`ubuntu.sources` 覆写，原文件备份 `.golden-bak`） |
-| 内核策略 | 12 用 backports（新版内核 + NVMe-oF 修复）；13 用自带 | 发行版自带内核即满足要求 |
-| 版本适配方式 | 独立变体（trixie 源、免 backports 等） | suite 运行时检测（`VERSION_CODENAME`，免逐版硬编码） |
-| 安装介质内核提取 | ISO 内 install.amd/vmlinuz（preseed 直启） | casper/vmlinuz + casper/initrd（26.04.1 的 initrd 无 `.gz` 后缀） |
-| 其他要点 | volid 0x43 修复；4K ESP 重建（953 MiB FAT32） | 24.04 原 ESP 106 MiB → 重建 953 MiB；26.04 安装默认 953 MiB（仅 4K 化） |
+| Installer | debian-installer | subiquity |
+| Unattended data | preseed.cfg (served over HTTP) | autoinstall user-data + meta-data (nocloud-net HTTP) |
+| APT configuration format | `/etc/apt/sources.list` (three lines) | deb822 (`ubuntu.sources` overwritten, original backed up as `.golden-bak`) |
+| Kernel policy | 12 uses backports (newer kernel + NVMe-oF fixes); 13 uses the shipped kernel | the distribution's shipped kernel already meets the requirement |
+| Version adaptation | separate variant (trixie sources, no backports step, etc.) | suite detected at runtime (`VERSION_CODENAME`, so no per-release pinning) |
+| Installer-medium kernel extraction | install.amd/vmlinuz inside the ISO (preseed boots it directly) | casper/vmlinuz + casper/initrd (the 26.04.1 initrd has no `.gz` suffix) |
+| Other points | volid 0x43 fix; 4K ESP rebuild (953 MiB FAT32) | 24.04 original ESP 106 MiB → rebuilt to 953 MiB; 26.04 installs 953 MiB by default (4K conversion only) |
 
-### RHEL 系 / SUSE 系差异（相对前五者）
+### RHEL / SUSE Family Differences (relative to the preceding five)
 
-| 差异点 | RHEL 系（AlmaLinux 10.2） | SUSE 系（openSUSE Leap 16.0） |
+| Difference | RHEL family (AlmaLinux 10.2) | SUSE family (openSUSE Leap 16.0) |
 |---|---|---|
-| 安装器 / 无人值守 | Anaconda + kickstart（`inst.ks=http://…`） | Agama + JSON profile（`inst.auto=http://…`，`inst.finish=poweroff`） |
-| 包管理 / 源 | dnf；BaseOS/AppStream/CRB/Extras 四段映射（镜像目录为 CamelCase） | zypper；保留 `$releasever`，覆写 OSS 到 TUNA |
-| initrd 网络 | dracut-107 无 systemd-networkd → `35network-manager` + `nm-initrd-generator` + `ip=dhcp` | dracut 059+suse 同走 `35network-manager`（NetworkManager） |
-| 原生 NBFT 模块 | `95nvmf` + `nm-initrd-generator`（NBFT ≈ Technology Preview） | dracut `95nvmf`（SUSE 扩展） |
-| 原生模块的认证 | 无：`nvme connect-all --nbft`（不读 DH-HMAC-CHAP/TLS-PSK） | 无：同为 `connect-all --nbft` |
-| 本仓库做法 | `--omit nvmf`，装 `95nbft`（NBCT → `connect --dhchap-secret/--tls`） | 同左 |
-| 内核段 TLS 组件 | `keyutils` + `ktls-utils`（tlshd 1.2.1）；配置文件 `/etc/tlshd.conf` | `keyutils` + `ktls-utils`；`/etc/tlshd.conf` |
-| GnuTLS 系统策略 | **必须把 `/etc/crypto-policies/back-ends/gnutls.config` 装进 initrd**，否则 tlshd 启动即 `gnutls -50` 退出 | 同左（文件存在时安装，缺失不阻断） |
-| initrd 路径 | `/boot/initramfs-<KVER>.img` | `/boot/initrd-<KVER>`（拷入 ESP 改名 `initramfs-<KVER>`） |
-| GRUB 工具 | `grub2-mkimage` / `grub2-mkconfig` | 同左 |
-| 布局约束 | XFS（安装介质须 4K 逻辑块盘）；本变体为普通分区（非 LVM） | XFS；Agama 目标盘须为空白盘（残留 GPT 会让默认 `spacePolicy=keep` 与显式布局冲突） |
+| Installer / unattended | Anaconda + kickstart (`inst.ks=http://…`) | Agama + JSON profile (`inst.auto=http://…`, `inst.finish=poweroff`) |
+| Package management / sources | dnf; four-section mapping for BaseOS/AppStream/CRB/Extras (mirror directories use CamelCase) | zypper; `$releasever` retained, OSS overwritten to TUNA |
+| initrd networking | dracut-107 has no systemd-networkd → `35network-manager` + `nm-initrd-generator` + `ip=dhcp` | dracut 059+suse likewise uses `35network-manager` (NetworkManager) |
+| Native NBFT module | `95nvmf` + `nm-initrd-generator` (NBFT ≈ Technology Preview) | dracut `95nvmf` (SUSE extension) |
+| Authentication in the native module | none: `nvme connect-all --nbft` (does not read DH-HMAC-CHAP/TLS-PSK) | none: likewise `connect-all --nbft` |
+| Approach in this repository | `--omit nvmf`, install `95nbft` (NBCT → `connect --dhchap-secret/--tls`) | as at left |
+| Kernel-side TLS components | `keyutils` + `ktls-utils` (tlshd 1.2.1); configuration file `/etc/tlshd.conf` | `keyutils` + `ktls-utils`; `/etc/tlshd.conf` |
+| GnuTLS system policy | **`/etc/crypto-policies/back-ends/gnutls.config` must be installed into the initrd**, otherwise tlshd exits at startup with `gnutls -50` | as at left (installed when the file exists; absence is not fatal) |
+| initrd path | `/boot/initramfs-<KVER>.img` | `/boot/initrd-<KVER>` (renamed to `initramfs-<KVER>` when copied into the ESP) |
+| GRUB tools | `grub2-mkimage` / `grub2-mkconfig` | as at left |
+| Layout constraints | XFS (the installation disk must be a 4K logical-block disk); this variant uses plain partitions (no LVM) | XFS; the Agama target disk must be blank (a leftover GPT makes the default `spacePolicy=keep` conflict with the explicit layout) |
 
-## 各发行版适配要点
+## Adaptation Notes per Distribution
 
-### Debian 12（首个闭环版本，基线）
-- 介质：netinst + preseed 自动安装；backports 内核（6.12 系，NVMe-oF 认证所需）
-- 源切换：bookworm + bookworm-backports + security（阿里云，ForceIPv4）
-- 验收轨迹：2026-09-08 单文件形态 A-F 实测（含 E）→ 同日 PXE 冷启动验收至 GDM
+### Debian 12 (first closed-loop version, baseline)
+- Medium: netinst + preseed automated installation; backports kernel (6.12 series, required for NVMe-oF authentication)
+- Source switch: bookworm + bookworm-backports + security (Alibaba Cloud, ForceIPv4)
+- Acceptance trajectory: 2026-09-08 single-file form measured through A-F (including E) → PXE cold-boot acceptance to GDM the same day
 
-### Debian 13（netinst + 独立变体脚本）
-- 介质：netinst 13.6.0 + preseed；内核用发行版自带（trixie 6.12 已满足）
-- 与 debian12 变体差异：trixie 三行源、免 backports 步骤、`KVER=$(uname -r)`
+### Debian 13 (netinst + separate variant script)
+- Medium: netinst 13.6.0 + preseed; the kernel is the distribution's own (trixie 6.12 already satisfies the requirement)
+- Differences from the debian12 variant: three-line trixie sources, no backports step, `KVER=$(uname -r)`
 
-### Ubuntu 24.04（cloud 形态弃用 → 标准安装）
-- 介质：live-server ISO + autoinstall（标准安装形态，与手工安装一致）
-- 源切换：deb822 `ubuntu.sources` 覆写（noble + noble-security）
-- E 阶段：原 106 MiB ESP 重建为 953 MiB 4K FAT32
+### Ubuntu 24.04 (cloud form retired → standard installation)
+- Medium: live-server ISO + autoinstall (standard installation form, identical to a manual installation)
+- Source switch: deb822 `ubuntu.sources` overwritten (noble + noble-security)
+- Stage E: the original 106 MiB ESP is rebuilt as a 953 MiB 4K FAT32 ESP
 
-### Ubuntu 26.04（autoinstall 数据源与 subiquity 变化适配）
-- 介质：live-server 26.04.1 ISO + autoinstall
-- 26.04 三处变化（安装脚本必须适配，详见 `.cache/run-ubuntu2604-install.sh` 注释）：
-  1. subiquity 新增 `source` section（可交互）——autoinstall 必须显式提供
-     `source: {id: ubuntu-server}`，否则停在"安装类型选择"交互屏；
-  2. QEMU `-kernel/-append` 直启（无 GRUB 层）时 `ds` 参数不能带 `\;` 转义——
-     用裸分号 `ds=nocloud-net;s=http://<网关>:<端口>/`；
-  3. 双 cdrom 枚举顺序可能反转（sr0=cidata / sr1=ISO）——`ds=nocloud;s=/dev/srN`
-     按设备名不可靠，HTTP 方式与设备名无关。
-- 源切换：suite 运行时检测（deb822），免逐版硬编码代号
+### Ubuntu 26.04 (adaptation to autoinstall data-source and subiquity changes)
+- Medium: live-server 26.04.1 ISO + autoinstall
+- Three changes in 26.04 (the installation script must adapt; see the comments in `.cache/run-ubuntu2604-install.sh`):
+  1. subiquity adds a `source` section (interactive) — autoinstall must provide
+     `source: {id: ubuntu-server}` explicitly, otherwise the installer stops at the "installation type" interactive screen;
+  2. with a direct QEMU `-kernel/-append` boot (no GRUB layer) the `ds` parameter must not carry the `\;` escape —
+     use a bare semicolon, `ds=nocloud-net;s=http://<gateway>:<port>/`;
+  3. the enumeration order of the two cdroms may be reversed (sr0=cidata / sr1=ISO) — `ds=nocloud;s=/dev/srN`
+     is unreliable by device name, whereas the HTTP method is independent of device names.
+- Source switch: suite detected at runtime (deb822), so no per-release codename pinning
 
-### Fedora 44（首个 dracut / XFS / LVM 发行版）
-- 介质：Server DVD + kickstart（HTTP，`inst.ks=`）；**安装须在 4K 逻辑块虚拟盘上进行**——
-  XFS 扇区大小固定于 mkfs（跟随当时设备逻辑块），512 扇区 XFS 无法在 4096 逻辑块设备
-  （SAN 4K 导出）上挂载（`XFS: device supports 4096 byte sectors (not 512)`）；
-- 布局：XFS on LVM（anaconda 默认）→ 内核参数需 `rd.lvm.lv=<VG>/<LV>`；
-- initramfs：dracut 95nbft 模块（`module-setup.sh` + `nbft.sh` 双挂载
-  `initqueue/settled` 与 `pre-mount`，`/run/nbft-done` 去重）；依赖 `dracut-network`
-  与 `systemd-networkd` 包（基础 dracut 无 initrd 网络模块），initrd 内配网用
-  `09-nbft.network`（networkd，DHCP + KeepConfiguration）；
-- LVM 激活：dracut 的 64-lvm.rules 挂在 `initqueue --settled`（本场景不执行）→
-  钩子在连接后显式 `lvm vgchange -ay`；initrd 工具链需含 `dd`（nbft-connect 字段
-  提取器依赖，`--no-hostonly` 默认不含）；
-- 工具名差异：`grub2-mkimage` / `grub2-mkconfig`，initrd 文件名为
-  `initramfs-<KVER>.img`。
+### Fedora 44 (first dracut / XFS / LVM distribution)
+- Medium: Server DVD + kickstart (HTTP, `inst.ks=`); **the installation must run on a 4K logical-block virtual disk** —
+  the XFS sector size is fixed at mkfs time (following the device logical block size at that moment), and a 512-byte-sector
+  XFS cannot be mounted on a 4096 logical-block device (the SAN 4K export) (`XFS: device supports 4096 byte sectors (not 512)`);
+- Layout: XFS on LVM (the anaconda default) → the kernel parameters need `rd.lvm.lv=<VG>/<LV>`;
+- initramfs: dracut 95nbft module (`module-setup.sh` + `nbft.sh` hooking both
+  `initqueue/settled` and `pre-mount`, deduplicated through `/run/nbft-done`); it depends on the
+  `dracut-network` and `systemd-networkd` packages (base dracut has no initrd networking module), and
+  networking inside the initrd uses `09-nbft.network` (networkd, DHCP + KeepConfiguration);
+- LVM activation: dracut's 64-lvm.rules hooks `initqueue --settled` (not executed in this scenario) →
+  the hook runs `lvm vgchange -ay` explicitly after connecting; the initrd tool set must include
+  `dd` (required by the nbft-connect field extractor; `--no-hostonly` does not include it by default);
+- Tool name differences: `grub2-mkimage` / `grub2-mkconfig`; the initrd file is named
+  `initramfs-<KVER>.img`.
 
-### AlmaLinux 10.2（首个 RHEL 系）
-- 介质：AlmaLinux 10.2 minimal ISO + kickstart（HTTP 提供）；目标盘 4K 逻辑块
-  virtio-blk（XFS 安装约束同 Fedora 44）。
-- kickstart 与 minimal ISO 的边界：10.2 minimal 仓库**不含 ktls-utils**，kickstart 用
-  `%packages --ignoremissing` 且不列该包；A 阶段再从完整镜像安装 `keyutils ktls-utils`。
-- initrd：dracut-107 **无 systemd-networkd** → `--add "nbft network network-manager"`，
-  `nm-initrd-generator` 读 `ip=dhcp` 配网；**`--omit nvmf`** 关闭原生无凭据连接；
-  `95nbft` 在 `initqueue/settled` 与 `pre-mount` 双挂载、`/run/nbft-done` 去重。
-- **crypto-policies 是 initrd 的硬依赖**：GnuTLS 的 `@SYSTEM` 默认优先级来自
-  `/etc/crypto-policies/back-ends/gnutls.config`；dracut 默认不打包该文件，缺失时
-  tlshd 启动即报 `gnutls: The request is invalid. (-50)` 并退出，随后
-  `nvme connect --tls` 以 `failed to start TLS: -3` 失败、进入 emergency mode。
-  `95nbft` 的 `module-setup.sh` 现以 `readlink -f` 解析符号链接后装机（实测 3384 B）。
-- 源切换：`/etc/yum.repos.d/almalinux*.repo` 的段落名为小写（baseos/appstream/crb/extras），
-  镜像目录为 CamelCase（BaseOS/AppStream/CRB/extras）——脚本用显式映射改写，
-  并禁用其余仓库（含 debuginfo）。
-- `nbft-connect` 的 shell 可移植性：RHEL 无 dash，A 阶段把脚本安装为
-  `/usr/libexec/nbft-connect` 并由 **bash** 调用；NBCT 固定宽度字段提取改为
-  `dd | tr -d '\000'`（不依赖特定 shell 的 NUL 截断语义），dash 下单测同样通过。
-- 验收轨迹（2026-10-31，QEMU/OVMF + 隔离网桥 `br-fwtest`，target `192.168.81.1:4422`
-  tls1.3/required）：两轮 PXE 冷启动均到 `login:`；每轮 target 端两条
-  `nvmet: Created nvm controller … , TLS.`（固件段 + 内核段）；抓包 4 条客户端流
-  首字节均为 `0x16`、无 PSK/DHHC 明文、`:4420` 包数 0。
-  第 2 轮先用 `--skip-disk --yes` 重跑定制（验证 ESP 内容刷新路径）。
-  证据（worktree `diag/`，凭据字段已脱敏）：`alma10-boot.serial`、
-  `alma10-tls-handshake.pcap`、`target-dmesg.txt`。
-- 版本边界：代表版本选 10.x（6.12 内核，实测 `CONFIG_NVME_TCP_TLS=y`）。RHEL 9.7
-  **未纳入实测**——其内核为 5.14 系，NVMe/TCP TLS 是上游 6.7+ 特性，是否由 Red Hat
-  回移未验证；若要在 9.x 落地，先核对 `CONFIG_NVME_TCP_TLS` 与 ktls-utils 版本。
+### AlmaLinux 10.2 (first RHEL family)
+- Medium: AlmaLinux 10.2 minimal ISO + kickstart (served over HTTP); the target disk is a 4K logical-block
+  virtio-blk device (the same XFS installation constraint as Fedora 44).
+- Boundary between kickstart and the minimal ISO: the 10.2 minimal repository **does not contain ktls-utils**;
+  the kickstart uses `%packages --ignoremissing` and does not list that package; stage A then installs
+  `keyutils ktls-utils` from the full image.
+- initrd: dracut-107 **has no systemd-networkd** → `--add "nbft network network-manager"`,
+  and `nm-initrd-generator` configures networking from `ip=dhcp`; **`--omit nvmf`** disables the native
+  credential-less connection; `95nbft` hooks both `initqueue/settled` and `pre-mount` and deduplicates
+  through `/run/nbft-done`.
+- **crypto-policies is a hard dependency of the initrd**: the GnuTLS `@SYSTEM` default priority list comes from
+  `/etc/crypto-policies/back-ends/gnutls.config`; dracut does not package that file by default, and when it is
+  missing tlshd reports `gnutls: The request is invalid. (-50)` at startup and exits, after which
+  `nvme connect --tls` fails with `failed to start TLS: -3` and the system enters emergency mode.
+  The `module-setup.sh` of `95nbft` now resolves the symlink with `readlink -f` before installing the file
+  (measured: 3384 B).
+- Source switch: the section names in `/etc/yum.repos.d/almalinux*.repo` are lowercase (baseos/appstream/crb/extras)
+  while the mirror directories use CamelCase (BaseOS/AppStream/CRB/extras) — the script rewrites them through an
+  explicit mapping and disables the remaining repositories (including debuginfo).
+- Shell portability of `nbft-connect`: RHEL has no dash, so stage A installs the script as
+  `/usr/libexec/nbft-connect` and invokes it with **bash**; fixed-width NBCT field extraction now uses
+  `dd | tr -d '\000'` (independent of any particular shell's NUL truncation semantics), and the unit test
+  passes under dash as well.
+- Acceptance trajectory (2026-10-31, QEMU/OVMF + isolated bridge `br-fwtest`, target `192.168.81.1:4422`
+  tls1.3/required): both PXE cold boots reached `login:`; each round produced two
+  `nvmet: Created nvm controller … , TLS.` lines on the target (firmware segment + kernel segment); in the
+  capture all 4 client streams start with `0x16`, no PSK/DHHC plaintext appears, and the packet count to
+  `:4420` is 0. The second round first re-ran customization with `--skip-disk --yes` (validating the ESP
+  content refresh path). Evidence (worktree `diag/`, credential fields redacted): `alma10-boot.serial`,
+  `alma10-tls-handshake.pcap`, `target-dmesg.txt`.
+- Version boundary: 10.x is the representative version (6.12 kernel, measured `CONFIG_NVME_TCP_TLS=y`). RHEL 9.7
+  **was not measured** — its kernel is the 5.14 series, NVMe/TCP TLS is an upstream 6.7+ feature, and whether
+  Red Hat has backported it is unverified; to adopt 9.x, check `CONFIG_NVME_TCP_TLS` and the ktls-utils version first.
 
-### openSUSE Leap 16.0（首个 SUSE 系）
-- 介质：Leap 16.0 online installer（Agama）+ JSON profile；目标盘 4K 逻辑块、**空白盘**。
-- Agama 边界：`inst.auto=<URL>` 载入 profile（`inst.finish=poweroff`）；
-  profile 通过 JSON Schema（`agama config validate`）≠ 存储方案可计算——目标盘若残留
-  旧 GPT 分区，默认 `spacePolicy=keep` 与显式 ESP/`/` 布局冲突，报
-  `Cannot calculate a valid storage setup`；母盘安装前须清空磁盘。
-- initrd：dracut `059+suse` 同走 `35network-manager`；**`--omit nvmf`**、
-  `95nbft` 逐条带凭据连接；`/etc/tlshd.conf` 与 crypto-policies 文件进 initrd；
-  dracut 产物为 `/boot/initrd-<KVER>`，拷入 ESP 时改名 `initramfs-<KVER>`
-  （与 `grub.cfg` 的 `initrd` 行一致）。
-- 验收轨迹（2026-10-31，QEMU/OVMF + 隔离网桥，target `192.168.81.1:4423`
-  tls1.3/required）：Agama 无人值守安装 → 本地 `-kernel/-initrd` 启动母盘跑 A-F
-  （ESP 重建 4K FAT32 953 MiB）→ PXE 冷启动到 `login:`；target 两条
-  `nvmet: Created nvm controller … , TLS.`（固件段 + 内核段）；抓包 4 条客户端流
-  首字节均 `0x16`、无凭据明文、`:4420` 包数 0。内核段 tlshd 为 SUSE 的
-  ktls-utils 1.0.0-pre，日志 `Handshake … was successful`。
-  证据（worktree `diag/`，凭据字段已脱敏）：`leap16-boot.serial`、
-  `leap16-tls-handshake.pcap`、`target-dmesg.txt`。
+### openSUSE Leap 16.0 (first SUSE family)
+- Medium: Leap 16.0 online installer (Agama) + JSON profile; the target disk is 4K logical-block and **blank**.
+- Agama boundary: `inst.auto=<URL>` loads the profile (`inst.finish=poweroff`);
+  a profile passing the JSON Schema (`agama config validate`) ≠ a computable storage plan — if the target disk retains
+  an old GPT partition, the default `spacePolicy=keep` conflicts with the explicit ESP/`/` layout and the installer reports
+  `Cannot calculate a valid storage setup`; the disk must be wiped before installing the golden image.
+- initrd: dracut `059+suse` likewise uses `35network-manager`; **`--omit nvmf`**,
+  `95nbft` connects per entry with credentials; `/etc/tlshd.conf` and the crypto-policies file are installed into the initrd;
+  the dracut artifact is `/boot/initrd-<KVER>`, renamed to `initramfs-<KVER>` when copied into the ESP
+  (matching the `initrd` line of `grub.cfg`).
+- Acceptance trajectory (2026-10-31, QEMU/OVMF + isolated bridge, target `192.168.81.1:4423`
+  tls1.3/required): Agama unattended installation → local `-kernel/-initrd` boot of the golden image to run A-F
+  (ESP rebuilt as 4K FAT32, 953 MiB) → PXE cold boot to `login:`; the target logged two
+  `nvmet: Created nvm controller … , TLS.` lines (firmware segment + kernel segment); in the capture all 4 client streams
+  start with `0x16`, no credential plaintext appears, and the packet count to `:4420` is 0. The kernel-side tlshd is SUSE's
+  ktls-utils 1.0.0-pre and logs `Handshake … was successful`.
+  Evidence (worktree `diag/`, credential fields redacted): `leap16-boot.serial`,
+  `leap16-tls-handshake.pcap`, `target-dmesg.txt`.
 
-## 新增发行版适配流程（速查）
+## Adaptation Procedure for a New Distribution (quick reference)
 
-1. 从最接近的现存变体派生脚本（`test/<distro>/golden-image-setup-<distro>.sh`），
-   逐参数核对：介质内核/initrd 文件名、preseed/autoinstall/kickstart 引导参数与
-   包管理器源格式；**目标盘用 4K 逻辑块虚拟盘**（XFS 安装约束）；
-2. 准备安装 VM 与目标 raw 盘（SUSE 系须空白盘）；跑通无人值守安装至自动关机；
-3. `test/shared/golden-vm-run.sh`（或 `golden-ubuntu-vm-run.sh`）启动定制 VM，
-   scp 脚本后执行 A-F；`--skip-disk --yes` 只跳过 GPT/ESP 重建，**仍刷新 ESP 内容**
-   （内核/initrd/BOOTX64/grub.cfg），保证新 initrd 一定进入 ESP；
-4. 宿主隔离验收（不动生产 br0/4421）：
+1. Derive the script from the closest existing variant (`test/<distro>/golden-image-setup-<distro>.sh`) and
+   check every parameter: medium kernel/initrd file names, preseed/autoinstall/kickstart boot parameters and
+   the package-manager source format; **use a 4K logical-block virtual disk for the target** (the XFS installation constraint);
+2. Prepare the installation VM and the target raw disk (blank for the SUSE family); run the unattended installation through to automatic power-off;
+3. Start the customization VM with `test/shared/golden-vm-run.sh` (or `golden-ubuntu-vm-run.sh`),
+   scp the script and run A-F; `--skip-disk --yes` skips only the GPT/ESP rebuild and **still refreshes the ESP content**
+   (kernel/initrd/BOOTX64/grub.cfg), ensuring the new initrd always lands on the ESP;
+4. Isolated host-side acceptance (leaving the production br0/4421 untouched):
    ```bash
    sudo bash test/shared/fwtest-net.sh setup          # br-fwtest + tap0fw
    sudo bash test/shared/fwtest-nvmet-tls.sh setup <raw> <subnqn> <hostnqn> <DHHC> \
@@ -203,8 +212,8 @@ PSK / DH-HMAC-CHAP 密钥不出现在明文载荷中，到明文端口 4420 的�
         --secret '<DHHC-1:..>' --psk <hex> --serial diag/x.serial --pcap diag/x.pcap
    python3 test/shared/pcap-flows.py diag/x.pcap --port 4422 --secret '<DHHC-1:..>' --psk <hex>
    ```
-   判据：串口 `login:`；宿主 dmesg 两条 `nvmet: Created nvm controller … , TLS.`；
-   脚本输出 `ALL_TLS_HANDSHAKE`、`plaintext_markers=none`、`packets_to_4420=0`。
-   抓包体积大时可加 `PCAP_MAXLEN=160`（只留首部与握手前缀）；
-5. 组件变更后重跑 `test/shared/embed-components.py` 刷新内嵌段，再跑
-   `test/test-nbft-connect-nbct.sh`（默认 dash；`SHELL_UNDER_TEST=bash` 覆盖 bash）。
+   Criteria: `login:` on the serial console; two `nvmet: Created nvm controller … , TLS.` lines in the host dmesg;
+   script output `ALL_TLS_HANDSHAKE`, `plaintext_markers=none`, `packets_to_4420=0`.
+   When the capture is large, add `PCAP_MAXLEN=160` (keep only headers and the handshake prefix);
+5. After component changes, re-run `test/shared/embed-components.py` to refresh the embedded sections, then run
+   `test/test-nbft-connect-nbct.sh` (dash by default; `SHELL_UNDER_TEST=bash` overrides to bash).

@@ -1,96 +1,99 @@
-# 母盘定制指南（NVMe-oF SAN 引导：一次定制，克隆即用）
+# Golden Image Customization Guide (NVMe-oF SAN boot: customize once, clone and boot)
 
-> 状态：基于生产引导链全链路验证（2026-08-25，[production-boot-verification.md](production-boot-verification.md)）的实测操作清单。本文档仅中文。
->
-> 适用范围：刚刚新装完成 Debian 12 的母盘（虚拟机或物理机镜像），定制后可作为无状态引导母盘克隆分发——客户端零本地介质、盘内零身份硬编码，身份与凭据由引导链外部注入。
->
-> 关联文档：[initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子模块组件说明）、[golden-image-matrix.md](golden-image-matrix.md)（各发行版矩阵与脚本位置）、[production-boot-verification.md](production-boot-verification.md)（全链路验证记录）、[customizations.md](customizations.md)（固件补丁设计）。
->
-> **支持基线（2026-08-27 裁定）**：Debian 12（+backports 6.12）及以上、Ubuntu 24.04 LTS 及以上、RHEL 9 及以上（AlmaLinux 10 及以上；10.2 已实测）、SLES 15 及以上、openSUSE Leap 16 及以上、Fedora 44 及以上、Arch rolling。**低于基线的发行版不做适配**（明细见第 10 节）。
->
-> **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/debian12/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：**2026-09-08 起以单文件自包含形态在目标母盘 VM 内端到端实测通过（A–F 全程含 E，随后 SAN 冷启动验收至 GDM）**；早期轨迹：A–D+F 经 chroot（2026-09-02）、本地可引导性经 QEMU（2026-09-02，见 8.1）。
+[English](golden-image-customization-debian12.md) | [中文](golden-image-customization-debian12.zh-CN.md)
 
-## 1. 定制总览
+> Status: a measured operational checklist derived from full-chain validation of the production boot chain (2026-08-25, [production-boot-verification.md](production-boot-verification.md)).
+>
+> Scope: a freshly installed Debian 12 golden image (virtual machine or physical machine image); once customized it can be cloned and distributed as a stateless boot golden image — the client carries no local medium, no identity information is fixed on the disk, and identity and credentials are injected from outside the boot chain.
+>
+> Related documents: [initramfs-nbft/README.md](../initramfs-nbft/README.md) (seed module components), [golden-image-matrix.md](golden-image-matrix.md) (per-distribution matrix and script locations), [production-boot-verification.md](production-boot-verification.md) (full-chain verification record), [customizations.md](customizations.md) (firmware patch design).
+>
+> **Supported baseline (decision of 2026-08-27)**: Debian 12 (+ backports 6.12) and later, Ubuntu 24.04 LTS and later, RHEL 9 and later (AlmaLinux 10 and later; 10.2 measured), SLES 15 and later, openSUSE Leap 16 and later, Fedora 44 and later, Arch rolling. **Distributions below the baseline are not adapted** (details in Section 10).
+>
+> **Automation (since 2026-09-02)**: the six stages A–F are wrapped in the one-shot script [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh); running `sudo bash test/debian12/golden-image-setup-debian12.sh` inside the golden image system performs the whole customization automatically (idempotent, re-runnable). The sections below retain the manual steps and the rationale as a reference for script behavior. Validation status: **measured end to end inside the target golden image VM in single-file self-contained form since 2026-09-08 (stages A–F including E, followed by SAN cold-boot acceptance to GDM)**; earlier trajectory: A–D+F through chroot (2026-09-02), local bootability through QEMU (2026-09-02, see 8.1).
+
+## 1. Customization Overview
 
 ```
-新装 Debian 12
-  → A. 系统与内核（6.12 backports，含 NVMe 认证）
-  → B. initramfs 种子模块（initramfs-nbft：NBFT/NBCT 消费）
-  → C. 系统配置（fstab / 网络 / hostname）
-  → D. GRUB 启动参数（完整 cmdline）
-  → E. 磁盘格式（4K 原生 GPT + 4K FAT32 ESP）
-  → F. 无状态校验（盘内零身份硬编码）
-  → 克隆分发
+Freshly installed Debian 12
+  → A. System and kernel (6.12 backports, with NVMe authentication)
+  → B. initramfs seed module (initramfs-nbft: NBFT/NBCT consumption)
+  → C. System configuration (fstab / network / hostname)
+  → D. GRUB boot parameters (complete cmdline)
+  → E. Disk format (4K native GPT + 4K FAT32 ESP)
+  → F. Stateless verification (no identity information fixed on the disk)
+  → Clone and distribute
 ```
 
-每个阶段标注了"为什么"——三个历史阻塞点（`0x7f22208e`、`ret=401`、断链）全部对应具体步骤，缺一步即复现。
+Each stage states the "why": the three historical blocking points (`0x7f22208e`, `ret=401`, connection drop) each map to a specific step, and omitting one step reproduces them.
 
-### 1.1 一键脚本（推荐）
+### 1.1 One-Shot Script (recommended)
 
-A–F 全部阶段已自动化，**在母盘系统内以 root 运行**：
+All stages A–F are automated; **run as root inside the golden image system**:
 
 ```bash
-# 脚本与 initramfs-nbft 组件需位于同一仓库目录（默认取仓库根的 initramfs-nbft（test/<distro>/ 上两级））
-sudo bash test/debian12/golden-image-setup-debian12.sh          # 全流程（E 阶段交互确认）
-sudo bash test/debian12/golden-image-setup-debian12.sh --yes    # E 阶段不交互
-sudo bash test/debian12/golden-image-setup-debian12.sh --skip-disk --yes  # 跳过 GPT/ESP 重建（仍刷新 ESP 内容）
-sudo bash test/debian12/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # 注入宿主 2.14 预构建 GRUB（见 6.3）
+# The script and the initramfs-nbft components must live in the same repository tree
+# (by default initramfs-nbft at the repository root, two levels above test/<distro>/)
+sudo bash test/debian12/golden-image-setup-debian12.sh          # full flow (stage E asks for confirmation)
+sudo bash test/debian12/golden-image-setup-debian12.sh --yes    # stage E without interaction
+sudo bash test/debian12/golden-image-setup-debian12.sh --skip-disk --yes  # skip the GPT/ESP rebuild (ESP content is still refreshed)
+sudo bash test/debian12/golden-image-setup-debian12.sh --grub-efi /path/to/BOOTX64.EFI --yes  # inject a host-built 2.14 GRUB (see 6.3)
 sudo bash test/debian12/golden-image-setup-debian12.sh -d /path/to/initramfs-nbft -k 6.12.95+deb12-amd64
 ```
 
-脚本行为与下方手工步骤一一对应，另含三类自动处理：
+Script behavior maps one-to-one onto the manual steps below and additionally performs three kinds of automatic handling:
 
-- 注释安装器残留的 `deb cdrom:` apt 源（无光驱环境 `apt-get update` 硬失败）；
-- `GRUB_CMDLINE_LINUX_DEFAULT` 追加 SAN 参数时**同步移除 `quiet`**（见第 5 节）；
-- 默认切换 apt 源为阿里云（含 backports，security 同前缀推导；`--mirror` 自定义、`--keep-sources` 保留原源）并强制 IPv4——宿主无 IPv6 的环境 apt 大文件下载会卡死（实测）。
+- Commenting out the `deb cdrom:` apt sources left behind by the installer (in an environment without an optical drive, `apt-get update` fails hard);
+- **Removing `quiet`** at the same time as the SAN parameters are appended to `GRUB_CMDLINE_LINUX_DEFAULT` (see Section 5);
+- Switching apt sources to Alibaba Cloud by default (including backports, with the security suite derived from the same prefix; `--mirror` sets a custom mirror and `--keep-sources` keeps the original sources) and forcing IPv4 — in environments whose host has no IPv6, apt downloads of large files hang (measured).
 
-**单文件分发（推荐用于 VM 内直接运行，免 chroot）**：脚本已内嵌 `initramfs-nbft` 三组件与 GRUB 2.14 BOOTX64 产物（base64）——**零宿主依赖**，单个 `.sh` 拷入母盘（共享目录 / scp / 任意途径）即可运行：
+**Single-file distribution (recommended for running directly inside a VM, without chroot)**: the script already embeds the three `initramfs-nbft` components and the GRUB 2.14 BOOTX64 artifact (base64) — **zero host dependencies**; a single `.sh` copied into the golden image (shared directory, scp, any channel) is enough to run it:
 
 ```bash
-# 宿主: 组件更新后重新内嵌
+# host: re-embed after the components are updated
 python3 test/shared/embed-components.py
 
-# 母盘内: 单文件直接跑（GRUB 产物默认用内嵌版; --grub-efi 可显式覆盖; 仓库组件目录存在时优先用仓库组件）
+# inside the golden image: run the single file directly (the embedded GRUB artifact is the default; --grub-efi overrides it explicitly; repository components take precedence when the repository component directory exists)
 sudo bash golden-image-setup-debian12.sh --yes
 ```
 
-验证边界：**E 阶段（磁盘格式）必须在目标盘上运行**（4K 转换后 512 环境不再可读，SAN 形态的预期结果）；2026-09-08 已在目标母盘 VM 内以单文件形态端到端实测（A–F 全程含 E，随后 PXE 冷启动验收到 GDM）。
+Validation boundary: **stage E (disk format) must run against the target disk** (after the 4K conversion the disk is no longer readable in a 512 environment, which is the expected outcome for the SAN form); on 2026-09-08 the single-file form was measured end to end inside the target golden image VM (stages A–F including E, followed by PXE cold-boot acceptance to GDM).
 
-### 1.2 辅助脚本包（test/shared/，各发行版通用，均经实测）
+### 1.2 Helper Script Set (test/shared/, common to all distributions, all measured)
 
-母盘定制与验收的宿主侧辅助脚本：
+Host-side helper scripts for golden image customization and acceptance:
 
-| 脚本 | 用途 |
+| Script | Purpose |
 |---|---|
-| `golden-vm-run.sh <raw>` | 启动定制阶段 VM（OVMF UEFI + slirp + 2222→22 转发 + QMP） |
-| `golden-vm-sendkey.py` | QMP→HMP 键盘注入（VM 无 sshd 时的登录/装包通道） |
-| `golden-net-rebuild.sh` | 宿主重启后网络重建（br0/tap0 + NAT，出口自动探测） |
-| `golden-nvmet-enable.sh <raw>` | nvmet namespace 启用（必须宿主 mount ns 执行，容器 ns 会 -2） |
-| `golden-esp-verify.sh <raw>` | 4K ESP 内容校验（512 逻辑扇区 + 偏移 loop 挂载；4096 逻辑扇区 loop 上 vfat 会误报空目录） |
-| `embed-components.py` | 单文件脚本组件/GRUB 产物打包器（扫描 test/*/golden-image-setup-*.sh） |
-| `assets/BOOTX64-2.14-generic.EFI` | 内嵌的 GRUB 2.14 产物（实测引导基线） |
+| `golden-vm-run.sh <raw>` | Start the customization-stage VM (OVMF UEFI + slirp + 2222→22 forwarding + QMP) |
+| `golden-vm-sendkey.py` | QMP→HMP keyboard injection (login and package-install channel when the VM has no sshd) |
+| `golden-net-rebuild.sh` | Network rebuild after a host reboot (br0/tap0 + NAT, egress detected automatically) |
+| `golden-nvmet-enable.sh <raw>` | nvmet namespace enablement (must run in the host mount namespace; a container namespace fails with -2) |
+| `golden-esp-verify.sh <raw>` | 4K ESP content verification (512-byte logical sectors + offset loop mount; on a loop device with 4096-byte logical sectors vfat falsely reports an empty directory) |
+| `embed-components.py` | Single-file script component/GRUB artifact packer (scans test/*/golden-image-setup-*.sh) |
+| `assets/BOOTX64-2.14-generic.EFI` | Embedded GRUB 2.14 artifact (measured boot baseline) |
 
-验收（PXE 冷启动）复用全链路测试脚本 `run-kurrent-e2e.sh`。
+Acceptance (PXE cold boot) reuses the full-chain test script `run-kurrent-e2e.sh`.
 
-## 2. A. 系统与内核
+## 2. A. System and Kernel
 
 ```bash
-# Debian 12 最小安装后：
+# after a minimal Debian 12 installation:
 sudo apt install nvme-cli jq initramfs-tools
 
-# bookworm-backports 6.12 内核（必须，理由见下）
+# bookworm-backports 6.12 kernel (required; rationale below)
 sudo apt install -t bookworm-backports linux-image-6.12.95+deb12-amd64
 ```
 
-- **为什么 6.12**：6.1 内核 `CONFIG_NVME_AUTH is not set`，对 nvmet `AUTH=1` 的 ATR 置位响应返回 `-EOPNOTSUPP` → 内核段认证失败 `ret=401`（0x191）。6.12 起 `CONFIG_NVME_AUTH=m`，内核段 DH-HMAC-CHAP 协商正常。
-- 验证：`grep CONFIG_NVME_AUTH /boot/config-$(uname -r)` 应为 `=m`。
+- **Why 6.12**: the 6.1 kernel reports `CONFIG_NVME_AUTH is not set` and answers the ATR bit set in the nvmet `AUTH=1` response with `-EOPNOTSUPP`, so kernel-side authentication fails with `ret=401` (0x191). From 6.12 on, `CONFIG_NVME_AUTH=m` and the kernel-side DH-HMAC-CHAP negotiation proceeds normally.
+- Verification: `grep CONFIG_NVME_AUTH /boot/config-$(uname -r)` should report `=m`.
 
-## 3. B. initramfs 种子模块（initramfs-nbft）
+## 3. B. initramfs Seed Module (initramfs-nbft)
 
-组件来自 `initramfs-nbft/`（nbft-connect 核心脚本 + initramfs-tools hook/local-top）：
+The components come from `initramfs-nbft/` (the nbft-connect core script plus the initramfs-tools hook and local-top script):
 
 ```bash
-# local-top 目录可能不存在，先确保存在
+# the local-top directory may not exist; create it first
 sudo mkdir -p /usr/share/initramfs-tools/scripts/local-top
 
 sudo install -m 0755 nbft-connect /usr/local/sbin/
@@ -99,34 +102,34 @@ sudo install -m 0755 initramfs/scripts/local-top/nbft \
     /usr/share/initramfs-tools/scripts/local-top/
 
 sudo update-initramfs -u
-# 验证组件在位
+# verify that the components are in place
 lsinitramfs /boot/initrd.img-$(uname -r) | grep -E 'nbft|local-top'
 ```
 
-### 3.1 hostid 修复（实测必需）
+### 3.1 hostid Fix (required in measurement)
 
-内核 nvme-fabrics host tracking 拒绝 DMI 默认 hostid 下的自定义 hostnqn（`found same hostid but different hostnqn`）。`nbft-connect` 必须：
+Kernel nvme-fabrics host tracking rejects a custom hostnqn under the DMI default hostid (`found same hostid but different hostnqn`). `nbft-connect` must:
 
-1. 默认值兜底：`HOSTID="${HOSTID:-11111111-2222-3333-4444-555555555555}"`
-2. 显式注入：`[ -n "$HOSTID" ] && cmd="${cmd} --hostid '${HOSTID}'"`
+1. Fallback default: `HOSTID="${HOSTID:-11111111-2222-3333-4444-555555555555}"`
+2. Explicit injection: `[ -n "$HOSTID" ] && cmd="${cmd} --hostid '${HOSTID}'"`
 
-### 3.2 运行约束
+### 3.2 Runtime Constraints
 
-- `nbft-connect` 须以 **dash/ash** 运行（initramfs 默认 `/bin/sh`）：NBCT 字段提取依赖命令替换在首个 NUL 字节截断的语义，bash 4.4+ 保留 NUL 导致空字段误判；
-- 可选：`/etc/initramfs-tools/conf.d/nvme-cli` 写 `NO_NBFT_IN_INITRAMFS=yes` 可在打包时禁用（对齐 open-iscsi 的 `NO_ISCSI_IN_INITRAMFS`）。
+- `nbft-connect` must run under **dash/ash** (the initramfs default `/bin/sh`): NBCT field extraction relies on command substitution truncating at the first NUL byte, whereas bash 4.4+ retains the NUL, so empty fields are misjudged;
+- Optional: writing `NO_NBFT_IN_INITRAMFS=yes` into `/etc/initramfs-tools/conf.d/nvme-cli` disables packaging (matching open-iscsi's `NO_ISCSI_IN_INITRAMFS`).
 
-## 4. C. 系统配置
+## 4. C. System Configuration
 
-### 4.1 fstab：固定 root UUID + 注释 /boot/efi
+### 4.1 fstab: fixed root UUID and commented-out /boot/efi
 
-- root 分区在 fstab 中写死 **UUID**（克隆后静态可写），示例：
+- The root partition is pinned by **UUID** in fstab (statically writable after cloning), for example:
   ```
   UUID=d0a8ebeb-202b-4481-9f52-9eae81af44be / ext4 defaults 0 1
   ```
-- **注释 `/boot/efi` 行**（`#UUID=855B-91DF /boot/efi vfat umask=0077 0 1`）：
-  - 为什么：SAN 场景 ESP 由固件（iPXE/GRUB）独占读取，系统内挂载无意义；不注释则 systemd 挂载 4K FAT ESP 失败 → `local-fs.target` 失败 → **emergency mode**（第 11 轮实测教训，引导链本身不受影响但无法登录）。
+- **Comment out the `/boot/efi` line** (`#UUID=855B-91DF /boot/efi vfat umask=0077 0 1`):
+  - Why: in the SAN scenario the ESP is read exclusively by the firmware (iPXE/GRUB), so mounting it inside the system serves no purpose; if the line is not commented out, systemd fails to mount the 4K FAT ESP, `local-fs.target` fails and the system enters **emergency mode** (lesson from the measured round 11; the boot chain itself is unaffected but login is impossible).
 
-### 4.2 网络：全链路 DHCP，禁止二次 HTTP 取凭证
+### 4.2 Network: DHCP throughout the chain, no secondary HTTP credential fetch
 
 ```ini
 # /etc/systemd/network/10-dhcp.network
@@ -137,52 +140,53 @@ Name=e*
 DHCP=yes
 ```
 
-- 为什么：initramfs 阶段 `configure_networking` 需要与系统阶段一致的 DHCP 行为；凭据经 NBCT 表**带内传递**（固件 → 内核），禁止内核侧二次 HTTP 取凭证；
-- 内核 cmdline 侧配套 `ip=dhcp`（见 D 节）。
+- Why: at the initramfs stage `configure_networking` needs the same DHCP behavior as the system stage; credentials travel **in band** through the NBCT table (firmware → kernel), and a secondary HTTP credential fetch on the kernel side is prohibited;
+- The kernel cmdline carries `ip=dhcp` accordingly (see Section D).
 
-### 4.3 hostname：不硬编码
+### 4.3 Hostname: Not Pinned
 
-- 母盘内 hostname 仅为占位（如 `debian`），生产 hostname 由控制面下发，不属于母盘职责。
+- The hostname inside the golden image is only a placeholder (for example `debian`); the production hostname is delivered by the control plane and is not the responsibility of the golden image.
 
-## 5. D. GRUB 启动参数（完整版，缺一不可）
+## 5. D. GRUB Boot Parameters (complete set; none may be omitted)
 
 ```bash
-# /etc/default/grub，追加到 GRUB_CMDLINE_LINUX_DEFAULT：
-# 同时移除默认的 quiet：quiet 把 console 日志压到 WARNING，会抑制 info 级内核打印
-# （含 nvme 认证成功日志）——第 8 节验收判据 1 要求串口可见内核段 authenticated
+# /etc/default/grub: append to GRUB_CMDLINE_LINUX_DEFAULT:
+# remove the default quiet at the same time: quiet raises the console log level to WARNING
+# and suppresses info-level kernel messages (including the nvme authentication success
+# log) — acceptance criterion 1 in Section 8 requires the kernel-side authenticated line on the serial console
 GRUB_CMDLINE_LINUX_DEFAULT="net.ifnames=0 biosdevname=0 ip=dhcp nbft_auto \
 systemd.mask=NetworkManager.service systemd.mask=systemd-networkd.service"
 sudo update-grub
 ```
 
-| 参数 | 作用 |
+| Parameter | Effect |
 |---|---|
-| `net.ifnames=0 biosdevname=0` | 稳定网卡命名（initramfs 与 systemd 阶段接口名一致） |
-| `ip=dhcp` | initramfs 网络配置入口（对齐 `configure_networking`） |
-| `nbft_auto` | 启用 NBFT 自动消费（对齐 iSCSI 的 `iscsi_auto` 语义） |
-| `systemd.mask=NetworkManager.service` `systemd.mask=systemd-networkd.service` | **防断链**：networkd 接管网卡会重置 TCP → keep-alive 超时 → `no usable path` 断链循环（第 10 轮实测教训）。mask 后 `systemd-networkd-wait-online` Dependency failed 为无害预期 |
+| `net.ifnames=0 biosdevname=0` | Stable NIC naming (interface names agree between the initramfs and systemd stages) |
+| `ip=dhcp` | initramfs network configuration entry point (matches `configure_networking`) |
+| `nbft_auto` | Enables automatic NBFT consumption (matches the semantics of iSCSI's `iscsi_auto`) |
+| `systemd.mask=NetworkManager.service` `systemd.mask=systemd-networkd.service` | **Prevents connection drops**: when networkd takes over the NIC it resets TCP, keep-alive times out and a `no usable path` disconnect loop follows (lesson from the measured round 10). After masking, the `systemd-networkd-wait-online` "Dependency failed" message is expected and harmless |
 
-## 6. E. 磁盘格式（SAN 形态，最关键）
+## 6. E. Disk Format (SAN form, the most critical stage)
 
-nvmet file backend 以 **4096 B 逻辑块**导出（`i_blkbits`），盘必须是 4K 语义：
+The nvmet file backend exports the image with **4096 B logical blocks** (`i_blkbits`), so the disk must have 4K semantics:
 
-### 6.1 4K 原生 GPT
+### 6.1 4K Native GPT
 
-- 为什么：512 扇区 GPT 的备份头/分区表在 4K 块语义下错位 → EDK2 PartitionDxe 找不到 GPT → ESP 不枚举 → sanboot `0x7f22208e`（EFI_NOT_FOUND）；
-- 布局：GPT 头 @4096、分区表 @8192、备份头 @盘尾，分区字节范围零改动；
-- 转换：参考实现 `diag/convert-gpt-4k.sh`（python 重写 GPT，转换前自动备份旧 GPT 到 `.gpt-512.bak`，完成后 verify 签名/CRC + spot-check FAT32 BPB / ext4 magic / SWAPSPACE2）。
+- Why: with a 512-byte-sector GPT the backup header and partition table are misplaced under 4K block semantics, EDK2 PartitionDxe cannot find the GPT, the ESP is not enumerated and sanboot fails with `0x7f22208e` (EFI_NOT_FOUND);
+- Layout: GPT header @4096, partition table @8192, backup header at the end of the disk; partition byte ranges are unchanged;
+- Conversion: reference implementation `diag/convert-gpt-4k.sh` (rewrites the GPT in python, automatically backs up the old GPT to `.gpt-512.bak` before conversion, then verifies the signature and CRC and spot-checks the FAT32 BPB, the ext4 magic and SWAPSPACE2).
 
-### 6.2 4K FAT32 ESP（p1）
+### 6.2 4K FAT32 ESP (p1)
 
-- volid `855B-91DF`（fstab 引用值），内容：
-  - `vmlinuz-6.12.95+deb12-amd64`（6.12 内核，对应 B 节）
-  - `initrd.img-6.12.95+deb12-amd64`（**hostid 修复版**；initrd 为多段结构：前 148480 B 微码段 + zstd 压缩 cpio 段，拼接公式 `段1偏移 + 段2长度`，替换段 2 时用 `cat 段1 zstd > 新initrd` 而非 `>>` 追加）
-  - `EFI/BOOT/BOOTX64.EFI`（GRUB 2.14，`grub-mkimage` 定制；版本要求与步骤见 6.3）
-  - `EFI/BOOT/grub.cfg`（SAN 引导菜单，见下）
+- volid `855B-91DF` (the value referenced by fstab), containing:
+  - `vmlinuz-6.12.95+deb12-amd64` (the 6.12 kernel, corresponding to Section B)
+  - `initrd.img-6.12.95+deb12-amd64` (**hostid-fixed build**; the initrd is a multi-segment structure: a leading 148480 B microcode segment followed by a zstd-compressed cpio segment; the concatenation formula is `segment 1 offset + segment 2 length`, and when replacing segment 2 use `cat segment1 zstd > new-initrd` rather than appending with `>>`)
+  - `EFI/BOOT/BOOTX64.EFI` (GRUB 2.14, customized with `grub-mkimage`; version requirements and steps in 6.3)
+  - `EFI/BOOT/grub.cfg` (SAN boot menu, see below)
 
-- **为什么必须是 `EFI/BOOT/BOOTX64.EFI`**：Debian 安装器只写 `EFI/debian/`（shim/grub），不创建 `EFI/BOOT/` 可移动介质 fallback。固件侧若没有持久化的引导项（全新 NVRAM、清 CMOS 后、或 iPXE `sanboot` 完成后固件重扫盘），只按标准 fallback 路径 `\EFI\BOOT\BOOTX64.EFI` 找引导器——找不到即跳过该盘（实测：OVMF 报 `BdsDxe: failed to load Boot0002 ... Not Found` 后转入 PXE）。E 阶段重建 ESP 时用 `grub-mkimage` 写 `EFI/BOOT/BOOTX64.EFI`，既是 SAN 冷启动的入口，也让母盘在任意 UEFI 机器上可直接本地引导（2026-09-02 本地引导验证即依赖此文件）。
+- **Why `EFI/BOOT/BOOTX64.EFI` is mandatory**: the Debian installer writes only `EFI/debian/` (shim/grub) and does not create the `EFI/BOOT/` removable-media fallback. When the firmware has no persistent boot entry (fresh NVRAM, after clearing CMOS, or when the firmware rescans disks after iPXE `sanboot` completes), it looks for a loader only at the standard fallback path `\EFI\BOOT\BOOTX64.EFI`; if that file is absent the disk is skipped (measured: OVMF reports `BdsDxe: failed to load Boot0002 ... Not Found` and falls through to PXE). Stage E rebuilds the ESP and writes `EFI/BOOT/BOOTX64.EFI` with `grub-mkimage`, which is both the entry point for SAN cold boot and the file that lets the golden image boot locally on any UEFI machine (the local-boot validation of 2026-09-02 depends on it).
 ```cfg
-# EFI/BOOT/grub.cfg 参考
+# EFI/BOOT/grub.cfg reference
 set default=0
 set timeout=5
 menuentry 'Debian GNU/Linux 12 (SAN, 6.12.95+deb12-amd64)' {
@@ -192,13 +196,13 @@ menuentry 'Debian GNU/Linux 12 (SAN, 6.12.95+deb12-amd64)' {
 }
 ```
 
-- 注意：GRUB 走 `search --fs-uuid 855B-91DF` 定位 ESP——4K FAT 的卷标/UUID 必须与 fstab 注释行、grub.cfg 三者一致。
+- Note: GRUB locates the ESP through `search --fs-uuid 855B-91DF`, so the volume label/UUID of the 4K FAT filesystem must agree with the commented-out fstab line and with grub.cfg.
 
-### 6.3 GRUB 2.14 定制（SAN 引导必做，2026-09-04 实测）
+### 6.3 GRUB 2.14 Customization (mandatory for SAN boot, measured 2026-09-04)
 
-- **为什么不能用发行版 grub-mkimage**：Debian 12 自带 GRUB 2.06 生成的 BOOTX64.EFI 在 SAN 引导路径实测卡死——固件交接进入 GRUB 后菜单画面冻结（search 挂起、键盘无响应）。同一磁盘换用宿主 grub-mkimage 2.14 定制版后完整引导到 GDM（带密钥与明文各一轮复验）。**根因是发行版 GRUB 2.06 自身缺陷（shim 链），与 4K 逻辑块无关**（此前“GRUB 4Kn 不兼容”的旧结论已证伪）。
+- **Why the distribution grub-mkimage cannot be used**: on the SAN boot path the BOOTX64.EFI produced by GRUB 2.06 shipped with Debian 12 hangs in measurement — after the firmware hands over to GRUB the menu freezes (search hangs, the keyboard does not respond). On the same disk, a host-built grub-mkimage 2.14 version boots all the way to GDM (re-verified once with credentials and once in plaintext). **The root cause is a defect in the distribution GRUB 2.06 itself (shim chain) and is unrelated to 4K logical blocks** (the earlier "GRUB is not 4Kn compatible" conclusion has been disproved).
 
-- **宿主侧生成（grub 2.14+，推荐）**：
+- **Host-side generation (grub 2.14+, recommended)**:
 
   ```bash
   grub-mkimage -O x86_64-efi -o BOOTX64.EFI -p /EFI/BOOT \
@@ -206,11 +210,11 @@ menuentry 'Debian GNU/Linux 12 (SAN, 6.12.95+deb12-amd64)' {
       search_fs_file search_fs_label halt reboot
   ```
 
-  模块清单为 2026-09-04 实战通过的最小集；一键脚本内置清单为其超集（多 xzio/gzio/terminal/echo/ls/test/part_msdos），两者均可。
+  The module list is the minimal set that passed in the 2026-09-04 exercise; the list built into the one-shot script is a superset (adding xzio/gzio/terminal/echo/ls/test/part_msdos), and either is acceptable.
 
-- **grub.cfg 两种形态**（均实测通过）：
-  - **直列式**（一键脚本 E 阶段默认，适合新装母盘）：菜单项内联 `linux`/`initrd` 行，见 6.2 节参考；
-  - **接力式**（适合已装好 Debian 的存量盘，9/4 golden 盘实战形态）：嵌入配置只做定位与交接，完整菜单沿用盘上 `update-grub` 维护的 `/boot/grub/grub.cfg`：
+- **Two grub.cfg forms** (both measured):
+  - **Inline form** (the stage E default of the one-shot script; suited to a freshly installed golden image): the menu entry carries the `linux`/`initrd` lines inline, see the reference in 6.2;
+  - **Relay form** (suited to an existing disk with Debian already installed; the form used on the 9/4 golden disk): the embedded configuration only locates and hands over, while the full menu remains the `/boot/grub/grub.cfg` maintained on the disk by `update-grub`:
 
     ```cfg
     serial --unit=0 --speed=115200
@@ -223,87 +227,87 @@ menuentry 'Debian GNU/Linux 12 (SAN, 6.12.95+deb12-amd64)' {
     configfile $prefix/grub.cfg
     ```
 
-    注意 `search.fs_uuid` 用 **root 分区 UUID**（与 fstab 同源），非 ESP volid。
+    Note that `search.fs_uuid` takes the **root partition UUID** (the same source as fstab), not the ESP volid.
 
-- **一键脚本行为**：`--grub-efi <file>` 注入宿主预构建 BOOTX64.EFI（跳过母盘内 mkimage）；未注入时脚本检测 `grub-mkimage --version`，< 2.12 直接报错退出并给出两条出路——不再静默产出缺陷引导器。
+- **One-shot script behavior**: `--grub-efi <file>` injects a host-built BOOTX64.EFI (skipping mkimage inside the golden image); without an injection the script checks `grub-mkimage --version` and, if it is < 2.12, exits with an error and two alternatives — it no longer silently produces a defective loader.
 
-## 7. F. 无状态校验（验收）
+## 7. F. Stateless Verification (acceptance)
 
 ```bash
-# 盘内零身份硬编码：以下 grep 应无命中
+# no identity information is fixed on the disk: the following greps should return no hits
 grep -rn "hostnqn\|dhchap\|secret\|kurrent:host" /etc /usr/local/sbin /usr/share/initramfs-tools 2>/dev/null
-grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
+grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # placeholder values only
 ```
 
-- 身份（hostnqn / 密钥 / hostid）由引导链外部注入：控制面 boot-vars 下发 → iPXE 固件消费 → NBCT 表带内传递 → 内核复用；
-- hostid 例外：`nbft-connect` 内置默认 hostid 兜底（B 节 3.1），属固件侧契约，不落盘身份文件。
+- Identity (hostnqn / key / hostid) is injected from outside the boot chain: the control plane delivers boot-vars → the iPXE firmware consumes them → the NBCT table carries them in band → the kernel reuses them;
+- hostid is the exception: `nbft-connect` carries a built-in default hostid as a fallback (Section B, 3.1), which belongs to the firmware-side contract and does not create an identity file on disk.
 
-## 8. 克隆即用验证
+## 8. Clone-and-Boot Verification
 
-### 8.1 本地引导预检（定制后、转 4K 前可选）
+### 8.1 Local Boot Pre-check (optional, after customization and before the 4K conversion)
 
-镜像仍是 512 GPT 时可在 QEMU/VMware 本地引导一轮，先确认定制本身无问题（降低 SAN 验收的变量）：
+While the image is still 512 GPT it can be booted locally once under QEMU/VMware to confirm that the customization itself is sound (reducing the variables of SAN acceptance):
 
-- 前提：ESP 存在 `EFI/BOOT/BOOTX64.EFI`（6.2 节；安装器原始 ESP 需手工补一份，或直接进入 E 阶段后不再需要本地预检）；
-- 判据：GRUB 菜单出现 → 6.12 内核引导 → 系统启动（VGA 出现 `debian login:`，`Ctrl+Alt+F2` 可确认 tty2 登录提示）；
-- 注意：cmdline 的 `systemd.mask=NetworkManager/networkd` 生效后，本地引导场景网络不会自动配置（SAN 场景由 initramfs NBFT 流程接管，不受影响）；tty1 可能被模板遗留程序占用，不影响系统。
+- Prerequisite: `EFI/BOOT/BOOTX64.EFI` exists on the ESP (Section 6.2; the installer's original ESP needs a manual copy, or the local pre-check is skipped by proceeding to stage E);
+- Criteria: the GRUB menu appears → the 6.12 kernel boots → the system starts (the VGA console shows `debian login:`; `Ctrl+Alt+F2` confirms the tty2 login prompt);
+- Note: with `systemd.mask=NetworkManager/networkd` from the cmdline in effect, the network is not configured automatically in a local boot (in the SAN scenario the initramfs NBFT flow takes over and is unaffected); tty1 may be occupied by a program left over from the template without affecting the system.
 
-2026-09-02 已对 chroot 定制后的 VMware Debian 12 镜像执行过一轮：引导链完整（OVMF → GRUB → 6.12 → initramfs → systemd → getty）。2026-09-08 起可直接用 `test/shared/golden-vm-run.sh`（OVMF + slirp + SSH 转发）引导 raw 镜像做同样预检，并配合 `golden-vm-sendkey.py` / SSH 通道全自动跑定制脚本（见 1.1/1.2）。
+On 2026-09-02 one round was performed on a VMware Debian 12 image customized through chroot: the boot chain was complete (OVMF → GRUB → 6.12 → initramfs → systemd → getty). Since 2026-09-08, `test/shared/golden-vm-run.sh` (OVMF + slirp + SSH forwarding) can boot the raw image for the same pre-check, and the customization script can be run fully automatically together with `golden-vm-sendkey.py` / the SSH channel (see 1.1/1.2).
 
-### 8.2 SAN 冷启动验收（交付主项目前的最后一轮）
+### 8.2 SAN Cold-boot Acceptance (the final round before delivery to the main project)
 
-母盘写回磁盘后，QEMU + nvmet 冷启动一轮（复现步骤与判据见 [production-boot-verification.md](production-boot-verification.md) §5）：
+After the golden image is written back to a disk, one QEMU + nvmet cold boot is performed (reproduction steps and criteria in [production-boot-verification.md](production-boot-verification.md) §5):
 
-- 判据 1：串口出现 `qid 0: authenticated with hash hmac(sha256) dhgroup ffdhe4096`（固件段 + 内核段各一次）；
-- 判据 2：`nvme0n1: p1 p2 p3` → rootfs 挂载 → `Welcome to Debian` → `debian login:`；
-- 判据 3：无 keep-alive 错误、无 emergency mode；
-- pcap 级判据：双 ATR（Connect RSP result bit17 `0x20000`）+ 两轮 AuthSend/AuthReceive 各 4 PDU，全部 status=0。
+- Criterion 1: the serial console shows `qid 0: authenticated with hash hmac(sha256) dhgroup ffdhe4096` (once for the firmware segment and once for the kernel segment);
+- Criterion 2: `nvme0n1: p1 p2 p3` → rootfs mounted → `Welcome to Debian` → `debian login:`;
+- Criterion 3: no keep-alive errors and no emergency mode;
+- pcap-level criterion: dual ATR (Connect RSP result bit17 `0x20000`) plus two rounds of AuthSend/AuthReceive with 4 PDUs each, all with status=0.
 
-**给主项目使用的交付前置**：定制（A–F）完成、且 8.2 这轮 SAN 冷启动验收通过后，母盘即可克隆分发交主项目使用。其中 E 阶段（4K 转换 + ESP 重建）是 SAN 可引导的必要步骤，需在目标盘上执行——**2026-09-08 已完成全流程端到端实测：VM 内单文件脚本 A–F 全程含 E，随后 SAN 冷启动验收至 GDM**（详见下方更新记录）。
+**Delivery precondition for use by the main project**: once customization (A–F) is complete and the 8.2 SAN cold-boot acceptance has passed, the golden image can be cloned and distributed for use by the main project. Stage E (4K conversion + ESP rebuild) is a mandatory step for SAN bootability and must be executed against the target disk — **the full flow was measured end to end on 2026-09-08: the single-file script inside the VM ran A–F including E, followed by SAN cold-boot acceptance to GDM** (see the update records below).
 
-> **2026-09-04 更新**：E 阶段核心产物形态已实战验证——4K GPT + 4K FAT32 ESP + GRUB 2.14 定制 BOOTX64.EFI 经 nvmet 严格模式（AUTH=1）完整引导到 Debian 12 GDM（带密钥与明文各一轮）；同盘换回发行版 2.06 产物即卡死，确证 6.3 节版本要求。
+> **2026-09-04 update**: the core artifact form of stage E has been proven in practice — 4K GPT + 4K FAT32 ESP + a customized GRUB 2.14 BOOTX64.EFI boots all the way to the Debian 12 GDM against nvmet in strict mode (AUTH=1) (one round with credentials and one in plaintext); swapping the distribution 2.06 artifact back onto the same disk hangs immediately, confirming the version requirement of Section 6.3.
 >
-> **2026-09-08 更新**：一键脚本（单文件自包含形态，含内嵌组件/GRUB 产物、阿里云源、volid 0x43 修复）已在目标母盘 VM 内端到端实测——A–F 全程含 E，随后 PXE 冷启动验收到 GDM。
+> **2026-09-08 update**: the one-shot script (single-file self-contained form, including the embedded components and GRUB artifact, the Alibaba Cloud sources and the volid 0x43 fix) has been measured end to end inside the target golden image VM — stages A–F including E, followed by PXE cold-boot acceptance to GDM.
 
-## 9. 常见问题速查（对应三个历史阻塞点）
+## 9. Troubleshooting Quick Reference (the three historical blocking points)
 
-| 现象 | 根因 | 修复 |
+| Symptom | Root cause | Fix |
 |---|---|---|
-| sanboot `0x7f22208e`（EFI_NOT_FOUND） | GPT 512 扇区 vs nvmet 4096B 块 | 6.1 节 4K 原生 GPT |
-| 内核段 `ret=401`（AUTH_REQUIRED） | 内核无 CONFIG_NVME_AUTH | 2 节 6.12 backports |
-| 登录后 keep-alive 断链 `-101` 循环 | systemd 网络接管重置 TCP | 5 节 cmdline mask |
-| boot-efi.mount 失败 → emergency | fstab 未注释 /boot/efi | 4.1 节注释 |
-| OVMF 报 `failed to load Boot0002 ... Not Found` 后转 PXE | ESP 无 `EFI/BOOT/BOOTX64.EFI` fallback（安装器只写 `EFI/debian/`，2026-09-02 本地引导验证确认） | 6.2 节 E 阶段重建 ESP 写入 BOOTX64.EFI |
-| 串口看不到内核段 `authenticated`（仅固件段一次） | cmdline 带 `quiet`（console 日志压到 WARNING） | 5 节 D 段移除 quiet |
-| GRUB 菜单出现后卡死（search 挂起、键盘无响应） | 发行版 grub-mkimage 2.06 产物缺陷（shim 链，SAN 路径；与 4K 逻辑块无关，2026-09-04 实测） | 6.3 节 2.14 定制（`--grub-efi` 注入或母盘 grub-efi ≥ 2.12） |
+| sanboot `0x7f22208e` (EFI_NOT_FOUND) | 512-byte-sector GPT vs nvmet 4096 B blocks | 4K native GPT, Section 6.1 |
+| Kernel segment `ret=401` (AUTH_REQUIRED) | the kernel lacks CONFIG_NVME_AUTH | 6.12 backports, Section 2 |
+| keep-alive disconnect loop `-101` after login | the systemd network takeover resets TCP | cmdline mask, Section 5 |
+| boot-efi.mount fails → emergency | fstab does not comment out /boot/efi | comment it out, Section 4.1 |
+| OVMF reports `failed to load Boot0002 ... Not Found` and falls through to PXE | the ESP has no `EFI/BOOT/BOOTX64.EFI` fallback (the installer writes only `EFI/debian/`, confirmed by the local-boot validation of 2026-09-02) | stage E rebuilds the ESP and writes BOOTX64.EFI, Section 6.2 |
+| the kernel-segment `authenticated` line is missing from the serial console (only one occurrence, for the firmware segment) | the cmdline carries `quiet` (console log level raised to WARNING) | remove quiet in stage D, Section 5 |
+| GRUB hangs after the menu appears (search hangs, the keyboard does not respond) | defect in the distribution grub-mkimage 2.06 artifact (shim chain, SAN path; unrelated to 4K logical blocks, measured 2026-09-04) | 2.14 customization, Section 6.3 (`--grub-efi` injection or grub-efi ≥ 2.12 in the golden image) |
 
-## 10. 跨发行版支持现状（支持基线）
+## 10. Cross-Distribution Support Status (supported baseline)
 
-> **裁定（2026-08-27）**：低于下表各行基线的发行版不做适配。已有验证结果保留，但不投入新的适配工作；发行版升大版本后基线随之上移。
+> **Decision (2026-08-27)**: distributions below the baseline in each row of the table are not adapted. Existing validation results are retained, but no new adaptation work is invested; when a distribution moves to a new major version, the baseline moves up with it.
 
-| 发行版 | 支持基线 | 内核 | 内核段认证（NVME_AUTH） | NBFT/initramfs 引导 | 母盘结论 |
+| Distribution | Supported baseline | Kernel | Kernel-side authentication (NVME_AUTH) | NBFT/initramfs boot | Golden image conclusion |
 |---|---|---|---|---|---|
-| **Debian** 12 bookworm | 12.x | 6.1（需 backports 6.12） | ✗ 6.1 未启用（实测 `ret=401`），6.12 起启用 | ✗ initramfs-tools 无 NBFT | 需 backports 6.12 + 种子模块（本项目实测路径） |
-| **Debian** 13 trixie | 13.x | 6.12.69+（已有 6.17 系列） | ✓ `nvme_auth` 模块实证 | ✗ 同上 | **免换内核**，仅需种子模块 |
-| **Ubuntu** 24.04 LTS | 24.04.x | 6.8 | ✓ | ✗ 需种子模块 | 需种子模块 |
-| **Ubuntu** 26.04 LTS | 26.04 | **7.0** | ✓（宿主本地 `lsmod` 实证） | ✗ | 需种子模块 |
-| **RHEL** 9 | 9.x | 5.14 | ✓ 官方文档含认证配置章节 | dracut 95nvmf 传统引导 | 依赖官方组件 |
-| **RHEL** 10 | 10.x | **6.12** | ✓ 官方专章（12.3 节"配置 NVMe 主机身份验证"） | 同上 | 依赖官方组件 |
-| **SLES** 15 | SP5–SP7 | 6.4 | ✓ | ✓ 官方文档：装好即自动引导（nvme-stas 2.3+ NBFT 配置源） | **开箱即用** |
-| **SLES** 16 | 16.x | **6.16** | ✓ | ✓ 同源 | **开箱即用** |
-| **openSUSE** Leap 16 | 16.x | 6.16（可更新至 7.0） | ✓ | ✓ 与 SLES 同源 | **开箱即用** |
-| **openSUSE** Tumbleweed | rolling | 7.x | ✓ | ✓ | **开箱即用** |
-| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf（dracut-network 子包）+ 自建 95nbft 模块 | ✅ 已实测（2026-09-12 冷启动验收，见 [发行版矩阵](golden-image-matrix.md)） |
-| **Arch** | rolling | 7.x | ✓ | nvme-cli 2.16 `nvmf-autoconnect` | 部分 |
+| **Debian** 12 bookworm | 12.x | 6.1 (backports 6.12 required) | ✗ not enabled on 6.1 (measured `ret=401`), enabled from 6.12 | ✗ initramfs-tools has no NBFT | backports 6.12 + seed module required (the path measured in this project) |
+| **Debian** 13 trixie | 13.x | 6.12.69+ (the 6.17 series is available) | ✓ `nvme_auth` module confirmed | ✗ as above | **no kernel change**, seed module only |
+| **Ubuntu** 24.04 LTS | 24.04.x | 6.8 | ✓ | ✗ seed module required | seed module required |
+| **Ubuntu** 26.04 LTS | 26.04 | **7.0** | ✓ (confirmed by local `lsmod` on the host) | ✗ | seed module required |
+| **RHEL** 9 | 9.x | 5.14 | ✓ the official documentation includes an authentication configuration chapter | dracut 95nvmf conventional boot | relies on official components |
+| **RHEL** 10 | 10.x | **6.12** | ✓ dedicated official chapter (Section 12.3, "Configuring NVMe host authentication") | as above | relies on official components |
+| **SLES** 15 | SP5–SP7 | 6.4 | ✓ | ✓ official documentation: boots automatically once installed (nvme-stas 2.3+ as the NBFT configuration source) | **works out of the box** |
+| **SLES** 16 | 16.x | **6.16** | ✓ | ✓ same origin | **works out of the box** |
+| **openSUSE** Leap 16 | 16.x | 6.16 (updatable to 7.0) | ✓ | ✓ same origin as SLES | **works out of the box** |
+| **openSUSE** Tumbleweed | rolling | 7.x | ✓ | ✓ | **works out of the box** |
+| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf (dracut-network subpackage) + locally built 95nbft module | ✅ measured (2026-09-12 cold-boot acceptance, see the [distribution matrix](golden-image-matrix.md)) |
+| **Arch** | rolling | 7.x | ✓ | nvme-cli 2.16 `nvmf-autoconnect` | partial |
 
-### 生态层事实（2026-08 时点）
+### Ecosystem-Level Facts (as of 2026-08)
 
-- **内核认证**：主线自 6.0 内置 `CONFIG_NVME_AUTH`；全部 LTS（5.10/5.15/6.1/6.6/6.12）2023-09 起 backport——**发行版是否启用才是变量**（Debian 12 的 6.1 即未启用的反例）；
-- **NBFT 消费生态**：SUSE 主导（nvme-stas 2.3 起把 NBFT 作为配置源；dracut 95nvmf 含 NBFT 解析）；nvme-cli 2.5+ 提供 `nvme nbft show`；systemd initrd 的 NBFT 支持仍是未合并的 RFE（systemd #36443）；
-- **对本项目**：种子模块（initramfs-nbft）在**所有非 SUSE 系**上都是必需件；Debian 13 / Ubuntu 26.04 可直接复用现有 `nbft-connect`，无需 6.12 backports 环节；Fedora 44、AlmaLinux 10.2 与 openSUSE Leap 16.0 变体已实测——自建 dracut `95nbft` 模块包装同一 `nbft-connect`（Fedora 用 `dracut-network` / `systemd-networkd`，RHEL 系与 SUSE 系走 NetworkManager；RHEL/SUSE 须把 crypto-policies 的 `gnutls.config` 装进 initrd；XFS 母盘须以 4K 逻辑块盘安装）。
+- **Kernel authentication**: mainline has carried `CONFIG_NVME_AUTH` since 6.0, and every LTS (5.10/5.15/6.1/6.6/6.12) has backported it since 2023-09 — **whether a distribution enables it is the actual variable** (Debian 12's 6.1 is the counterexample, where it is not enabled);
+- **NBFT consumption ecosystem**: led by SUSE (nvme-stas 2.3 uses NBFT as a configuration source; dracut 95nvmf includes NBFT parsing); nvme-cli 2.5+ provides `nvme nbft show`; NBFT support in the systemd initrd is still an unmerged RFE (systemd #36443);
+- **For this project**: the seed module (initramfs-nbft) is mandatory on **every non-SUSE distribution**; Debian 13 and Ubuntu 26.04 can reuse the existing `nbft-connect` directly, without the 6.12 backports step; the Fedora 44, AlmaLinux 10.2 and openSUSE Leap 16.0 variants have been measured — a locally built dracut `95nbft` module wraps the same `nbft-connect` (Fedora uses `dracut-network` / `systemd-networkd`; the RHEL and SUSE families use NetworkManager; RHEL/SUSE must install crypto-policies' `gnutls.config` into the initrd; an XFS golden image must be installed on a 4K logical-block disk).
 
-## 11. 参考资料
+## 11. References
 
-- `diag/convert-gpt-4k.sh`（4K GPT 转换参考实现）、`diag/esp4k-prod.img`（4K FAT32 ESP 参考产物）、`diag/grub-prod.cfg`（GRUB 菜单参考）、`diag/initrd-612-hostid.img`（hostid 修复 initrd 参考）
-- [production-boot-verification.md](production-boot-verification.md)（全链路验证证据）
-- [initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子组件安装与测试）
+- `diag/convert-gpt-4k.sh` (4K GPT conversion reference implementation), `diag/esp4k-prod.img` (4K FAT32 ESP reference artifact), `diag/grub-prod.cfg` (GRUB menu reference), `diag/initrd-612-hostid.img` (hostid-fixed initrd reference)
+- [production-boot-verification.md](production-boot-verification.md) (full-chain verification evidence)
+- [initramfs-nbft/README.md](../initramfs-nbft/README.md) (seed component installation and testing)
