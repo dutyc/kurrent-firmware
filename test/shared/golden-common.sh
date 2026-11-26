@@ -741,6 +741,10 @@ install() {
             /etc/crypto-policies/back-ends/gnutls.config
     fi
     instmods nvme_fabrics nvme_tcp nvme_auth tls nvme-keyring
+    # kTLS installs the negotiated TLS 1.3 cipher via the crypto API after the
+    # handshake; without these modules the session completes in tlshd but
+    # nvme reports EIO ("TLS handshake complete, error -5").
+    instmods gcm ccm chacha20poly1305 ghash_generic aesni_intel ghash_clmulni_intel
     # Two hook phases: initqueue/settled runs when root-wait stays, pre-mount
     # runs when there is no queue; /run/nbft-done makes them idempotent.
     inst_hook initqueue/settled 30 "\$moddir/nbft.sh"

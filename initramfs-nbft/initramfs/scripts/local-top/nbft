@@ -141,11 +141,13 @@ modprobe -q nvme-tcp 2>/dev/null || modprobe -q nvme_tcp 2>/dev/null || \
 #     running before the first TLS connect.  The initramfs has no systemd, so
 #     tlshd is launched directly in the background; it resolves the PSK from
 #     the kernel's .nvme keyring and only needs its config file to exist
-#     (shipped by the hook -- without it tlshd exits at once and the upcall
+#     (shipped by the hook at /etc/tlshd/config -- tlshd's built-in default
+#     is /etc/tlshd.conf, which the hook does not install, so the path must
+#     be passed explicitly; without it tlshd exits at once and the upcall
 #     then fails with ESRCH).
 modprobe -q tls 2>/dev/null || echo "nbft: WARNING: tls module not found" >&2
 if [ -x /usr/sbin/tlshd ] ; then
-	/usr/sbin/tlshd >/dev/null 2>&1 &
+	/usr/sbin/tlshd -c /etc/tlshd/config >/dev/null 2>&1 &
 	TLSD_PID=$!
 	# Give tlshd a moment to bind its generic-netlink socket, and fail
 	# loudly if it died so a -3 handshake failure is not a mystery.

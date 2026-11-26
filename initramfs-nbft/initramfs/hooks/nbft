@@ -65,6 +65,16 @@ for x in tls nvme-keyring; do
 	manual_add_modules ${x}
 done
 
+# kTLS activates the negotiated TLS 1.3 cipher through the kernel crypto API
+# after tlshd finishes the handshake.  The AEAD templates and the x86
+# accelerated primitives are modules on common kernels; without them the TLS
+# session is established but installing the keys fails with EIO and nvme
+# reports "TLS handshake complete, error -5".  The initramfs cannot autoload
+# from the root filesystem, so ship the ciphers tlshd may negotiate here.
+for x in gcm ccm chacha20poly1305 ghash-generic aesni-intel ghash-clmulni-intel; do
+	manual_add_modules ${x}
+done
+
 # TLS handshake upcall daemon: the kernel performs the TLS 1.3 handshake via
 # a generic-netlink upcall to tlshd (ktls-utils), so it must be present and
 # running in the initramfs.
