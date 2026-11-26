@@ -2,7 +2,7 @@
 
 [English](nvmeof-usage.md) | [中文](nvmeof-usage.zh-CN.md)
 
-> Scope: firmware built from patch chain `0001-0011` (baseline `e6e51ccb`).
+> Scope: firmware built from patch chain `0001-0012` (baseline `e6e51ccb`).
 > For implementation details see [customizations.md](customizations.md) (patch 0005); for the authentication troubleshooting history see [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md).
 
 ## 1. Capability Overview
@@ -226,7 +226,7 @@ Wire sequence in `netdump-auth.pcap` (parser `test/parse-pcap-auth.py`): ICREQ/I
 
 ## 6. Limitations and Cautions
 
-- The firmware must contain the **complete patch chain 0001-0011**: the authentication fix is merged into `0005` (formerly the separate patch 0007); a build missing it or using an older chain skips Property Set during authentication and ends in 0x8018
+- The firmware must contain the **complete patch chain 0001-0012**: the authentication fix is merged into `0005` (formerly the separate patch 0007); a build missing it or using an older chain skips Property Set during authentication and ends in 0x8018
 - The `nvmetcp` driver has no default debug output at build time; to obtain authentication/state machine logs (including `authentication succeeded`) build manually with `DEBUG=nvmetcp,nvmetcp_auth:3` (`DEBUG=nvmetcp:3` alone does not show output from `nvmetcp_auth.c`)
 - Authentication supports DH-HMAC-CHAP only (SHA-256/384/512); DH groups 0/2048/3072/4096 are supported (the server may be configured with `ffdhe4096`)
 - The Host NQN depends on the SMBIOS UUID; platforms without a UUID (such as QEMU+OVMF) fall back to a fixed NQN, and the server must be configured for the actual value

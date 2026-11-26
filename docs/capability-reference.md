@@ -313,7 +313,7 @@ iPXE                                        nvmet(TCP:4420)         control plan
 
 ### 5.3 Build and Deployment
 
-- Patch chain `0001-0011` (baseline `e6e51ccb`); `build/build.sh` resets the working tree and applies the patches in order on every run, and the artifacts go to `dist/` (SHA256SUMS)
+- Patch chain `0001-0012` (baseline `e6e51ccb`); `build/build.sh` resets the working tree and applies the patches in order on every run, and the artifacts go to `dist/` (SHA256SUMS)
 - Artifact form: UEFI only, 7 files in total—`ipxe.efi`, `ipxe-debug.efi`, `snponly.efi`, `snponly-debug.efi` under `pxe-uefi/`; `ipxe.efi`, `ipxe-debug.efi`, `snponly.efi` under `direct-uefi/` (all with `auto.ipxe` embedded)
 - Debug builds: `DEBUG=nvmetcp,nvmetcp_auth:3` (authentication logs), `DEBUG=realtek:3` (NIC)
 - `embed/auto.ipxe` is a configuration asset (not a source patch); changing it requires no patch regeneration
@@ -344,7 +344,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 - [ ] The boot chain script (boot.ipxe chain) `chain`s `/boot-vars` to fetch variables before `sanboot`, and `sanboot` uses `${nbft-secret}`
 - [ ] The key store matches `DHHCP_KEY` in `nvmet-setup.sh`; format `DHHC-1:XX:` (two-digit type) + CRC32 final value little-endian; reuse the self-check logic
 - [ ] The server-side `hosts/<HostNQN>/` matches the NQN the client actually uses (SMBIOS UUID or fallback NQN)
-- [ ] The firmware contains the complete patch chain 0001-0011 (the authentication fix is merged into 0005; with an older chain that lacks the fix, the authentication flow skips the Property Set and results in `0x8018`)
+- [ ] The firmware contains the complete patch chain 0001-0012 (the authentication fix is merged into 0005; with an older chain that lacks the fix, the authentication flow skips the Property Set and results in `0x8018`)
 - [ ] Authentication chain verification: QEMU rounds + pcap evidence chain (Chapter 6)
 - [ ] Plan authentication key injection for the kernel NBFT path (initramfs-nbft) according to the gap in 4.8
 

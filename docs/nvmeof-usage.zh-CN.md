@@ -2,7 +2,7 @@
 
 [English](nvmeof-usage.md) | [中文](nvmeof-usage.zh-CN.md)
 
-> 适用范围：补丁链 `0001-0011`（基线 `e6e51ccb`）构建的固件。
+> 适用范围：补丁链 `0001-0012`（基线 `e6e51ccb`）构建的固件。
 > 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
 
 ## 1. 能力概述
@@ -226,7 +226,7 @@ I/O queue established
 
 ## 6. 限制与注意事项
 
-- 固件必须包含**完整补丁链 0001-0011**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
+- 固件必须包含**完整补丁链 0001-0012**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
 - `nvmetcp` 驱动无编译期默认调试输出；需要认证/状态机日志（含 `authentication succeeded`）时以 `DEBUG=nvmetcp,nvmetcp_auth:3` 手动构建（仅 `DEBUG=nvmetcp:3` 看不到 `nvmetcp_auth.c` 的打印）
 - 认证仅支持 DH-HMAC-CHAP（SHA-256/384/512），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
 - Host NQN 依赖 SMBIOS UUID；无 UUID 平台（如 QEMU+OVMF）回退固定 NQN，服务端需按实际值配置
