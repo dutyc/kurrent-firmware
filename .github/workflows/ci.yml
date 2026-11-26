@@ -1,0 +1,29 @@
+name: firmware-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax
+        run: bash test/ci-gates.sh syntax
+
+      - name: ShellCheck (errors only)
+        run: bash test/ci-gates.sh shellcheck
+
+      - name: Embedded asset consistency
+        run: bash test/ci-gates.sh embed
+
+      - name: Patch replay and reference snapshot
+        run: bash test/ci-gates.sh replay
+
+      - name: Full firmware build
+        run: bash test/ci-gates.sh build
