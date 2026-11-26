@@ -20,19 +20,27 @@ items = {
     "EMBED_B64_LOCALTOP": comp / "initramfs/scripts/local-top/nbft",
     "EMBED_B64_BOOTX64": repo / "test" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
 }
+# Scripts that source test/shared/golden-common.sh also carry an embedded copy
+# so they stay runnable as a single file; scripts without the marker are left
+# untouched.
+optional = {
+    "EMBED_B64_COMMON": repo / "test" / "shared" / "golden-common.sh",
+}
 
 if not setups:
     sys.exit("ERROR: 未找到 test/*/golden-image-setup-*.sh")
 
 for setup in setups:
     text = setup.read_text()
-    for var, path in items.items():
+    for var, path in {**items, **optional}.items():
         if not path.is_file():
             sys.exit(f"ERROR: 组件缺失: {path}")
         raw = path.read_bytes()
         b64 = base64.b64encode(raw).decode()
         text, n = re.subn(rf"^{var}='[^']*'", f"{var}='{b64}'", text, count=1, flags=re.M)
         if n != 1:
+            if var in optional:
+                continue
             sys.exit(f"ERROR: {setup.name} 占位 {var} 未找到")
     setup.write_text(text)
     print(f"  {setup.name}: EMBED OK")

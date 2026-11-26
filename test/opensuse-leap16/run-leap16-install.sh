@@ -21,36 +21,22 @@ PROFILE_RUN=$KS_DIR/leap16-profile.json
 HTTP_PORT=${HTTP_PORT:-8000}
 SSH_KEY=$CACHE/ssh/leap16
 
+. "$ROOT/test/shared/golden-install-vm.sh"
+
 [ -f "$ISO" ] || { echo "ERROR: 缺少 ISO: $ISO" >&2; exit 1; }
 
 mkdir -p "$CACHE/vm" "$KDIR" "$KS_DIR" "$CACHE/ssh"
-if [ ! -f "$SSH_KEY.pub" ]; then
-    echo "==> 生成一次性安装访问密钥: $SSH_KEY"
-    ssh-keygen -q -t ed25519 -N '' -C golden-leap16 -f "$SSH_KEY"
-fi
-
-if [ ! -f "$KDIR/linux" ] || [ ! -f "$KDIR/initrd" ]; then
-    echo "==> 从 ISO 提取安装内核与 initrd"
-    xorriso -osirrox on -indev "$ISO" \
-        -extract /boot/x86_64/loader/linux "$KDIR/linux" \
-        -extract /boot/x86_64/loader/initrd "$KDIR/initrd" >/dev/null
-fi
+install_vm_ssh_key "$SSH_KEY" golden-leap16
+install_vm_extract_iso "$ISO" "$KDIR" \
+    /boot/x86_64/loader/linux:linux \
+    /boot/x86_64/loader/initrd:initrd
 
 echo "==> 生成运行时 Agama profile（注入公钥）"
 sed "s|__GOLDEN_SSH_PUBKEY__|$(cat "$SSH_KEY.pub")|" "$PROFILE_SRC" > "$PROFILE_RUN"
 
-if ! curl -fsS "http://127.0.0.1:$HTTP_PORT/" >/dev/null 2>&1; then
-    echo "==> 启动 profile HTTP 服务（:$HTTP_PORT，目录 $KS_DIR）"
-    ( cd "$KS_DIR" && setsid python3 -m http.server "$HTTP_PORT" --bind 0.0.0.0 \
-        > "$CACHE/vm/ks-http.log" 2>&1 < /dev/null & )
-    sleep 1
-fi
-
-if [ ! -f "$RAW" ]; then
-    echo "==> 创建 10G 稀疏 4K 逻辑块目标盘: $RAW"
-    truncate -s 10G "$RAW"
-fi
-[ -f "$VARS" ] || cp /usr/share/OVMF/OVMF_VARS_4M.fd "$VARS"
+echo "==> 启动 profile HTTP 服务（:$HTTP_PORT，目录 $KS_DIR）"
+install_vm_serve_http "$CACHE" "$KS_DIR" "$HTTP_PORT"
+install_vm_prepare_target "$RAW" "$VARS"
 
 rm -f "$LOG"
 echo "==> 启动 Agama 安装 VM（串口日志 $LOG，完成后自动关机）"
