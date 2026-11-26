@@ -20,7 +20,24 @@
 
 ## Secure Boot 配置
 
-`build-sb.sh` 在 `dist/secureboot/` 下单独产出一组签名产物（`snponly-sb.efi`、`manifest.json`、`SHA256SUMS`），不替换也不修改上述 7 种产物。详见 [secureboot.md](secureboot.md)。
+`build-sb.sh` 在 `dist/secureboot/` 下单独产出一组签名产物（`snponly-sb.efi`、`manifest.json`、`SHA256SUMS`），不替换也不修改上述 7 种产物。详见 [secureboot.md](secureboot.zh-CN.md)。
+
+## 母盘辅助资产
+
+`test/*/golden-image-setup-*.sh` 内嵌运行时组件的 base64 副本：initramfs-nbft
+文件、GRUB 镜像与共享库。修改源文件后重新生成，并校验每份副本与源一致：
+
+```bash
+python3 test/shared/embed-components.py
+python3 test/shared/verify-embed.py
+```
+
+`test/shared/assets/BOOTX64-2.14-generic.EFI` 是由未修改的上游源码经
+`grub-mkimage` 生成的 GNU GRUB 2.14 `x86_64-efi` 镜像；其模块集为
+[golden-image-customization-debian12.md](golden-image-customization-debian12.zh-CN.md)
+§6.3 最小集的超集。GRUB 以 GPL-3.0-or-later 授权，对应源码为上游 GNU GRUB
+2.14。内嵌副本的 SHA-256 为
+`d912bcd33be528f5520dbc0121a8197ebad9065c8329ee4afc710a8c2986b691`。
 
 ## 如何选用
 

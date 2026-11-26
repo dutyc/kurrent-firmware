@@ -1,149 +1,151 @@
-# NVMe-oF 固件测试流程（test/ 目录）
+# NVMe-oF Firmware Test Procedure (test/ Directory)
 
-本文档描述 `test/` 目录下交付脚本的完整测试流程：从 nvmet 目标端配置、GRUB 引导盘制作、测试固件构建，到 QEMU 全链路验证与 pcap/日志分析。
+[English](nvmeof-test-procedure.md) | [中文](nvmeof-test-procedure.zh-CN.md)
 
-## 1. 目录定位
+This document describes the complete test procedure of the delivered scripts in the `test/` directory: from nvmet target configuration and GRUB boot disk creation to test firmware builds, QEMU full-chain verification, and pcap/log analysis.
 
-| 目录 | 内容 | 是否入库 |
+## 1. Directory Roles
+
+| Directory | Content | Tracked in repository |
 |---|---|---|
-| `test/` | 可交付的测试流程脚本（本仓库跟踪） | 是 |
-| `diag/` | 本地诊断工作区：运行产物（磁盘镜像、日志、pcap、OVMF_VARS.fd、FAT 临时盘） | 否（gitignore） |
-| `docs/` | 文档（本流程文档、使用指南、排障日志） | 是 |
+| `test/` | Deliverable test procedure scripts (tracked by this repository) | Yes |
+| `diag/` | Local diagnostic workspace: run artifacts (disk images, logs, pcaps, OVMF_VARS.fd, temporary FAT disks) | No (gitignore) |
+| `docs/` | Documentation (this procedure document, usage guide, troubleshooting log) | Yes |
 
-脚本全部以 `test/` 路径调用；脚本运行产物（`nvme-boot.img`、`qemu-*.log`、`netdump-*.pcap`、`tmp/` 等）统一输出到 `diag/`，不污染仓库。
+All scripts are invoked with `test/` paths; run artifacts (`nvme-boot.img`, `qemu-*.log`, `netdump-*.pcap`, `tmp/` and so on) are written to `diag/` and do not pollute the repository.
 
-## 2. 环境前提
+## 2. Environment Prerequisites
 
-- QEMU + OVMF（`/usr/share/OVMF/OVMF_CODE_4M.fd`、`OVMF_VARS_4M.fd`），`/dev/kvm` 可用（QEMU 步骤需在沙箱外执行）
-- 内核模块 `nvmet`/`nvmet_tcp`（服务器端）
-- 工具：`python3`、`mkfs.vfat`、`mcopy`（mtools）、`grub-mkimage`、`nvme-cli`（仅主机诊断）、`timeout`、`ss`
-- **`test/nvmet-setup.sh` 与 `test/nvme-host-diagnose.sh` 需要 sudo**（configfs 写入、模块加载）；无 sudo 权限的环境需手动执行，其余步骤无需 root
+- QEMU + OVMF (`/usr/share/OVMF/OVMF_CODE_4M.fd`, `OVMF_VARS_4M.fd`), with `/dev/kvm` available (QEMU steps must run outside the sandbox)
+- Kernel modules `nvmet`/`nvmet_tcp` (server side)
+- Tools: `python3`, `mkfs.vfat`, `mcopy` (mtools), `grub-mkimage`, `nvme-cli` (host diagnostics only), `timeout`, `ss`
+- **`test/nvmet-setup.sh` and `test/nvme-host-diagnose.sh` require sudo** (configfs writes, module loading); in environments without sudo privileges these steps must be executed manually, and the remaining steps require no root
 
-## 3. 脚本清单
+## 3. Script Inventory
 
-| 脚本 | 功能 | 依赖 | 权限 |
+| Script | Function | Dependencies | Privileges |
 |---|---|---|---|
-| `make-grub-bootdisk.sh` | 生成可引导的 NVMe/TCP 后端盘（GPT 4K 扇区 + FAT32 ESP + GRUB EFI），输出 `diag/nvme-boot.img` | `python3`/`mkfs.vfat`/`mcopy`/`grub-mkimage` | 无 |
-| `nvmet-setup.sh` | nvmet 目标端配置（幂等，含 DHHC-1 密钥自检），`AUTH=1` 启用认证 | 内核模块 `nvmet_tcp` | sudo |
-| `cred-server.py` | HTTP 凭据注入端点（`/boot-vars`），返回 `set nbft-secret ...` 脚本体 | 无 | 无 |
-| `nvmeof-auth-test.ipxe` | 认证测试固件内嵌脚本（凭据注入 → sanboot） | `cred-server.py` | — |
-| `nvmeof-test.ipxe` | 无认证测试固件内嵌脚本（HTTP 连通性 → sanboot） | 无 | — |
-| `run-qemu-auth.sh` | 运行一轮 QEMU 验证，输出 `diag/qemu-<round>.log` + `diag/netdump-<round>.pcap` | 固件已放入 `diag/tmp/EFI/BOOT/`、OVMF | 无（需 KVM） |
-| `parse-pcap-auth.py` | pcap 逐包 PDU 摘要（默认读 `diag/netdump-auth.pcap`） | 无 | 无 |
-| `parse-pcap-stream.py` | pcap TCP 流重组解析（跨段 PDU） | 无 | 无 |
-| `nvme-host-diagnose.sh` | 主机侧连接诊断（dyndbg + nvme-cli + dmesg delta） | `nvme-cli` | sudo |
+| `make-grub-bootdisk.sh` | Creates a bootable NVMe/TCP backing disk (GPT 4K sectors + FAT32 ESP + GRUB EFI) and writes `diag/nvme-boot.img` | `python3`/`mkfs.vfat`/`mcopy`/`grub-mkimage` | none |
+| `nvmet-setup.sh` | nvmet target configuration (idempotent, includes DHHC-1 key self-check); `AUTH=1` enables authentication | kernel module `nvmet_tcp` | sudo |
+| `cred-server.py` | HTTP credential injection endpoint (`/boot-vars`) returning a `set nbft-secret ...` script body | none | none |
+| `nvmeof-auth-test.ipxe` | Script embedded in the authentication test firmware (credential injection → sanboot) | `cred-server.py` | — |
+| `nvmeof-test.ipxe` | Script embedded in the unauthenticated test firmware (HTTP connectivity → sanboot) | none | — |
+| `run-qemu-auth.sh` | Runs one QEMU verification round, writing `diag/qemu-<round>.log` + `diag/netdump-<round>.pcap` | firmware placed in `diag/tmp/EFI/BOOT/`, OVMF | none (requires KVM) |
+| `parse-pcap-auth.py` | Per-packet PDU summary from a pcap (reads `diag/netdump-auth.pcap` by default) | none | none |
+| `parse-pcap-stream.py` | TCP stream reassembly parsing of a pcap (PDUs spanning segments) | none | none |
+| `nvme-host-diagnose.sh` | Host-side connection diagnostics (dyndbg + nvme-cli + dmesg delta) | `nvme-cli` | sudo |
 
-依赖关系：`make-grub-bootdisk.sh` → `nvmet-setup.sh` → `run-qemu-auth.sh` → `parse-pcap-*.py`；认证链路另需 `cred-server.py`。
+Dependency order: `make-grub-bootdisk.sh` → `nvmet-setup.sh` → `run-qemu-auth.sh` → `parse-pcap-*.py`; the authentication chain additionally requires `cred-server.py`.
 
-## 4. 测试流程
+## 4. Test Procedure
 
-### 4.1 无认证链路
+### 4.1 Unauthenticated Chain
 
 ```bash
-# 1. 制作 GRUB 引导后端盘（无 root）
+# 1. Create the GRUB-bootable backing disk (no root)
 bash test/make-grub-bootdisk.sh
-#    输出：diag/nvme-boot.img（512 MiB，GRUB 菜单 "NVMe/TCP SAN boot OK"）
+#    output: diag/nvme-boot.img (512 MiB, GRUB menu "NVMe/TCP SAN boot OK")
 
-# 2. 配置 nvmet 目标（无认证，sudo）
+# 2. Configure the nvmet target (no authentication, sudo)
 sudo bash test/nvmet-setup.sh
-#    期望输出末尾：==> LISTENING on 4420
+#    expected final output: ==> LISTENING on 4420
 
-# 3. 构建测试固件（内嵌无认证测试脚本）
-bash build/build.sh    # 或仅构建测试目标：
+# 3. Build the test firmware (with the unauthenticated test script embedded)
+bash build/build.sh    # or build only the test target:
 #    make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
 #      EMBED=test/nvmeof-test.ipxe DEBUG=nvmetcp:3
 
-# 4. 放入 QEMU FAT 盘并运行（需沙箱外）
+# 4. Place it on the QEMU FAT disk and run (outside the sandbox)
 mkdir -p diag/tmp/EFI/BOOT
 cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi diag/tmp/EFI/BOOT/BOOTX64.EFI
-bash test/run-qemu-auth.sh basic    # 日志 diag/qemu-basic.log、抓包 diag/netdump-basic.pcap
+bash test/run-qemu-auth.sh basic    # log diag/qemu-basic.log, capture diag/netdump-basic.pcap
 
-# 5. 验证（见第 5 节）
+# 5. Verify (see section 5)
 grep -E "namespace 1:|I/O queue established|GRUB BOOTED" diag/qemu-basic.log
 ```
 
-### 4.2 认证链路（DH-HMAC-CHAP）
+### 4.2 Authentication Chain (DH-HMAC-CHAP)
 
 ```bash
-# 1. 制作后端盘（同上）
+# 1. Create the backing disk (as above)
 bash test/make-grub-bootdisk.sh
 
-# 2. 配置 nvmet 目标（启用认证，sudo）
+# 2. Configure the nvmet target (authentication enabled, sudo)
 sudo AUTH=1 bash test/nvmet-setup.sh
-#    期望输出包含：dhchap_key / dhchap_dhgroup / allowed_hosts 已列出
+#    expected output includes: dhchap_key / dhchap_dhgroup / allowed_hosts listed
 
-# 3. 启动凭据注入端点（认证链路必需，secret 由它下发）
-python3 test/cred-server.py &        # 默认 :8000，日志 cred-server.log
+# 3. Start the credential injection endpoint (required by the authentication chain; it provisions the secret)
+python3 test/cred-server.py &        # :8000 by default, log cred-server.log
 
-# 4. 构建认证测试固件（必须含 nvmetcp_auth 调试，否则看不到认证打印）
+# 4. Build the authentication test firmware (nvmetcp_auth debug is required, otherwise no authentication output appears)
 make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
   EMBED=test/nvmeof-auth-test.ipxe DEBUG=nvmetcp,nvmetcp_auth:3
 
-# 5. 放入 FAT 盘并运行
+# 5. Place it on the FAT disk and run
 cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi diag/tmp/EFI/BOOT/BOOTX64.EFI
-bash test/run-qemu-auth.sh auth     # 默认输出 diag/qemu-auth.log + diag/netdump-auth.pcap
+bash test/run-qemu-auth.sh auth     # writes diag/qemu-auth.log + diag/netdump-auth.pcap by default
 
-# 6. 验证（见第 5 节）
+# 6. Verify (see section 5)
 grep -E "CRED-FETCH|authentication succeeded|sending Property Set|GRUB BOOTED" diag/qemu-auth.log
-python3 test/parse-pcap-auth.py     # 默认读 diag/netdump-auth.pcap
+python3 test/parse-pcap-auth.py     # reads diag/netdump-auth.pcap by default
 ```
 
-## 5. 验证方法
+## 5. Verification Method
 
-**日志证据链**（`DEBUG=nvmetcp,nvmetcp_auth:3` 固件）：
+**Log evidence chain** (`DEBUG=nvmetcp,nvmetcp_auth:3` firmware):
 
 ```
-sending Connect (qid 0)          → Connect(admin) 完成
-completion: cid 1 status 0x0     → Connect 成功（ATR 路径）
-authentication required          → 服务端要求认证
-sent Negotiate / authentication succeeded → 认证四消息完成
-sending Property Set (CC)        → 认证阶段正确收尾（0005 修复核心）
-namespace 1: N blocks of 4096 bytes → Identify 完成
-I/O queue established            → I/O 连接就绪
-== GRUB BOOTED FROM NVME/TCP SAN DISK == → 盘上引导成功
+sending Connect (qid 0)          → Connect(admin) completion
+completion: cid 1 status 0x0     → Connect succeeded (ATR path)
+authentication required          → server requires authentication
+sent Negotiate / authentication succeeded → four authentication messages completed
+sending Property Set (CC)        → authentication stage correctly closed (core of the 0005 fix)
+namespace 1: N blocks of 4096 bytes → Identify completed
+I/O queue established            → I/O connection ready
+== GRUB BOOTED FROM NVME/TCP SAN DISK == → on-disk boot succeeded
 ```
 
-**pcap 证据链**（`parse-pcap-auth.py`）：
+**pcap evidence chain** (`parse-pcap-auth.py`):
 
 ```
 ICREQ/ICRESP → CMD cid=1 Connect → RSP status=0x0000 result=0x00020001 (ATR)
-→ AuthSend/AuthReceive 认证四消息 → CMD cid=7 PropSet → RSP status=0x0000
-→ Identify → I/O 队列；全程 status=0x0、无 0x8018
+→ four AuthSend/AuthReceive authentication messages → CMD cid=7 PropSet → RSP status=0x0000
+→ Identify → I/O queue; status=0x0 throughout, no 0x8018
 ```
 
-**单测**（回归护栏，无需环境）：
+**Unit tests** (regression guard, no environment required):
 
 ```bash
 make -C .cache/ipxe-upstream/src bin-x86_64-linux/tests.linux
-.cache/ipxe-upstream/src/bin-x86_64-linux/tests.linux   # 全量 11625 断言
+.cache/ipxe-upstream/src/bin-x86_64-linux/tests.linux   # full suite, 11625 assertions
 ```
 
-## 6. 失败速查
+## 6. Failure Reference
 
-| 现象 | 原因与处理 |
+| Symptom | Cause and remedy |
 |---|---|
-| `==> NOT LISTENING (check nvmet_tcp module)` | `nvmet_tcp` 未加载；`modprobe nvmet_tcp` 后重跑 `nvmet-setup.sh` |
-| `ERROR: subsystem dir still present (live controller?)` | 控制器仍连接中；断开（`nvme disconnect-all`）或卸载 nvmet 后重跑 |
-| `base64 key decoding error -1` | DHHC-1 前缀非 `DHHC-1:XX:` 两位类型（内核按 10 字节前缀跳过）；密钥自检在 `nvmet-setup.sh` 内 |
-| `Failed to setup authentication, dhchap status 2` | CRC32 非 zlib 终值小端；用脚本内 `python3 -c '...'` 行重新生成 |
-| 日志无 `authentication succeeded` | 固件未含 `nvmetcp_auth` 调试（`DEBUG=nvmetcp,nvmetcp_auth:3` 而非仅 `nvmetcp`） |
-| 日志出现 `command failed: status 0x8018` | 认证阶段被跳过（Property Set 未发）——固件缺 0005 补丁或使用旧固件 |
-| 解析器把 Identify 标成 PropSet | 使用旧版解析器；`test/` 版本已按 opcode==0x7f 判断 |
-| QEMU 未启动（KVM 错误） | 需在沙箱外执行（/dev/kvm 不可见） |
+| `==> NOT LISTENING (check nvmet_tcp module)` | `nvmet_tcp` is not loaded; run `modprobe nvmet_tcp` and re-run `nvmet-setup.sh` |
+| `ERROR: subsystem dir still present (live controller?)` | A controller is still connected; disconnect (`nvme disconnect-all`) or unload nvmet, then re-run |
+| `base64 key decoding error -1` | The DHHC-1 prefix is not the two-digit type `DHHC-1:XX:` (the kernel skips a 10-byte prefix); the key self-check is built into `nvmet-setup.sh` |
+| `Failed to setup authentication, dhchap status 2` | The CRC32 is not the zlib final value in little-endian order; regenerate with the `python3 -c '...'` line in the script |
+| No `authentication succeeded` in the log | The firmware does not include `nvmetcp_auth` debug (`DEBUG=nvmetcp,nvmetcp_auth:3` rather than `nvmetcp` alone) |
+| `command failed: status 0x8018` in the log | The authentication stage was skipped (Property Set not sent); the firmware lacks patch 0005 or an old firmware is in use |
+| The parser labels Identify as PropSet | An older parser is in use; the `test/` version decides by opcode==0x7f |
+| QEMU does not start (KVM error) | It must run outside the sandbox (/dev/kvm not visible) |
 
-## 7. 密钥一致性说明
+## 7. Key Consistency
 
-DHHC-1 密钥（`DHHC-1:01:...`）在三个脚本中各自硬编码，**必须保持完全一致**：
+The DHHC-1 key (`DHHC-1:01:...`) is fixed separately in three scripts and **must be kept exactly identical**:
 
-- `test/nvmet-setup.sh`（`DHHCP_KEY`，写入 configfs）
-- `test/cred-server.py`（`SECRET`，注入给 iPXE）
-- `test/nvme-host-diagnose.sh`（`KEY`，主机侧直连验证）
+- `test/nvmet-setup.sh` (`DHHCP_KEY`, written to configfs)
+- `test/cred-server.py` (`SECRET`, injected into iPXE)
+- `test/nvme-host-diagnose.sh` (`KEY`, host-side direct connection verification)
 
-每个脚本均内置密钥自检（前缀长度 + CRC32 终值校验），写错会在配置阶段立即失败而非运行时才暴露。修改密钥时三处同步更新。
+Each script has a built-in key self-check (prefix length plus CRC32 final value validation), so a mistake fails immediately at configuration time rather than surfacing only at run time. When changing the key, update all three locations.
 
-## 8. 相关文档
+## 8. Related Documents
 
-- [nbft-boot-verification.md](nbft-boot-verification.md) — NBFT 整机引导六环链路验证（NBFT 消费 → rootfs 挂载 → 登录提示符）
-- [nvmeof-usage.md](nvmeof-usage.md) — 固件 NVMe-OF 端到端用法（部署、sanboot、验证方法）
-- [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) — 认证排障历程（0x8018 根因、状态机修复、遗留项状态）
-- [customizations.md](customizations.md) — 定制清单（0005 补丁说明）
+- [nbft-boot-verification.md](nbft-boot-verification.md) — NBFT end-to-end boot verification across six links (NBFT consumption → rootfs mount → login prompt)
+- [nvmeof-usage.md](nvmeof-usage.md) — firmware NVMe-OF end-to-end usage (deployment, sanboot, verification method)
+- [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) — authentication troubleshooting history (0x8018 root cause, state machine fix, status of remaining items)
+- [customizations.md](customizations.md) — customization inventory (patch 0005 notes)

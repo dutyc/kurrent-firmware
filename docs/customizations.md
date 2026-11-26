@@ -99,7 +99,7 @@ RTL8126 5GbE:
   - Auth phase completion gated by `completed`/`rx_complete` flags plus command-id matching (`rx_cid`), so the Property Set is never skipped (fixes Identify rejected with `0x8018`); `NVME_SC_AUTH_REQUIRED` status-only trigger for Connect (no ATR bit)
   - Identify NS LBAF offset fix (64→128)
   - A registered `hostnqn` setting overrides the UUID-derived default in `nvmetcp_set_host_nqn()`; plain `nvme://` URIs without the setting keep the old fallback (`nqn.2014-08.org.ipxe:<uuid>`)
-- **Usage**: end-to-end guide (nvmet target setup incl. auth, `sanboot` syntax, QEMU validation) in [nvmeof-usage.md](nvmeof-usage.md) (Chinese only).
+- **Usage**: end-to-end guide (nvmet target setup incl. auth, `sanboot` syntax, QEMU validation) in [nvmeof-usage.md](nvmeof-usage.md).
 - **Debug log**: full authentication investigation timeline with wire-level evidence in [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) (Chinese only).
 - **Verification**: QEMU/OVMF + Ubuntu 26.04 kernel 7.0 nvmet target, GRUB 2.14 SAN boot chain passing; full-chain re-runs show `sending Property Set (CC)` present, all commands `status=0x0000` on the wire, `0x8018` zero occurrences. Host NQN injection per MAC accepted by nvmet `hosts/` strict mode (`test/nvmet-setup.sh` with `AUTH=1`).
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_ONLY )` — GPL-2.0 only, not redistributable under UBDL.

@@ -99,7 +99,7 @@ RTL8126 5GbE：
   - 认证阶段完成以 `completed`/`rx_complete` 双标志 + 命令 id 匹配（`rx_cid`）门控，确保 Property Set 不被跳过（修复 Identify 被 `0x8018` 拒绝）；Connect 响应无 ATR 位时的 `NVME_SC_AUTH_REQUIRED` 状态码触发路径
   - Identify NS 的 LBAF 偏移修正（64→128）
   - 注册 `hostnqn` 设置项，覆盖 `nvmetcp_set_host_nqn()` 中 UUID 派生的默认值；未设置该选项的普通 `nvme://` URI 保持原回退行为（`nqn.2014-08.org.ipxe:<uuid>`）
-- **用法**：端到端指南（nvmet 服务端配置含认证、`sanboot` 语法、QEMU 验证）见 [nvmeof-usage.md](nvmeof-usage.md)。
+- **用法**：端到端指南（nvmet 服务端配置含认证、`sanboot` 语法、QEMU 验证）见 [nvmeof-usage.md](nvmeof-usage.zh-CN.md)。
 - **排障日志**：完整认证调查时间线与 wire 层证据见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
 - **验证**：QEMU/OVMF + Ubuntu 26.04 内核 7.0 nvmet target，GRUB 2.14 SAN 引导链路通过；全链路复跑：`sending Property Set (CC)` 出现、wire 层全部命令 `status=0x0000`、`0x8018` 出现 0 次。引导服务器按 MAC 注入 host NQN，nvmet `hosts/` 严格模式接受（`test/nvmet-setup.sh` 的 `AUTH=1`）。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_ONLY )`——仅按 GPL-2.0 授权，不得以 UBDL 再分发。
@@ -168,7 +168,7 @@ RTL8126 5GbE：
   - `akgen`：创建或报告已存在的密钥；`akpub`：导出 `ak-public`（SubjectPublicKeyInfo DER）、`ak-name`（TPM2B_NAME：`000b` 后接公钥区的 SHA-256）、`ak-type`（`ecc_p256` / `rsa2048`）与 `sb`（EFI `SecureBoot` 变量，`1` / `0`）；`quote <nonce>`：一次 `TPM2_Quote` 覆盖 PCR 0/2/4/7、以 nonce 作 `qualifyingData`，导出 `quote`（原始 TPMS_ATTEST，无 TPM2B 长度前缀）与 `quote-sig`（ECDSA-SHA256 DER；RSA AK 则为 RSASSA-PKCS1-v1_5）
   - 六项设置（DHCP 标签 0x60-0x65）仅存于本次开机的内存设置根，不落 EFI 变量 NVS 后端
   - 无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，不产生其它行为，引导脚本因此可走无 TPM 分支；没有软件回退
-- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.md)。
+- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.zh-CN.md)。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`EFI_TCG2_PROTOCOL` 常量为 UEFI 规范标准值。
 
 ### 12. Secure Boot 密钥注册（`0012`）

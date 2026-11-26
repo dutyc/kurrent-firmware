@@ -58,3 +58,37 @@ Kurrent 的引导数据面，从“只认证、全程明文”走到“固件段
 
 - 上线顺序仍要守：**固件先上**（端口匹配判据 ⇒ 行为零变化），再把控制面端口切到 `4421`；反了会让旧固件对 `treq=required` 的口发明文 ICReq 而启动失败。
 - 引导链仍有明文残留（**PXE 固有**）：DHCP + TFTP 搬运引导器与两个指针脚本；元数据面走 HTTPS+TOFU，首启无信任锚。这两件在 NVMe-oF 数据面之外，另立项。
+
+---
+
+## 2026-11：设备信任根与 Secure Boot 自动注册
+
+> 2026-11-12 ~ 11-26 ｜ 状态：**已实现并验收**（QEMU/OVMF + swtpm；真机路径另见遗留项）
+
+Kurrent 的设备身份从“软件私钥签名”迁到“TPM 内证明密钥 + PCR quote”，并补上平台密钥层级的网络注册：签名镜像在 Setup Mode 下自行写入 PK/KEK/db，重启后进入验签启动。
+
+### 起点 → 终点
+
+| 维度 | 起点 | 终点 |
+|---|---|---|
+| 设备身份 | NVRAM 中的软件私钥（可被提取） | TPM 2.0 证明密钥（`0x81000001` 持久句柄，私钥不出 TPM） |
+| 设备证明 | 私钥签名 | PCR 0/2/4/7 的 `TPM2_Quote`，控制面按 quote 验签并比对基线 |
+| Secure Boot 密钥 | 逐台经 USB 或固件 Setup 预置 | `sbenroll` 在 Setup Mode 下按 PK→KEK→db 自动注册 |
+| 注册触发 | 无 | 引导脚本首段 `chain ${https-url}boot/phase`，窗口开启时下发注册脚本 |
+| 首跳镜像 | 仅 snponly | `KURRENT_SB_TARGET=ipxe` 可选全驱动首跳 |
+
+### 可验证的成果（证据表）
+
+| 面 | 证据 |
+|---|---|
+| 固件补丁 | `patches/0011`（TPM 证明）、`patches/0012`（sbenroll）；12 补丁重放树哈希 `738f43542930ac4bb390b13b8db00ee791ef2a4f`；`reference/` 34 文件逐字节 0 差异 |
+| TPM 证明 | QEMU/OVMF + swtpm：首登记 `device.attest ok`；冷重启 AK 复用且 `ak-name` 不变；负向 `pcr_mismatch` / `nonce_invalid` / `no_tpm` 均按预期失败 |
+| Secure Boot 注册 | QEMU/OVMF（空变量、Setup Mode）+ swtpm：PK/KEK/db 写入、结果 `ok`；重启后验签通过并上报 `sb=1`；重复执行 `ok (already enrolled)` 不写变量；预置厂商 PK 报 `foreign` 且变量不变 |
+| 首跳目标 | `build/build-sb.sh` 的 `KURRENT_SB_TARGET`；`dist/secureboot/ipxe-sb.efi` 经 `sbverify` 验签通过 |
+| 测试资产治理 | 7 份发行版脚本共用 A–F 公共库；6 个 QEMU runner 共用启动库；CI 覆盖语法、ShellCheck（错误级）、内嵌一致性、补丁重放与完整构建 |
+
+### 还没做 / 遗留
+
+- 注册链路止于 `sb=1` 上报与 Secure Boot 菜单：`login:` 段依赖主仓 `/boot/phase` 部署与 worker 的 nvmet 主机登记/凭据管线。
+- Secure Boot 开启状态下的真机注册未验（无签名镜像与已登记 db），仅 QEMU/OVMF + swtpm 路径。
+- 引导链仍有 PXE 固有明文残留（DHCP + TFTP），与 2026-10 里程碑相同，另立项。
