@@ -81,7 +81,7 @@ ICREQ → CONNECT_ADMIN → AUTH → PROP_SET → IDENTIFY_CTRL → IDENTIFY_NS
 
 The authentication sub-state machine has 5 steps: `START → COMPLETE_NEGOTIATE → CHALLENGE → COMPLETE_REPLY → SUCCESS1 → START`.
 
-Three bugs found and fixed during troubleshooting (wire evidence in [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)):
+Three bugs found and fixed during troubleshooting (wire evidence in [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)):
 
 1. **A transient `-EAGAIN` kills the session**: a send failure while the TCP window is closed aborted the session → now the driver waits for the window to reopen and retries (`tx_in_flight` gating prevents duplicate sends)
 2. **Duplicate AuthReceive sends**: the window retry path overlapped the normal advancement path → sends are now idempotent and the step advances uniformly
@@ -356,8 +356,8 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | Complete test procedure for the test/ scripts |
 | [customizations.md](customizations.md) | Design and implementation of patch 0005 |
 | [device-trust-usage.md](device-trust-usage.md) | Usage of the device trust root capabilities (0006-0008, 0011: akgen/akpub/quote/nvclear, TPM attestation, TOFU, NVRAM settings) |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | Full troubleshooting history of authentication (0x8018 root cause, wire evidence) |
-| [nvmeof-research.md](nvmeof-research.md) | Protocol research and design |
-| [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | SAN boot verification record without authentication |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | Full troubleshooting history of authentication (0x8018 root cause, wire evidence) |
+| [nvmeof-research.md](archive/nvmeof-research.md) | Protocol research and design |
+| [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | SAN boot verification record without authentication |
 | `initramfs-nbft/README.md` | NBFT consumption seed module (kernel path) |
 | [patches/README.md](../patches/README.md) | Patch chain, licensing (NVMe driver files GPL-2.0 only), upgrade procedure |

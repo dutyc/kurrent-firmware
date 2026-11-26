@@ -81,7 +81,7 @@ ICREQ → CONNECT_ADMIN → AUTH → PROP_SET → IDENTIFY_CTRL → IDENTIFY_NS
 
 认证子状态机 5 步：`START → COMPLETE_NEGOTIATE → CHALLENGE → COMPLETE_REPLY → SUCCESS1 → START`。
 
-排障中发现并修复的三个 bug（wire 证据见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)）：
+排障中发现并修复的三个 bug（wire 证据见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)）：
 
 1. **瞬态 `-EAGAIN` 杀掉会话**：TCP 窗口关闭时发送失败即关会话 → 改为等待窗口恢复后重试（`tx_in_flight` 门控，防重复发送）
 2. **AuthReceive 重复发送**：窗口重试路径与正常推进路径重叠 → 发送幂等 + step 统一推进
@@ -356,8 +356,8 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | [nvmeof-test-procedure.md](nvmeof-test-procedure.zh-CN.md) | test/ 脚本完整测试流程 |
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现 |
 | [device-trust-usage.md](device-trust-usage.zh-CN.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
-| [nvmeof-research.md](nvmeof-research.md) | 协议研究与设计 |
-| [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
+| [nvmeof-research.md](archive/nvmeof-research.md) | 协议研究与设计 |
+| [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |
 | `initramfs-nbft/README.md` | NBFT 消费种子模块（内核路径） |
 | [patches/README.md](../patches/README.md) | 补丁链、授权（NVMe 驱动文件 GPL-2.0 only）、升级流程 |

@@ -2,7 +2,7 @@
 
 > 本文档仅中文。状态：**验证通过**（2026-08-21）。六环链路——iPXE sanboot（NVMe/TCP）→ GRUB → 内核 → initramfs NBFT 消费（`nvme connect-all --nbft`）→ rootfs 挂载 → 系统启动到登录提示符——在 QEMU 全链路跑通（`diag/qemu-nbft9.log`）；宿主侧 `nvme connect-all --nbft` 同步复现成功。
 >
-> 关联文档：[nbft-consumption-research.md](nbft-consumption-research.md)（内核侧 NBFT 消费前置研究）、[nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md)（前三环：sanboot → GRUB）、[nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)（DH-HMAC-CHAP 认证链路）、[nvmeof-test-procedure.md](nvmeof-test-procedure.md)（`test/` 脚本用法）。
+> 关联文档：[nbft-consumption-research.md](nbft-consumption-research.md)（内核侧 NBFT 消费前置研究）、[nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md)（前三环：sanboot → GRUB）、[nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)（DH-HMAC-CHAP 认证链路）、[nvmeof-test-procedure.md](../nvmeof-test-procedure.md)（`test/` 脚本用法）。
 
 ## 1. 目标与链路
 
@@ -149,6 +149,6 @@ grep -E "Booting from SAN|new ctrl|mounted filesystem|re-mounted|login:" diag/qe
 
 - [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) — 前三环（sanboot → GRUB）迭代记录
 - [nbft-consumption-research.md](nbft-consumption-research.md) — 内核侧 NBFT 消费生态研究（libnvme/nvme-cli/dracut）
-- [nvmeof-test-procedure.md](nvmeof-test-procedure.md) — `test/` 脚本清单与验证方法
+- [nvmeof-test-procedure.md](../nvmeof-test-procedure.md) — `test/` 脚本清单与验证方法
 - [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) — 认证状态机排障（0x8018 根因）
 - NVMe Boot Specification（NBFT 表结构与 HFI/SSNS 描述符语义）

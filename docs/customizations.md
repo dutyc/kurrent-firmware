@@ -64,7 +64,7 @@ RTL8126 5GbE:
   - `realtek_hw_start_8126`: ZRXDC disabled + default ASPM entry latency (CSI path) + 8125 common initialisation + PHY configuration
   - Mount points: `realtek_detect` / `realtek_open` / `realtek_probe` dispatch on `mac_ver == 70`
 - **Verification**: full build passes all 10 artifacts (including the `DEBUG=realtek:3` debug target); field testing on physical hardware pending.
-- **Audit**: the dual-source PHY table audit and the lightweight PHY MCU firmware version-check policy are documented in [8126-porting-audit.md](8126-porting-audit.md) (Chinese only).
+- **Audit**: the dual-source PHY table audit and the lightweight PHY MCU firmware version-check policy are documented in [8126-porting-audit.md](archive/8126-porting-audit.md) (Chinese only).
 - **Licence**: the 8126 adaptation is derived from the Realtek r8126 driver (GPL-2.0-only, Copyright 2025 Realtek Semiconductor Corp.) and the Linux kernel r8169 driver (GPL-2.0-only); it is licensed under GPL-2.0 only and may not be redistributed under UBDL (see the header of `patches/0001`).
 
 ### 2. Debug build fix (`0002`)
@@ -100,7 +100,7 @@ RTL8126 5GbE:
   - Identify NS LBAF offset fix (64→128)
   - A registered `hostnqn` setting overrides the UUID-derived default in `nvmetcp_set_host_nqn()`; plain `nvme://` URIs without the setting keep the old fallback (`nqn.2014-08.org.ipxe:<uuid>`)
 - **Usage**: end-to-end guide (nvmet target setup incl. auth, `sanboot` syntax, QEMU validation) in [nvmeof-usage.md](nvmeof-usage.md).
-- **Debug log**: full authentication investigation timeline with wire-level evidence in [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) (Chinese only).
+- **Debug log**: full authentication investigation timeline with wire-level evidence in [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) (Chinese only).
 - **Verification**: QEMU/OVMF + Ubuntu 26.04 kernel 7.0 nvmet target, GRUB 2.14 SAN boot chain passing; full-chain re-runs show `sending Property Set (CC)` present, all commands `status=0x0000` on the wire, `0x8018` zero occurrences. Host NQN injection per MAC accepted by nvmet `hosts/` strict mode (`test/nvmet-setup.sh` with `AUTH=1`).
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_ONLY )` — GPL-2.0 only, not redistributable under UBDL.
 

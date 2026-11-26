@@ -53,7 +53,7 @@
 
 ## 有条件（已知问题）
 
-- **Realtek RTL8168 部分版本**：native 驱动初始化挂起（本项目实证，研究终止）→ 需走 SNP 回退，见 [8168-research-log.md](8168-research-log.md)
+- **Realtek RTL8168 部分版本**：native 驱动初始化挂起（本项目实证，研究终止）→ 需走 SNP 回退，见 [8168-research-log.md](archive/8168-research-log.md)
 - **SNP 驱动 iSCSI 挂起缺陷**（本项目实证）：影响**所有没有 native 驱动、只能走 UEFI 网卡驱动**的网卡——即走 SNP 引导的网卡（“不支持”与“协议层支持”两节所列）同样有此风险
 - **Intel I219 系列**：带 `INTEL_PBSIZE_RST` / `NO_PHY_RST` 特殊处理（历史 bug 修复，实际影响小）
 - **Marvell/Aquantia AQC 系列**：Marvell 官方轻量实现（约为 Linux atlantic 的 1/6）；链路协商依赖硬件自协商（无速率管理）；AQC113 动态固件加载未实现（固件空白时返回 `-ENOTSUP`）；本项目无实测记录

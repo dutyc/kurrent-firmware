@@ -21,7 +21,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
   → 携带固件密钥的 `nvme connect --tls` 重连 → rootfs
 ```
 
-协议设计、消息格式与线缆细节见 [nvmeof-research.md](docs/nvmeof-research.md)。
+协议设计、消息格式与线缆细节见 [nvmeof-research.md](docs/archive/nvmeof-research.md)。
 
 ## 核心能力
 

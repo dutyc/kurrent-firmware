@@ -3,7 +3,7 @@
 [English](nvmeof-usage.md) | [中文](nvmeof-usage.zh-CN.md)
 
 > 适用范围：补丁链 `0001-0012`（基线 `e6e51ccb`）构建的固件。
-> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
+> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)。
 
 ## 1. 能力概述
 
@@ -217,7 +217,7 @@ I/O queue established
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
-| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0005 |
+| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0005 |
 | 日志始终无 `sending Property Set (CC)` | 认证未完成或 phase 竞态 | 同上；检查服务端认证配置与密钥 |
 | 认证后 `Connection reset` | AuthReceive 被重复发送（固件不含补丁 0005 的发送幂等修复） | 重建含 0005 的固件 |
 | `authentication required but no secret` | 服务端要求认证但未提供 secret | 检查 URI `?secret=` 参数与 `${nbft-secret}` 注入 |
@@ -237,7 +237,7 @@ I/O queue established
 | 文档 | 定位 |
 |---|---|
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现（结果性文档） |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
 | [network-support.zh-CN.md](network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
 | [build-artifacts.zh-CN.md](build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |
 | [patches/README.zh-CN.md](../patches/README.zh-CN.md) | 补丁链清单、基线、授权与升级流程 |

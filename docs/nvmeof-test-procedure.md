@@ -145,7 +145,7 @@ Each script has a built-in key self-check (prefix length plus CRC32 final value 
 
 ## 8. Related Documents
 
-- [nbft-boot-verification.md](nbft-boot-verification.md) — NBFT end-to-end boot verification across six links (NBFT consumption → rootfs mount → login prompt)
+- [nbft-boot-verification.md](archive/nbft-boot-verification.md) — NBFT end-to-end boot verification across six links (NBFT consumption → rootfs mount → login prompt)
 - [nvmeof-usage.md](nvmeof-usage.md) — firmware NVMe-OF end-to-end usage (deployment, sanboot, verification method)
-- [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) — authentication troubleshooting history (0x8018 root cause, state machine fix, status of remaining items)
+- [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) — authentication troubleshooting history (0x8018 root cause, state machine fix, status of remaining items)
 - [customizations.md](customizations.md) — customization inventory (patch 0005 notes)

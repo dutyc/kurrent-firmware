@@ -21,7 +21,7 @@ UEFI → iPXE nvmetcp (TLS 1.3 PSK) → NVMe/TCP :4421 → nvmet target
   → `nvme connect --tls` reconnect with the firmware's secret → rootfs
 ```
 
-Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvmeof-research.md).
+Protocol design, message formats and wire details: [nvmeof-research.md](docs/archive/nvmeof-research.md).
 
 ## Capabilities
 
