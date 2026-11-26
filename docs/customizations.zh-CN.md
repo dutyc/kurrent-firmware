@@ -76,7 +76,7 @@ RTL8126 5GbE：
 
 - **背景**：官方 `snponly.efi` 仅支持固件 PXE 链加载场景（只接管加载 iPXE 的那个设备）；从本地 UEFI（U 盘/磁盘）引导时找不到任何网卡，直接进入 shell。这是"主板无 PXE 网络启动选项"场景的配套适配——本地介质引导时同样需要网络接管能力。
 - **修改**：`src/drivers/net/efi/snponly.c`——链加载定位失败时回退接管全部 SNP/NII/MNP 设备，但**排除 iPXE 自己安装的 SNP 句柄**；PXE 链加载场景行为不变。
-- **作用**：native 驱动不可用（如特定主板 RTL8168 初始化挂起）的机器，本地引导也有 SNP 兜底路径。排除自安装句柄是本地引导的必要条件：否则回退会绑定到 `efi_snp_probe()` 刚为本机网卡安装的 SNP 句柄，递归产生 `net0..netN`，直到 4 MB 堆耗尽——此后所有 HTTPS/TLS 分配（8 KB 菜单记录、TLS 1.3 sanboot）都会 `ENOMEM`。
+- **作用**：native 驱动不可用（如特定主板 RTL8168 初始化挂起）的机器，本地引导也有 SNP 回退路径。排除自安装句柄是本地引导的必要条件：否则回退会绑定到 `efi_snp_probe()` 刚为本机网卡安装的 SNP 句柄，递归产生 `net0..netN`，直到 4 MB 堆耗尽——此后所有 HTTPS/TLS 分配（8 KB 菜单记录、TLS 1.3 sanboot）都会 `ENOMEM`。
 
 ### 4. 设备信息采集（`0004`）
 

@@ -53,7 +53,7 @@
 
 ## 有条件（已知问题）
 
-- **Realtek RTL8168 部分版本**：native 驱动初始化挂起（本项目实证，研究终止）→ 需走 SNP 兜底，见 [8168-research-log.md](8168-research-log.md)
+- **Realtek RTL8168 部分版本**：native 驱动初始化挂起（本项目实证，研究终止）→ 需走 SNP 回退，见 [8168-research-log.md](8168-research-log.md)
 - **SNP 驱动 iSCSI 挂起缺陷**（本项目实证）：影响**所有没有 native 驱动、只能走 UEFI 网卡驱动**的网卡——即走 SNP 引导的网卡（“不支持”与“协议层支持”两节所列）同样有此风险
 - **Intel I219 系列**：带 `INTEL_PBSIZE_RST` / `NO_PHY_RST` 特殊处理（历史 bug 修复，实际影响小）
 - **Marvell/Aquantia AQC 系列**：Marvell 官方轻量实现（约为 Linux atlantic 的 1/6）；链路协商依赖硬件自协商（无速率管理）；AQC113 动态固件加载未实现（固件空白时返回 `-ENOTSUP`）；本项目无实测记录
@@ -64,6 +64,6 @@
 | 日期 | 网卡 | 固件 | 结果 |
 |---|---|---|---|
 | 2026-08-07 | Realtek RTL8125 | SNP 固件 | iSCSI 挂载挂起（native 驱动接管） |
-| 2026-08-09 | Realtek RTL8168 | native 驱动 | 部分版本初始化挂起（SNP 兜底） |
+| 2026-08-09 | Realtek RTL8168 | native 驱动 | 部分版本初始化挂起（SNP 回退） |
 | 2026-08-10 | Intel e1000（82540EM 等） | direct-uefi ipxe.efi | 通过 |
 | 2026-08-11 | Realtek RTL8125 | 定制固件（0001 补丁） | 正常 |

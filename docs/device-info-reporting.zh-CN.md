@@ -81,7 +81,7 @@ echo ${netX/chip} ${netX/busid}
 echo ${manufacturer} ${product} ${cpumodel}
 ```
 
-### 健壮性（无 SMBIOS 时兜底）
+### 健壮性（无 SMBIOS 时回退）
 
 ```ipxe
 isset ${mem-total} || set mem-total 0
