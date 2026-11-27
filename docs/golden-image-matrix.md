@@ -48,7 +48,7 @@ test/
 
 | Distribution | Version | Installation medium | Unattended | Customization script | Software source | Kernel | Acceptance status |
 |---|---|---|---|---|---|---|---|
-| Debian 12 | bookworm | netinst ISO | preseed (d-i) | `test/debian12/` | Alibaba Cloud (bookworm + backports) | 6.12.95+deb12-amd64 (backports) | ✅ 2026-11-27 reinstall + PXE TLS cold boot → login |
+| Debian 12 | bookworm | netinst ISO | preseed (d-i) | `test/debian12/` | Alibaba Cloud (bookworm + backports) | 6.12.95+deb12-amd64 (backports) | ⚠️ 2026-11-27 reinstall + PXE TLS cold boot → login; requires a source-built NVMe userspace, costs in the [verification record](archive/debian12-tls-coldboot-verification.md) |
 | Debian 13 | 13.6.0 | netinst ISO | preseed (d-i) | `test/debian13/` | Alibaba Cloud (trixie, no backports) | 6.12.94+deb13 (shipped) | ✅ 2026-09-10 PXE authenticated cold boot → login |
 | Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall (subiquity) | `test/ubuntu2404/` | noble (deb822 ubuntu.sources) | 6.8 series (GA) | ✅ 2026-11-27 reinstall + PXE TLS cold boot → login |
 | Ubuntu 26.04 | 26.04.1 LTS | live-server ISO | autoinstall (subiquity) | `test/ubuntu2604/` | suite detected at runtime (deb822) | 7.0.0-31-generic | ✅ 2026-09-11 PXE authenticated cold boot → login |
@@ -106,7 +106,7 @@ gaps, retransmissions and snaplen truncation).
 ### Debian 12 (first closed-loop version, baseline)
 - Medium: netinst + preseed automated installation; backports kernel (6.12 series, required for NVMe-oF authentication)
 - Source switch: bookworm + bookworm-backports + security (Alibaba Cloud, ForceIPv4)
-- Acceptance trajectory: 2026-11-27 real install + A–F + PXE TLS cold boot to login, with source-built `ktls-utils` / `libnvme` / `nvme-cli` ([debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md))
+- Acceptance trajectory: 2026-11-27 real install + A–F + PXE TLS cold boot to login; requires a source-built NVMe userspace (`ktls-utils` / `libnvme` / `nvme-cli`), costs and limits in [debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md)
 
 ### Debian 13 (netinst + separate variant script)
 - Medium: netinst 13.6.0 + preseed; the kernel is the distribution's own (trixie 6.12 already satisfies the requirement)

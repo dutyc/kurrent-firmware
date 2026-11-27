@@ -4,6 +4,24 @@
 >
 > 关联文档：[golden-image-matrix.md](../golden-image-matrix.md)（发行版矩阵与验收判据）、[golden-image-customization-debian12.md](../golden-image-customization-debian12.md)（A–F 手工步骤）、[real-reinstall-tls-coldboot-verification.md](real-reinstall-tls-coldboot-verification.md)（上一轮 Debian 13 / Ubuntu 26.04 记录与靶场说明）。
 
+## 代价与适用边界
+
+> **结论先行**：Debian 12 的 TLS-only 引导是 **workaround**，不是 Debian 包管理路径。`ktls-utils`、`libnvme`、`nvme-cli` 三个组件由源码构建并直接写入 `/usr`，TLS-only 下的“支持”依赖这三个手工组件。
+
+| 项 | 实测数据 |
+|---|---|
+| 源码 tarball 体积 | libnvme 561,412 B、nvme-cli 696,108 B、ktls-utils 42,156 B，合计 1,299,676 B（约 1.24 MiB）；构建时下载并逐项校验固定 SHA256 |
+| 构建产物落盘体积 | `/usr/sbin/nvme` 5,448,592 B、`/usr/sbin/tlshd` 169,240 B、`libnvme.so.1.16.2` 733,088 B、`libnvme-mi.so.1.16.2` 170,992 B，合计 6,521,912 B（约 6.22 MiB），不含符号链接与 pkgconfig 文件 |
+| 母盘保留的构建依赖 | 18 个显式包（meson、ninja-build、gcc、libc6-dev、autoconf、automake、libtool、pkg-config、build-essential、curl、xz-utils 及各 `-dev`）的 dpkg `Installed-Size` 合计 51,372 KiB（约 50.2 MiB）；其中部分为基础系统原有，脚本不卸载 |
+| 构建耗时 | 未量化（定制日志没有逐命令时间戳） |
+| 镜像增加量 | 未量化（没有未构建的基线镜像可对照；上述 tarball、产物与依赖给出了可核对的数量级） |
+
+- 三个组件由源码构建后以 `make install` / `ninja install` 写入 `/usr`，不受 dpkg 管理：apt 不知道它们的版本，不会升级，也不会为它们打安全补丁。
+- 母盘保留 meson、ninja、gcc、autotools 及各 `-dev` 构建依赖；脚本没有卸载这些包的步骤，移除需要逐包手工处理。
+- 构建发生在母盘定制阶段：需要访问 Debian 源码池，下载并校验固定 SHA256 的 orig tarball，构建时间与镜像体积都增加。
+- ABI 边界：Debian 若更新 glibc、gnutls、libnl 等被这些手工二进制链接的库，已安装的二进制需要重新构建。
+- 适用边界：这是 workaround，不是 Debian 包管理路径；TLS-only 引导的可用性依赖上述三个手工组件。Debian 仓库现状（bookworm/backports 无 `ktls-utils`、自带 `nvme-cli 2.4` 无 `connect --tls`）是上游反馈依据。
+
 ## 1. 范围与环境
 
 | 项 | 值 |
@@ -80,14 +98,7 @@
 
 F 阶段仅报告 nvme-cli 自带的 `/etc/nvme/discovery.conf`；调试期生成的 `/etc/nvme/hostnqn`、`/etc/nvme/hostid` 已删除并重跑定制，母盘不携带实例身份。
 
-## 5. 代价与边界
-
-- 母盘在定制后保留源码构建工具链（meson、ninja、gcc、autotools 及各 `-dev` 依赖）；这些包不会被脚本卸载。
-- `libnvme`、`nvme-cli` 与 `ktls-utils` 均通过 `ninja install` / `make install` 写入 `/usr`，不受 dpkg 管理，apt 不记录其版本，apt 升级也不会替换它们。
-- Debian 仓库现状是上游反馈依据：bookworm 与 backports 无 `ktls-utils`，自带 `nvme-cli 2.4` 不支持 `connect --tls`；bookworm-backports 的 6.12 内核具备 `CONFIG_NVME_TCP_TLS=y` 与 `CONFIG_NVME_AUTH=m`。
-- 该路径不混入 trixie 软件源；TLS-only 引导依赖上述本地构建与 initramfs 接线。
-
-## 6. 证据
+## 5. 证据
 
 证据目录：`.local/reports/real-reinstall-2026-11-27/debian12/`（不随仓库提交，抓包不入库）。
 
@@ -101,7 +112,7 @@ F 阶段仅报告 nvme-cli 自带的 `/etc/nvme/discovery.conf`；调试期生�
 | 目标端 dmesg | `target-dmesg.txt` |
 | 安装与定制的驱动日志 | `install-run.log`、`customize-run.log`、`coldboot-pkexec.log` |
 
-## 7. 相关提交
+## 6. 相关提交
 
 在 `refactor/governance-full` 分支（未 push，`main` 未动）：
 
