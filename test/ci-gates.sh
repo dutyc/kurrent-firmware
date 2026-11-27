@@ -75,6 +75,29 @@ gate_boot() {
         echo "ERROR: dracut hook does not add the kTLS ciphers" >&2
         rc=1
     }
+    # Arch runs mkinitcpio hooks instead; the same kernel-stage TLS contract
+    # applies there.
+    local arch_install=test/archlinux/mkinitcpio-nbft/install/nbft
+    local arch_hook=test/archlinux/mkinitcpio-nbft/hooks/nbft
+    grep -q -- 'add_file /etc/tlshd/config' "$arch_install" || {
+        echo "ERROR: $arch_install does not ship /etc/tlshd/config" >&2
+        rc=1
+    }
+    for m in gcm ccm chacha20poly1305 ghash_generic aesni_intel; do
+        grep -q -- " $m " "$arch_install" || {
+            echo "ERROR: $arch_install does not add the kTLS cipher $m" >&2
+            rc=1
+        }
+    done
+    grep -q -- 'tlshd -c /etc/tlshd/config' "$arch_hook" || {
+        echo "ERROR: $arch_hook does not pass the shipped tlshd config" >&2
+        rc=1
+    }
+    grep -q -- 'keyctl session -' "$arch_hook" || {
+        echo "ERROR: $arch_hook does not run tlshd and the connect step in one session" >&2
+        rc=1
+    }
+    bash test/shared/test-golden-esp.sh || rc=1
     [ "$rc" = 0 ] && echo "boot components: OK"
     return "$rc"
 }

@@ -1,0 +1,142 @@
+{
+  "archinstall-language": "English",
+  "bootloader_config": {
+    "bootloader": "Grub",
+    "removable": true,
+    "uki": false
+  },
+  "custom_commands": [
+    "set -eu\ninstall -d -m 0700 /root/.ssh\nprintf '%s\\n' '__GOLDEN_SSH_PUBKEY__' > /root/.ssh/authorized_keys\nchmod 0600 /root/.ssh/authorized_keys\ninstall -d -m 0755 /etc/ssh/sshd_config.d\nprintf 'PermitRootLogin prohibit-password\\n' > /etc/ssh/sshd_config.d/99-kurrent.conf\n",
+    "set -eu\nroot_uuid=$(findmnt -no UUID / 2>/dev/null || blkid -s UUID -o value /dev/vda2)\nesp_uuid=$(findmnt -no UUID /boot/efi 2>/dev/null || blkid -s UUID -o value /dev/vda1)\n[ -n \"$root_uuid\" ] && [ -n \"$esp_uuid\" ]\ninstall -d /boot/efi/EFI/BOOT /boot/efi/grub\ncp -f /boot/vmlinuz-linux /boot/efi/vmlinuz-linux\ncp -f /boot/initramfs-linux.img /boot/efi/initramfs-linux.img\ncat > /boot/efi/EFI/BOOT/grub.cfg <<EOF\nset default=0\nset timeout=3\nmenuentry 'Arch Linux (interim)' {\n    search --no-floppy --fs-uuid --set=root $esp_uuid\n    linux /vmlinuz-linux root=UUID=$root_uuid rw console=ttyS0,115200\n    initrd /initramfs-linux.img\n}\nEOF\ncp -f /boot/efi/EFI/BOOT/grub.cfg /boot/efi/grub/grub.cfg\n"
+  ],
+  "debug": false,
+  "disk_config": {
+    "config_type": "manual_partitioning",
+    "device_modifications": [
+      {
+        "device": "/dev/vda",
+        "partitions": [
+          {
+            "btrfs": [],
+            "dev_path": null,
+            "flags": [
+              "boot",
+              "esp"
+            ],
+            "fs_type": "fat32",
+            "mount_options": [],
+            "mountpoint": "/boot/efi",
+            "obj_id": "6c1f0d0a-1c5e-4a0e-9b2f-0a7d5e1c0001",
+            "size": {
+              "sector_size": {
+                "unit": "B",
+                "value": 4096
+              },
+              "unit": "MiB",
+              "value": 953
+            },
+            "start": {
+              "sector_size": {
+                "unit": "B",
+                "value": 4096
+              },
+              "unit": "MiB",
+              "value": 1
+            },
+            "status": "create",
+            "type": "primary"
+          },
+          {
+            "btrfs": [],
+            "dev_path": null,
+            "flags": [],
+            "fs_type": "ext4",
+            "mount_options": [],
+            "mountpoint": "/",
+            "obj_id": "6c1f0d0a-1c5e-4a0e-9b2f-0a7d5e1c0002",
+            "size": {
+              "sector_size": {
+                "unit": "B",
+                "value": 4096
+              },
+              "unit": "MiB",
+              "value": 8192
+            },
+            "start": {
+              "sector_size": {
+                "unit": "B",
+                "value": 4096
+              },
+              "unit": "MiB",
+              "value": 954
+            },
+            "status": "create",
+            "type": "primary"
+          }
+        ],
+        "wipe": true
+      }
+    ]
+  },
+  "hostname": "golden-arch",
+  "kernels": [
+    "linux"
+  ],
+  "locale_config": {
+    "kb_layout": "us",
+    "sys_enc": "UTF-8",
+    "sys_lang": "en_US"
+  },
+  "mirror_config": {
+    "custom_servers": [
+      {
+        "url": "https://mirrors.tuna.tsinghua.edu.cn/archlinux/$repo/os/$arch"
+      }
+    ]
+  },
+  "network_config": {
+    "type": "nm"
+  },
+  "no_pkg_lookups": false,
+  "ntp": true,
+  "offline": false,
+  "packages": [
+    "autoconf",
+    "automake",
+    "base-devel",
+    "curl",
+    "dash",
+    "dosfstools",
+    "e2fsprogs",
+    "efibootmgr",
+    "git",
+    "glib2",
+    "gnutls",
+    "grub",
+    "iproute2",
+    "jq",
+    "keyutils",
+    "libnl",
+    "libtool",
+    "libyaml",
+    "dhcpcd",
+    "networkmanager",
+    "nvme-cli",
+    "openssh",
+    "pkgconf",
+    "python3",
+    "sudo"
+  ],
+  "pacman_config": {
+    "color": false,
+    "parallel_downloads": 5
+  },
+  "script": "guided",
+  "services": [
+    "sshd.service",
+    "NetworkManager.service"
+  ],
+  "silent": false,
+  "timezone": "UTC",
+  "version": "2.8.6"
+}

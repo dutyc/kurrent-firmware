@@ -1,0 +1,98 @@
+#!/bin/bash
+# mkinitcpio install hook - NBCT/NBFT consumer + kernel-segment TLS.
+#
+# Unlike the distribution's native nvmf hook, this one reads DH-HMAC-CHAP
+# secrets and TLS PSKs from NBCT and connects each entry with
+# `nvme connect --dhchap-secret/--tls` instead of an unauthenticated
+# `connect-all --nbft`.
+build() {
+    # Host-side NVMe/TCP and TLS handshake modules. modprobe names use
+    # underscores; the files are nvme-tcp.ko / nvme-keyring.ko.
+    local _m
+    for _m in nvme nvme_fabrics nvme_tcp nvme_auth tls nvme_keyring; do
+        modinfo -n "$_m" >/dev/null 2>&1 && add_module "$_m"
+    done
+    # kTLS installs the negotiated TLS 1.3 cipher through the crypto API after
+    # the handshake; without these modules the session completes in tlshd but
+    # nvme reports EIO ("TLS handshake complete, error -5").
+    for _m in gcm ccm chacha20poly1305 ghash_generic aesni_intel ghash_clmulni_intel; do
+        modinfo -n "$_m" >/dev/null 2>&1 && add_module "$_m"
+    done
+
+    # NBCT parsing (nvme nbft show / jq), credential injection (keyctl), TLS
+    # handshake (tlshd), network checks (ip) and fixed-width field extraction.
+    add_binary /usr/bin/nvme
+    add_binary /usr/bin/jq
+    add_binary /usr/bin/keyctl
+    add_binary /usr/sbin/tlshd
+    add_binary /usr/bin/ip
+    # initramfs DHCP client. The hook does not use the kernel ip= parameter
+    # (IP_PNP cannot wait for the NIC module) nor klibc ipconfig (measured
+    # SIOCGIFFLAGS failures on virtio-net).
+    add_binary /usr/bin/dhcpcd
+    add_binary /usr/lib/dhcpcd/dhcpcd-run-hooks
+    for _h in /usr/lib/dhcpcd/dhcpcd-hooks/*; do
+        [ -e "$_h" ] && add_file "$_h" "/usr/lib/dhcpcd/dhcpcd-hooks/${_h##*/}"
+    done
+    if [ -e /etc/dhcpcd.conf ]; then
+        add_file /etc/dhcpcd.conf /etc/dhcpcd.conf
+    fi
+    if [ -e /usr/lib/dhcpcd/dev/udev.so ]; then
+        add_binary /usr/lib/dhcpcd/dev/udev.so /usr/lib/dhcpcd/dev/udev.so
+    fi
+    add_binary /usr/bin/dd
+    add_binary /usr/bin/tr
+    add_binary /usr/bin/awk
+    add_binary /usr/bin/sed
+    add_binary /usr/bin/grep
+    add_binary /usr/bin/cut
+    add_binary /usr/bin/od
+    add_binary /usr/bin/head
+    add_binary /usr/bin/wc
+    add_binary /usr/bin/stat
+    add_binary /usr/bin/find
+    add_binary /usr/bin/readlink
+    add_binary /usr/bin/modprobe
+    add_binary /usr/bin/udevadm
+
+    # Golden images are hardware-independent: ship every network driver,
+    # equivalent to the net hook's add_checked_modules. The production NIC is
+    # unknown, so autodetect on the installation VM would be wrong.
+    add_checked_modules '/drivers/net/'
+
+    add_file /usr/local/sbin/nbft-connect /usr/local/sbin/nbft-connect
+    # tlshd exits at once when its configuration is missing. ktls-utils 1.5.0
+    # reads /etc/tlshd/config; older releases default to /etc/tlshd.conf, so
+    # ship either file the golden image carries.
+    add_file /etc/tlshd/config /etc/tlshd/config
+    if [ -e /etc/tlshd.conf ]; then
+        add_file /etc/tlshd.conf /etc/tlshd.conf
+    fi
+    # GnuTLS system priority file (when the distribution provides one).
+    if [ -e /etc/gnutls/config ]; then
+        add_file /etc/gnutls/config /etc/gnutls/config
+    fi
+    # tlshd resolves the target with getnameinfo(NI_NAMEREQD); the initramfs
+    # has no PTR data, so the NSS modules and a minimal nsswitch.conf must be
+    # present for the reverse lookup of the address pinned in /etc/hosts.
+    for _lib in $(ldconfig -p 2>/dev/null | awk '$1 ~ /^libnss_(files|dns)\.so\.2$/ { print $NF }'); do
+        add_file "$_lib" "$_lib"
+    done
+    if [ -e /etc/nsswitch.conf ]; then
+        add_file /etc/nsswitch.conf /etc/nsswitch.conf
+    fi
+    if [ -e /etc/hosts ]; then
+        add_file /etc/hosts /etc/hosts
+    fi
+
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+This hook connects NVMe/TCP boot sessions recorded in the firmware NBCT
+table, attaching DH-HMAC-CHAP secrets and TLS 1.3 PSKs, and starts tlshd
+for kernel-segment TLS. The hook obtains its own DHCP lease with dhcpcd
+before connecting. Requires the nbft_auto kernel parameter.
+HELPEOF
+}
