@@ -39,7 +39,7 @@ test/
     ├── fwtest-net.sh            # 隔离验收网桥 br-fwtest + tap0fw（root）
     ├── fwtest-nvmet-tls.sh      # 验收靶：DH-HMAC-CHAP host + TLS1.3/required 端口 + PSK
     ├── fwtest-boot.sh           # 隔离 PXE 冷启动（dnsmasq 容器 + QEMU/OVMF + 抓包）
-    ├── pcap-flows.py            # 抓包判据：流首字节 0x16 / 明文凭据 / :4420 计数
+    ├── pcap-flows.py            # 抓包判据：连接首个载荷字节 0x16 / 明文凭据 / :4420 计数
     └── assets/BOOTX64-2.14-generic.EFI   # GRUB 2.14 产物（实测引导基线）
 ```
 
@@ -58,9 +58,10 @@ test/
 验收判据（各发行版一致）：target 端出现 **两条**控制器记录——固件段与内核段各一次；
 认证/加密按控制面下发的路径记录：DH-HMAC-CHAP 路径为 `..., DH-HMAC-CHAP`，
 TLS 1.3 路径为 `..., TLS.`。串口出现登录提示。
-TLS 路径另加抓包判据：到数据端口（4422/4421）的每条客户端 TCP 流首字节为 `0x16`，
+TLS 路径另加抓包判据：到数据端口（4422/4421）的每条客户端 TCP 连接首个载荷字节为 `0x16`，
 PSK / DH-HMAC-CHAP 密钥不出现在明文载荷中，到明文端口 4420 的包数为 0
-（`test/shared/pcap-flows.py` 自动判定）。
+（`test/shared/pcap-flows.py` 自动判定；连接以客户端 SYN 为起点，序号空洞、重传与
+snaplen 截断后的后续载荷仍计入同一连接）。
 
 > 原生 NBFT 消费 ≠ 原生认证：RHEL 的 `nm-initrd-generator`/`95nvmf` 与 SUSE 的
 > dracut `nvmf` 都能从 NBFT 自动建链，但 **NBFT 标准表不含 DH-HMAC-CHAP 密钥与

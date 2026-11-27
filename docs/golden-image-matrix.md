@@ -40,7 +40,7 @@ test/
     ├── fwtest-net.sh            # isolated acceptance bridge br-fwtest + tap0fw (root)
     ├── fwtest-nvmet-tls.sh      # acceptance target: DH-HMAC-CHAP host + TLS1.3/required port + PSK
     ├── fwtest-boot.sh           # isolated PXE cold boot (dnsmasq container + QEMU/OVMF + capture)
-    ├── pcap-flows.py            # capture criteria: stream first byte 0x16 / plaintext credentials / :4420 count
+    ├── pcap-flows.py            # capture criteria: connection first payload byte 0x16 / plaintext credentials / :4420 count
     └── assets/BOOTX64-2.14-generic.EFI   # GRUB 2.14 artifact (measured boot baseline)
 ```
 
@@ -60,9 +60,11 @@ Acceptance criteria (identical across distributions): the target logs **two** co
 for the firmware segment and one for the kernel segment; authentication/encryption follows the path
 delivered by the control plane: the DH-HMAC-CHAP path records `..., DH-HMAC-CHAP` and the TLS 1.3 path
 records `..., TLS.`. The serial console shows a login prompt.
-The TLS path adds a packet-capture criterion: the first byte of every client TCP stream to the data
+The TLS path adds a packet-capture criterion: the first payload byte of every client TCP connection to the data
 port (4422/4421) is `0x16`, PSK and DH-HMAC-CHAP keys do not appear in plaintext payloads, and the
-packet count to plaintext port 4420 is 0 (decided automatically by `test/shared/pcap-flows.py`).
+packet count to plaintext port 4420 is 0 (decided automatically by `test/shared/pcap-flows.py`, which
+starts a connection at the client SYN and keeps later payload in the same connection across sequence
+gaps, retransmissions and snaplen truncation).
 
 > Native NBFT consumption ≠ native authentication: RHEL's `nm-initrd-generator`/`95nvmf` and SUSE's
 > dracut `nvmf` can both establish the connection automatically from NBFT, but **the standard NBFT
