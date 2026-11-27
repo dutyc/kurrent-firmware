@@ -35,7 +35,22 @@ python3 test/shared/verify-embed.py
 | `golden-vm-run.sh` | Boot a raw golden image under QEMU with SSH forwarding (`:2222`) | QMP socket under `/tmp` |
 | `golden-ubuntu-vm-run.sh` | Boot a cloud image with a seed ISO (`:2222`) | Companion of the raw-image runner |
 | `golden-vm-sendkey.py` | Send the SSH public key to a running golden VM | Used with the two runners above |
-| `pcap-flows.py` | Summarize client flows, first bytes and TLS record types in a capture | Used to prove plaintext/TLS paths |
+| `pcap-flows.py` | Summarize client TCP connections, first payload bytes and TLS record types in a capture | Connections are keyed by the four-tuple and started by SYN (port reuse with a new SYN counts separately); sequence gaps, retransmissions and snaplen truncation stay in the same connection |
+| `test_pcap_flows.py` | Regression tests for `pcap-flows.py` | Standard library only; generates synthetic captures, no real pcap |
+
+### Capture analysis
+
+`pcap-flows.py` prints `client_connections_to_<port>`, one `connN` line per
+connection, `first_bytes`, `plaintext_markers`, `packets_to_<plain-port>` and
+`truncated_packets`, and exits non-zero unless every connection starts with
+`0x16`, no credential marker appears and the plaintext port count is 0. A
+connection is the four-tuple starting at its client SYN; payload after a
+sequence gap, retransmission or snaplen cut stays in that connection, a new SYN
+on a reused tuple starts a new one, and a capture without the SYN is anchored
+at its first payload.
+
+`test_pcap_flows.py` covers these cases with synthetic captures; CI runs it
+through `bash test/ci-gates.sh pcap`.
 
 `assets/BOOTX64-2.14-generic.EFI` is the GRUB image embedded into the golden
 scripts; see `docs/build-artifacts.md` for its origin and licence.
