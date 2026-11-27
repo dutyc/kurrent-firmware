@@ -98,11 +98,13 @@ phase_a() {
     fi
     apt-get update
     apt-get install -y nvme-cli jq initramfs-tools grub-efi-amd64-bin dosfstools
+    install_nvme_cli_tls
     # 内核段 NVMe/TCP TLS（段 1.3c）：keyctl（keyutils）注入 .nvme PSK；tlshd（ktls-utils）
-    # 承担内核 TLS 握手 upcall。分两条装：个别发行版仓库无 ktls-utils 时不影响 keyutils，
-    # 也不阻断母盘构建（该发行版内核段 TLS 自动降级明文，hook 侧只告警）。
-    apt-get install -y keyutils || echo "    note: keyutils missing, TLS-PSK injection unavailable"
-    apt-get install -y ktls-utils || echo "    note: ktls-utils missing, kernel-stage TLS unavailable (plaintext)"
+    # 承担内核 TLS 握手 upcall。两者是 TLS-only 引导路径的硬依赖，缺失即中止构建。
+    apt-get install -y keyutils
+    command -v keyctl >/dev/null || { echo "ERROR: keyutils/keyctl not installed; TLS-PSK injection unavailable"; exit 1; }
+    install_ktls_utils
+    [ -x /usr/sbin/tlshd ] || { echo "ERROR: tlshd not installed; kernel-stage TLS unavailable"; exit 1; }
     ensure_backports_source
     apt-get update
     apt-get install -y -t bookworm-backports "linux-image-${KVER}"
@@ -110,6 +112,87 @@ phase_a() {
     [ -f "$CONF" ] || { echo "ERROR: $CONF 不存在（内核安装失败？）"; exit 1; }
     grep -q '^CONFIG_NVME_AUTH=m' "$CONF" || { echo "ERROR: $CONF 中 CONFIG_NVME_AUTH 不是 =m"; exit 1; }
     echo "    CONFIG_NVME_AUTH=m OK"
+}
+
+install_nvme_cli_tls() {
+    # bookworm 的 nvme-cli 2.4 没有 connect --tls；内核段 TLS 需要 2.16 的选项。
+    local help
+    help=$(nvme connect --help 2>&1 || true)
+    case "$help" in
+    *--tls*)
+        echo "    nvme-cli supports connect --tls"
+        return
+        ;;
+    esac
+    echo "    nvme-cli lacks connect --tls, building libnvme 1.16.2 + nvme-cli 2.16 from source"
+    apt-get install -y meson ninja-build pkg-config gcc libc6-dev curl xz-utils \
+        libjson-c-dev libkeyutils-dev libssl-dev
+    local ln_sha=cf5a71549f6f6bfd1965af21731a7f8d79b6cff30de536d1dc4998e53f9a264d
+    local nc_sha=6736153164634ddd16492aa68c5c5560e70f1c1c9edf009e20c182fcb3219af9
+    local tmp
+    tmp=$(mktemp -d /var/tmp/nvme-cli.XXXXXX)
+    curl -fsSL --retry 3 -o "$tmp/libnvme.tar.xz" \
+        "${MIRROR%/}/pool/main/libn/libnvme/libnvme_1.16.2.orig.tar.xz"
+    echo "$ln_sha  $tmp/libnvme.tar.xz" | sha256sum -c -
+    curl -fsSL --retry 3 -o "$tmp/nvme-cli.tar.xz" \
+        "${MIRROR%/}/pool/main/n/nvme-cli/nvme-cli_2.16.orig.tar.xz"
+    echo "$nc_sha  $tmp/nvme-cli.tar.xz" | sha256sum -c -
+    tar -xJf "$tmp/libnvme.tar.xz" -C "$tmp"
+    tar -xJf "$tmp/nvme-cli.tar.xz" -C "$tmp"
+    (
+        cd "$tmp/libnvme-1.16.2"
+        meson setup build -Ddocs=false -Dexamples=false -Dtests=false -Dpython=disabled --prefix=/usr
+        ninja -C build
+        ninja -C build install
+    )
+    ldconfig
+    (
+        cd "$tmp/nvme-cli-2.16"
+        meson setup build --prefix=/usr
+        ninja -C build
+        ninja -C build install
+    )
+    ldconfig
+    rm -rf "$tmp"
+    help=$(nvme connect --help 2>&1 || true)
+    case "$help" in
+    *--tls*) ;;
+    *) echo "ERROR: the built nvme-cli still lacks connect --tls"; exit 1 ;;
+    esac
+    echo "    nvme-cli $(nvme version | head -1) installed"
+}
+
+install_ktls_utils() {
+    # bookworm 仓库不提供 ktls-utils。从 Debian 源码池取 1.0.0 orig 源码在本机
+    # 构建（软件源仍只含 bookworm），构建依赖全部取自 bookworm。
+    if apt-get install -y ktls-utils >/dev/null 2>&1; then
+        echo "    ktls-utils installed from the archive"
+        return
+    fi
+    echo "    ktls-utils absent from bookworm, building 1.0.0 from source"
+    apt-get install -y build-essential autoconf automake libtool pkg-config curl xz-utils \
+        libgnutls28-dev libkeyutils-dev libglib2.0-dev libnl-3-dev libnl-genl-3-dev
+    local ver=1.0.0
+    local sha=fff9af1639cb21437a3f5b73728aba8df6f165fe15b09eabd1f98be6d85e2783
+    local tmp
+    tmp=$(mktemp -d /var/tmp/ktls-utils.XXXXXX)
+    curl -fsSL --retry 3 -o "$tmp/ktls-utils.tar.xz" \
+        "${MIRROR%/}/pool/main/k/ktls-utils/ktls-utils_${ver}.orig.tar.xz"
+    echo "$sha  $tmp/ktls-utils.tar.xz" | sha256sum -c -
+    tar -xJf "$tmp/ktls-utils.tar.xz" -C "$tmp"
+    (
+        cd "$tmp/ktls-utils-$ver"
+        ./autogen.sh
+        ./configure --prefix=/usr --sysconfdir=/etc
+        make -j"$(nproc)"
+        make install
+        # The source tree does not install a default config file; the initramfs
+        # hook ships /etc/tlshd/config and tlshd needs a parseable file there.
+        install -D -m 0644 src/tlshd/tlshd.conf /etc/tlshd/config
+    )
+    rm -rf "$tmp"
+    [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils build did not install /usr/sbin/tlshd"; exit 1; }
+    echo "    ktls-utils $ver built and installed"
 }
 
 apply_sources() {
@@ -169,7 +252,18 @@ phase_b() {
     # 因此用 grep -c 消费完整输出后再判断
     nbft_count=$(lsinitramfs "/boot/initrd.img-$KVER" 2>/dev/null | grep -c 'nbft' || true)
     [ "$nbft_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 nbft 组件"; exit 1; }
-    echo "    initrd.img-$KVER already carries the nbft components ($nbft_count items)"
+    local initrd_list tls_count m m_count
+    initrd_list=$(lsinitramfs "/boot/initrd.img-$KVER" 2>/dev/null || true)
+    tls_count=$(printf '%s\n' "$initrd_list" | grep -c 'tlshd' || true)
+    [ "$tls_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 tlshd（内核段 TLS 必需）"; exit 1; }
+    for m in tls gcm ccm chacha20poly1305 ghash-generic aesni-intel ghash-clmulni-intel; do
+        m_count=$(printf '%s\n' "$initrd_list" | grep -cE "/$m\.ko(\.zst)?$" || true)
+        if [ "$m_count" -eq 0 ] && grep -qE "/($m|${m//-/_})\.ko$" "/lib/modules/$KVER/modules.builtin" 2>/dev/null; then
+            continue
+        fi
+        [ "$m_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 kTLS 模块 $m（内核段加密密钥安装会失败）"; exit 1; }
+    done
+    echo "    initrd.img-$KVER already carries the nbft components ($nbft_count items), tlshd ($tls_count items) and kTLS modules"
 }
 
 
