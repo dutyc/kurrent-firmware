@@ -14,32 +14,24 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 ROUND=${1:-auth}
 LOG=$D/qemu-$ROUND.log
 PCAP=$D/netdump-$ROUND.pcap
 TMP=$D/tmp
+VARS=$D/OVMF_VARS.fd
 
-mkdir -p "$TMP"
-if [ ! -e "$TMP/EFI/BOOT/BOOTX64.EFI" ]; then
-        echo "ERROR: $TMP/EFI/BOOT/BOOTX64.EFI missing" >&2
-        echo "       build the test firmware and copy it into the FAT drive:" >&2
-        echo "         cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi $TMP/EFI/BOOT/BOOTX64.EFI" >&2
-        exit 1
-fi
-if [ ! -e "$D/OVMF_VARS.fd" ]; then
-        cp /usr/share/OVMF/OVMF_VARS_4M.fd "$D/OVMF_VARS.fd"
-fi
-export TMPDIR=$D/tmpqemu
-mkdir -p "$TMPDIR"
+qemu_prepare "$TMP" "$VARS"
+qemu_std_args "$VARS" 1024
+qemu_fat_args "$TMP"
+qemu_net_args 52:54:00:12:34:56 "$PCAP"
+
 cd "$D"
 exec timeout 150 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -m 1024 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file="$D/OVMF_VARS.fd" \
-  -drive file=fat:rw:"$TMP",format=raw,media=disk,cache=unsafe \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0,mac=52:54:00:12:34:56 \
-  -object filter-dump,id=f1,netdev=net0,file="$PCAP" \
+  "${QEMU_STD[@]}" \
+  "${QEMU_FAT[@]}" \
+  "${QEMU_NET[@]}" \
   -serial file:"$LOG" \
   -display none

@@ -1,0 +1,41 @@
+name: firmware-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gate dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            shellcheck python3 make gcc binutils libc6-dev perl
+
+      - name: Shell syntax
+        run: bash test/ci-gates.sh syntax
+
+      - name: ShellCheck (errors only)
+        run: bash test/ci-gates.sh shellcheck
+
+      - name: Embedded asset consistency
+        run: bash test/ci-gates.sh embed
+
+      - name: Initramfs TLS wiring
+        run: bash test/ci-gates.sh boot
+
+      - name: Packet-capture flow analysis
+        run: bash test/ci-gates.sh pcap
+
+      - name: Patch replay and reference snapshot
+        run: bash test/ci-gates.sh replay
+
+      - name: Full firmware build
+        run: bash test/ci-gates.sh build

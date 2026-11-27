@@ -20,3 +20,6 @@ AGENTS.md
 # Python 缓存
 __pycache__/
 .local/
+
+# Git worktrees
+.worktrees/

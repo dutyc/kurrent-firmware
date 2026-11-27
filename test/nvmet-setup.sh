@@ -7,7 +7,7 @@ set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
-NQN="nqn.2026-08.org.ipxe-stateless:test"
+NQN="nqn.2026-07.com.kurrent:test"
 # backing 文件支持环境覆盖（如 VMware 盘作为 target）
 IMG="${IMG:-$ROOT/diag/nvme-boot.img}"
 SYS=/sys/kernel/config/nvmet/subsystems/$NQN

@@ -65,6 +65,16 @@ for x in tls nvme-keyring; do
 	manual_add_modules ${x}
 done
 
+# kTLS activates the negotiated TLS 1.3 cipher through the kernel crypto API
+# after tlshd finishes the handshake.  The AEAD templates and the x86
+# accelerated primitives are modules on common kernels; without them the TLS
+# session is established but installing the keys fails with EIO and nvme
+# reports "TLS handshake complete, error -5".  The initramfs cannot autoload
+# from the root filesystem, so ship the ciphers tlshd may negotiate here.
+for x in gcm ccm chacha20poly1305 ghash-generic aesni-intel ghash-clmulni-intel; do
+	manual_add_modules ${x}
+done
+
 # TLS handshake upcall daemon: the kernel performs the TLS 1.3 handshake via
 # a generic-netlink upcall to tlshd (ktls-utils), so it must be present and
 # running in the initramfs.
@@ -84,6 +94,22 @@ if [ -x "$TLSHD_BIN" ] ; then
 	fi
 else
 	echo "nbft hook: tlshd not found, TLS sessions will fail" >&2
+fi
+
+# tlshd reverse-resolves the target address with getnameinfo(NI_NAMEREQD)
+# before starting a handshake.  The initramfs does not carry the NSS modules
+# by default, so that lookup fails and tlshd aborts the upcall (the kernel
+# then reports a handshake timeout).  Ship files/dns NSS with a minimal
+# nsswitch.conf; nbft-connect pins each TLS target in /etc/hosts.
+for lib in libnss_files.so.2 libnss_dns.so.2; do
+	libpath="$(ldconfig -p 2>/dev/null | awk -v l="$lib" '$1 == l { print $NF; exit }')"
+	if [ -n "$libpath" ] ; then
+		copy_exec "$libpath" "${libpath%/*}/"
+	fi
+done
+if [ ! -e "${DESTDIR}/etc/nsswitch.conf" ] ; then
+	mkdir -p "${DESTDIR}/etc"
+	echo 'hosts: files dns' > "${DESTDIR}/etc/nsswitch.conf"
 fi
 
 # keyctl injects the NBCT-carried PSK into the .nvme keyring before connect.

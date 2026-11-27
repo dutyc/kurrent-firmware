@@ -6,7 +6,7 @@
 # nvme_fabrics/nvmet/nvmet_tcp), the exact connect argstr (nvme-cli -v), and the
 # kernel log delta around the failed connect.
 
-NQN="nqn.2026-08.org.ipxe-stateless:test"
+NQN="nqn.2026-07.com.kurrent:test"
 HOSTNQN="nqn.2014-08.org.ipxe:ipxe"
 KEY="DHHC-1:01:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYOtVl3"
 

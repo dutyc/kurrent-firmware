@@ -25,7 +25,7 @@ EFI_ACPI_TABLE_PROTOCOL (the gap this tool fills for the pre-iPXE phase).
 Usage:
     python3 test/gen-nbft-table.py [--mac 52:54:00:12:34:56] \
         [--traddr 10.0.2.2] [--trsvcid 4420] \
-        [--nqn nqn.2026-08.org.ipxe-stateless:test] \
+        [--nqn nqn.2026-07.com.kurrent:test] \
         [--host-nqn nqn.2014-08.org.ipxe:ipxe] \
         [--out diag/nbft-qemu.bin]
 
@@ -201,7 +201,7 @@ def main() -> int:
     ap.add_argument("--mac", default="52:54:00:12:34:56")
     ap.add_argument("--traddr", default="10.0.2.2")
     ap.add_argument("--trsvcid", default="4420")
-    ap.add_argument("--nqn", default="nqn.2026-08.org.ipxe-stateless:test")
+    ap.add_argument("--nqn", default="nqn.2026-07.com.kurrent:test")
     ap.add_argument("--host-nqn", default="nqn.2014-08.org.ipxe:ipxe")
     ap.add_argument("--hfi-ip", default="10.0.2.15")
     ap.add_argument("--out", default="diag/nbft-qemu.bin")

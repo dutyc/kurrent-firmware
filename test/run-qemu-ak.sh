@@ -30,12 +30,13 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 AKD=$D/ak
 STATE=$AKD/swtpm
 VARS=$D/OVMF_VARS-ak.fd
-OVMF_CODE=${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}
-OVMF_VARS=${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}
+OVMF_VARS=${OVMF_VARS:-$OVMF_VARS_TEMPLATE}
 SWTPM=${SWTPM:-swtpm}
 SWTPM_LIBDIR=${SWTPM_LIBDIR:-}
 ESP=$D/tmp
@@ -61,10 +62,7 @@ if [ -z "$LOG" ]; then
 fi
 
 mkdir -p "$AKD"
-[ -e "$ESP/EFI/BOOT/BOOTX64.EFI" ] || {
-    echo "ERROR: $ESP/EFI/BOOT/BOOTX64.EFI missing (see header)" >&2
-    exit 1
-}
+qemu_require
 
 # Round 1 always starts from clean TPM and NVRAM state
 if [ "$ROUND" = 1 ]; then
@@ -73,9 +71,7 @@ fi
 if [ "$ROUND" = 1 ] || [ "$CLEAN_NVRAM" = 1 ]; then
     rm -f "$VARS"
 fi
-if [ ! -e "$VARS" ]; then
-    cp "$OVMF_VARS" "$VARS"
-fi
+qemu_prepare "$ESP" "$VARS" "$OVMF_VARS"
 
 rm -f "$LOG"
 TPM_ARGS=()
@@ -121,17 +117,15 @@ if [ "$MODE" = --tpm ]; then
 fi
 
 echo "==> QEMU round $ROUND ($MODE), serial $LOG"
-export TMPDIR=$D/tmpqemu
-mkdir -p "$TMPDIR"
+qemu_std_args "$VARS" 1024
+qemu_fat_args "$ESP"
+qemu_net_args 52:54:00:12:34:56
 set +e
 timeout 120 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -m 1024 \
-  -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-  -drive if=pflash,format=raw,file="$VARS" \
+  "${QEMU_STD[@]}" \
   "${TPM_ARGS[@]}" \
-  -drive file=fat:rw:"$ESP",format=raw,media=disk,cache=unsafe \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0,mac=52:54:00:12:34:56 \
+  "${QEMU_FAT[@]}" \
+  "${QEMU_NET[@]}" \
   -serial file:"$LOG" \
   -display none
 rc=$?

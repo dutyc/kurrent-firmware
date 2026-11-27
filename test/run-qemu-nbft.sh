@@ -22,24 +22,23 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 ROUND=${1:-nbft}
 LOG=$D/qemu-$ROUND.log
 PCAP=$D/netdump-$ROUND.pcap
 TMP=$D/tmp
+VARS=$D/OVMF_VARS.fd
 
 # The MAC must match the HFI entry of the injected NBFT table
 MAC=52:54:00:12:34:56
 
-mkdir -p "$TMP"
-for f in "$TMP/EFI/BOOT/BOOTX64.EFI" "$D/nbft-qemu.bin" "$D/nvme-boot.img"; do
+qemu_prepare "$TMP" "$VARS"
+for f in "$D/nbft-qemu.bin" "$D/nvme-boot.img"; do
         [ -e "$f" ] || { echo "ERROR: $f missing (see header)" >&2; exit 1; }
 done
-if [ ! -e "$D/OVMF_VARS.fd" ]; then
-        cp /usr/share/OVMF/OVMF_VARS_4M.fd "$D/OVMF_VARS.fd"
-fi
-export TMPDIR=$D/tmpqemu
-mkdir -p "$TMPDIR"
+
 # Serial backend: "file" records the console to $LOG (automation); set
 # QEMU_SERIAL=unix to open diag/serial.sock for interactive debugging, e.g.
 #   socat - UNIX-CONNECT:diag/serial.sock
@@ -49,15 +48,16 @@ if [ "$QEMU_SERIAL" = unix ]; then
 	# NOTE: this QEMU (10.2) rejects -serial unix:..., use -chardev
 	SERIAL_ARGS=(-chardev socket,id=charserial0,path="$D/serial.sock",server=on,wait=off -serial chardev:charserial0)
 fi
+
+qemu_std_args "$VARS" 1024
+qemu_fat_args "$TMP"
+qemu_net_args "$MAC" "$PCAP"
+
 cd "$D"
 exec timeout 300 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -m 1024 \
-  -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-  -drive if=pflash,format=raw,file="$D/OVMF_VARS.fd" \
-  -drive file=fat:rw:"$TMP",format=raw,media=disk,cache=unsafe \
+  "${QEMU_STD[@]}" \
+  "${QEMU_FAT[@]}" \
   -acpitable file="$D/nbft-qemu.bin" \
-  -netdev user,id=net0 \
-  -device e1000,netdev=net0,mac="$MAC" \
-  -object filter-dump,id=f1,netdev=net0,file="$PCAP" \
+  "${QEMU_NET[@]}" \
   "${SERIAL_ARGS[@]}" \
   -display none

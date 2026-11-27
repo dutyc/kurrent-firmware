@@ -22,7 +22,9 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-D=$ROOT/diag
+. "$ROOT/test/shared/qemu-lib.sh"
+
+D=$DIAG
 SRC=$ROOT/.cache/ipxe-upstream/src
 ESP=$D/nvs-esp.img
 VARS=$D/nvs-vars.fd
@@ -31,6 +33,7 @@ VARS=$D/nvs-vars.fd
 command -v mcopy >/dev/null && command -v mkfs.vfat >/dev/null || {
         echo "ERROR: mtools / dosfstools missing" >&2; exit 1
 }
+qemu_require
 
 # Embed the test script (EMBED paths are relative to the iPXE source root)
 cp "$ROOT/test/nvs-clear.ipxe" "$SRC/embed/nvs-clear.ipxe"
@@ -45,13 +48,12 @@ mmd -i "$ESP" ::/EFI ::/EFI/BOOT
 mcopy -i "$ESP" "$SRC/bin-x86_64-efi/ipxe.efi" ::/EFI/BOOT/BOOTX64.EFI
 
 # Clean NVRAM, shared by all three rounds
-cp /usr/share/OVMF/OVMF_VARS_4M.fd "$VARS"
+qemu_reset_vars "$VARS"
 
+qemu_std_args "$VARS" 2048
 for n in 1 2 3; do
         timeout 45 qemu-system-x86_64 \
-          -machine q35,accel=kvm -cpu host -m 2048 \
-          -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-          -drive if=pflash,format=raw,file="$VARS" \
+          "${QEMU_STD[@]}" \
           -drive file="$ESP",format=raw,if=none,id=esp \
           -device ide-hd,drive=esp,bus=ide.0 \
           -serial file:"$D/nvs-boot$n.serial" \

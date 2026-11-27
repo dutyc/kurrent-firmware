@@ -3,9 +3,9 @@
 [![License](https://img.shields.io/badge/License-GPL--2.0-green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware)
 [![Version](https://img.shields.io/github/v/tag/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware/releases)
-[![Platform](https://img.shields.io/badge/Platform-x86_64%20UEFI-0f766e)](docs/network-support.md)
+[![Platform](https://img.shields.io/badge/Platform-x86_64%20UEFI-0f766e)](docs/en/build.md)
 [![Upstream](https://img.shields.io/badge/Upstream-iPXE%20e6e51ccb-111111)](patches/README.md)
-[![Patches](https://img.shields.io/badge/Patches-10-7c3aed)](docs/customizations.md)
+[![Patches](https://img.shields.io/badge/Patches-12-7c3aed)](docs/en/build.md)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -21,16 +21,16 @@ UEFI → iPXE nvmetcp (TLS 1.3 PSK) → NVMe/TCP :4421 → nvmet target
   → `nvme connect --tls` reconnect with the firmware's secret → rootfs
 ```
 
-Protocol design, message formats and wire details: [nvmeof-research.md](docs/nvmeof-research.md).
+Protocol design, message formats and wire details: [nvmeof-research.md](docs/zh/archive/nvmeof-research.md).
 
 ## Capabilities
 
 - **NVMe-oF SAN boot** — a native `nvmetcp` driver (TP 8000 / NVM Express Base 2.x); UEFI firmware boots disks straight off an NVMe/TCP target.
 - **DH-HMAC-CHAP authentication** — one-way (SHA-256/384/512, DH groups up to ffdhe4096), DHHC-1 keys with CRC32; per-MAC `hostnqn` enables strict-mode targets (`allow_any_host=0`).
-- **Credential relay (NBCT)** — the firmware writes the per-session secret and host NQN; the initramfs seed module ([initramfs-nbft/](initramfs-nbft/)) reads the table and reconnects with `nvme connect --dhchap-secret` — no second network fetch of credentials.
-- **Golden image matrix** — SAN golden images for Debian 12/13, Ubuntu 24.04/26.04, Fedora 44, AlmaLinux 10.2 and openSUSE Leap 16.0 have all passed cold-boot acceptance: [golden-image-matrix.md](docs/golden-image-matrix.md).
-- **NIC & firmware customizations** — native RTL8125/RTL8126 drivers, SNP local-boot fallback, device identity keys and TOFU fingerprinting; ten L1 patches plus an optional Secure Boot overlay: [customizations.md](docs/customizations.md), [network-support.md](docs/network-support.md).
-- **Optional Secure Boot profile** — signed firmware with embedded boot scripts and a pinned boot CA, built separately from the default L1 firmware: [secureboot.md](docs/secureboot.md).
+- **Credential relay (NBCT)** — the firmware writes the per-session secret and host NQN; the initramfs seed module ([initramfs-nbft/](initramfs-nbft)) reads the table and reconnects with `nvme connect --dhchap-secret` — no second network fetch of credentials.
+- **Golden image matrix** — SAN golden images for Debian 12/13, Ubuntu 24.04/26.04, Fedora 44, AlmaLinux 10.2 and openSUSE Leap 16.0 have all passed cold-boot acceptance: [distribution matrix](docs/en/distributions.md).
+- **NIC & firmware customizations** — native RTL8125/RTL8126 drivers, SNP local-boot fallback, device identity keys and TOFU fingerprinting; twelve patches plus an optional Secure Boot overlay: [build and artifacts](docs/en/build.md).
+- **Optional Secure Boot profile** — signed firmware with embedded boot scripts and a pinned boot CA, built separately from the default L1 firmware: [build and artifacts](docs/en/build.md).
 
 ## Quick Start
 
@@ -42,13 +42,12 @@ Requirements: Linux with `git` / `make` / `gcc`. Artifacts are written to `dist/
 
 ## Documentation
 
-Full documentation lives under [`docs/`](./docs/); frequently used entries:
+Full documentation lives under [`docs/`](docs); frequently used entries:
 
-- [NVMe-oF usage](docs/nvmeof-usage.md) — target setup (incl. DH-HMAC-CHAP), `sanboot` usage and QEMU validation
-- [Build artifacts](docs/build-artifacts.md) — artifact list, form-factor selection and checksums
-- [Golden image matrix](docs/golden-image-matrix.md) — per-distro setup scripts, differences and acceptance status
-- [Capability reference for Kurrent](docs/capability-reference.md) — firmware capabilities and interface contracts, credential injection flow
-- [Secure Boot profile](docs/secureboot.md) — signed artifacts, embedded scripts, pinned boot CA and provisioning
+- [Build and artifacts](docs/en/build.md) — the seven UEFI artifacts, NIC support and the Secure Boot profile
+- [Firmware interface contract](docs/en/interface.md) — boot chain, control plane endpoints, TPM attestation, NBCT handoff
+- [Distribution matrix](docs/en/distributions.md) — per-distro setup scripts, acceptance status and the A–F flow
+- [Verification](docs/en/verification.md) — repository gates and the isolated cold-boot acceptance
 - [Patch set](patches/README.md) — licensing and upstream baseline upgrade workflow
 
 ## Platform Repository
@@ -61,4 +60,4 @@ Welcome Star / Watch / Issues / Pull Requests. As with the platform repository: 
 
 ## License
 
-Licensed under **[GPL-2.0](./LICENSE)**, compatible with upstream iPXE (GPL-2.0-or-later / UBDL dual-licensed). Adaptations derived from third-party drivers are **GPL-2.0 only** and may not be redistributed under UBDL or any later licence — see [patches/README.md](./patches/README.md).
+Licensed under **[GPL-2.0](LICENSE)**, compatible with upstream iPXE (GPL-2.0-or-later / UBDL dual-licensed). Adaptations derived from third-party drivers are **GPL-2.0 only** and may not be redistributed under UBDL or any later licence — see [patches/README.md](patches/README.md).
