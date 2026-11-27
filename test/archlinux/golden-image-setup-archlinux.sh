@@ -341,7 +341,7 @@ verify_initramfs() {
     # Module files use hyphens (nvme-tcp.ko), modprobe names underscores; accept
     # either. Built-in modules appear in modules.builtin instead of the image.
     for pat in nbft-connect tlshd keyctl dhcpcd 'nvme[-_]tcp' 'nvme[-_]auth' 'nvme[-_]keyring' \
-        'net/tls/tls' hooks/nbft libnss_files 'gcm' chacha20poly1305 aesni_intel; do
+        'net/tls/tls' hooks/nbft libnss_files gcm chacha20poly1305 'aesni[-_]intel'; do
         n=$(lsinitcpio "$img" 2>/dev/null | grep -Ec "$pat" || true)
         if [ "$n" -eq 0 ] && grep -qE "$pat" "/usr/lib/modules/$KVER/modules.builtin" 2>/dev/null; then
             echo "    $pat built into the kernel"
