@@ -259,7 +259,9 @@ PYEOF
         update-grub
         echo "    update-grub done"
     else
-        # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）
+        # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）。
+        # Arch 安装未创建 /boot/grub，先补目录，避免 grub-mkconfig 写临时文件失败。
+        mkdir -p "$(dirname "$GRUB_CFG")"
         "$GRUB_MKCONFIG" -o "$GRUB_CFG" >/dev/null || \
             echo "WARN: $GRUB_MKCONFIG failed (non-fatal: SAN boot uses ESP/grub.cfg)"
         echo "    $GRUB_MKCONFIG done"
