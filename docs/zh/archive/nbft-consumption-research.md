@@ -146,5 +146,5 @@
 |---|---|
 | [nvmeof-research.md](nvmeof-research.md) | NVMe-oF 协议研究（固件驱动侧） |
 | [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程（固件侧） |
-| [capability-reference.md](../capability-reference.md) | 能力实现参考（4.8 节：内核 NBFT 路径缺口） |
+| [capability-reference.md](../../en/capability-reference.md) | 能力实现参考（4.8 节：内核 NBFT 路径缺口） |
 | `initramfs-nbft/README.md` | NBFT 消费种子模块（本研究的消费侧对象） |

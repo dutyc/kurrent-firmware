@@ -22,7 +22,7 @@
 | `0002-makefile-ipxe-debug.patch` | `src/Makefile` | 新增 `DRIVERS_ipxe-debug` 定义（debug 目标继承全驱动集，修复 `obj_ipxe_debug` 链接失败） |
 | `0003-snponly-local-boot.patch` | `src/drivers/net/efi/snponly.c` | snponly 本地引导支持：链加载定位失败时（本地 UEFI 引导）回退接管全部 SNP/NII/MNP 设备，但排除 iPXE 自己安装的 SNP 句柄（防止递归创建 net0..netN）；PXE 链加载场景行为不变 |
 | `0004-device-info-collection.patch` | `src/include/ipxe/smbios.h`、`src/interface/smbios/smbios_settings.c`、`src/drivers/bus/pci.c` | 设备信息采集：SMBIOS type 17 内存设置（`mem-total` 全插槽聚合、`mem-type` / `mem-speed` 取首槽，自定义 fetch）+ PCI `driver_name` 填充，使 `${net0/chip}` 输出设备表名（如 `RTL8125`） |
-| `0005-nvmeof-adaptation.patch` | `src/config/config.c`、`src/config/general.h`、`src/include/ipxe/errfile.h`、`src/include/ipxe/nvmetcp.h`、`src/net/tcp/nvmetcp.c`、`src/net/tcp/nvmetcp_auth.c`、`src/tests/nvmetcp_test.c`、`src/tests/tests.c` | NVMe-oF（NVMe over TCP）SAN 协议支持：新增 nvmetcp 驱动（ICReq/ICResp 参数协商、Property Set（CC 寄存器）、Connect/Identify、块读写、R2T 流控、DH-HMAC-CHAP 认证、EFI 设备路径描述与 BlockIo 钩接）+ `SANBOOT_PROTO_NVME_TCP` 配置与单元测试。含认证与状态机修复（瞬态 `-EAGAIN` 处理、AuthReceive 发送幂等与 step 统一推进、`completed`/`rx_complete` 双标志 + `rx_cid` 命令 id 门控、Identify Namespace LBAF 偏移修正）与 `hostnqn` 设置覆盖。详见 `../docs/nvmeof-auth-debug-log.md` |
+| `0005-nvmeof-adaptation.patch` | `src/config/config.c`、`src/config/general.h`、`src/include/ipxe/errfile.h`、`src/include/ipxe/nvmetcp.h`、`src/net/tcp/nvmetcp.c`、`src/net/tcp/nvmetcp_auth.c`、`src/tests/nvmetcp_test.c`、`src/tests/tests.c` | NVMe-oF（NVMe over TCP）SAN 协议支持：新增 nvmetcp 驱动（ICReq/ICResp 参数协商、Property Set（CC 寄存器）、Connect/Identify、块读写、R2T 流控、DH-HMAC-CHAP 认证、EFI 设备路径描述与 BlockIo 钩接）+ `SANBOOT_PROTO_NVME_TCP` 配置与单元测试。含认证与状态机修复（瞬态 `-EAGAIN` 处理、AuthReceive 发送幂等与 step 统一推进、`completed`/`rx_complete` 双标志 + `rx_cid` 命令 id 门控、Identify Namespace LBAF 偏移修正）与 `hostnqn` 设置覆盖。详见 `../docs/zh/archive/nvmeof-auth-debug-log.md` |
 | `0006-efi-nvs-backend.patch` | `src/config/config_efi.c`、`src/core/nvo.c`、`src/interface/efi/efi_nvs.c`、`src/include/ipxe/dhcp.h`、`src/include/ipxe/errfile.h` | EFI 变量 NVS 后端：新增 `efi_nvs.c` 设置后端，持久化于 EFI NVRAM 变量（项目命名空间 GUID）——`server-fingerprint`（0x5f）设置重启保留；`nvo_save()` 现在会把被清空的 options 块也下发（零长度写 = 删除变量），缺了它删掉最后一项永远到不了存储 |
 | `0007-tofu-fingerprint.patch` | `src/include/ipxe/tofu.h`、`src/net/tofu.c`、`src/net/tls.c`、`src/include/ipxe/errfile.h` | TOFU 指纹链路：首次 TLS 握手时接受未受信任的叶子证书并将其 SHA-256 指纹存储（镜像至 `trust` 设置）；一旦存在指纹，后续任何证书校验失败均致命 |
 | `0008-nvclear-command.patch` | `src/hci/commands/nvclear_cmd.c`、`src/config/general.h`、`src/config/config.c`、`src/include/ipxe/errfile.h` | `nvclear`：一条命令清空非易失 options 块里的 `server-fingerprint` 与 `trust`，逐项报告（`cleared` / `not present` / 错误）。设置按 `nvo` 块内的名字定位——删裸名只会清掉内存副本；`NVCLEAR_CMD` 配置项 |
@@ -39,7 +39,7 @@
 |---|---|---|
 | `secureboot/0001-no-tofu.patch` | `src/net/tofu.c` | 固定引导 CA 时 TOFU 必须关闭。`tofu_fingerprint_present()` 恒报告"存在"，使不受信任的证书链直接致命，而不是被接受并存储。仅由 `build/build-sb.sh` 应用；每个 L1 构建保持 0007 的行为逐字节不变 |
 
-> RTL8168 相关研究已于 2026-08 终止，补丁不含 8168 过滤或修复代码（见 `../docs/8168-research-log.md`）。
+> RTL8168 相关研究已于 2026-08 终止，补丁不含 8168 过滤或修复代码（见 `../docs/zh/archive/8168-research-log.md`）。
 >
 > 补丁集已于 2026-09-12 整理合并（原 12 个补丁重打包为补丁 0001-0009；仅修补前序补丁的已并入其源头补丁），并以干净基线重放验证：新序列最终树哈希与旧序列逐位一致（`2151e97b3d0b9029b03ae0f7a3dbfbe88930f206`）。补丁 0010（TLS 1.3 PSK）于 2026-10-06 后续追加；补丁 0003 于 2026-10-17 增加本地引导的 SNP 句柄排除。补丁 0008 于 2026-11-12 收窄为 `nvclear`，同时新增补丁 0011（TPM 2.0 证明），用 TPM 内的证明密钥取代软件私钥。补丁 0012（Secure Boot 密钥注册）于 2026-11-23 后续追加。当前 12 补丁序列（干净基线 + `0001`-`0012`）重放树哈希为 `738f43542930ac4bb390b13b8db00ee791ef2a4f`；Secure Boot 叠加补丁位于 `secureboot/`，只由 `build/build-sb.sh` 应用，因此该树哈希仍描述每一个 L1 构建。
 

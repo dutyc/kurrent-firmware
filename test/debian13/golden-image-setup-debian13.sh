@@ -1,7 +1,7 @@
 #!/bin/bash
 # golden-image-setup-debian13.sh - 一键母盘定制（Debian 13 trixie → NVMe-oF SAN 引导母盘）
 #
-# 对应 docs/guides/golden-image-customization-debian12.md 的 A-F 六阶段：
+# 对应 docs/zh/distributions.md 的 A-F 六阶段：
 #   A. 系统与内核   trixie 自带 6.12+（CONFIG_NVME_AUTH 已启用，免换内核）
 #   B. initramfs 种子模块（initramfs-nbft：NBFT/NBCT 消费，hostid 修复）
 #   C. 系统配置     fstab（root UUID 写死 + 注释 /boot/efi）、DHCP、hostname 占位
@@ -22,7 +22,7 @@
 #   --yes         跳过 E 阶段交互确认
 #   --grub-efi F  注入宿主预构建 BOOTX64.EFI（跳过母盘内 grub-mkimage）。
 #                 Debian 12 自带 grub 2.06 的 mkimage 产物在 SAN 引导路径实测卡死
-#                 （2026-09-04，见 docs/guides/golden-image-customization-debian12.md 6.3），需 2.12+。
+#                 （2026-09-04，见 docs/zh/distributions.md），需 2.12+。
 #   --mirror URL  apt 镜像（默认 http://mirrors.aliyun.com/debian，security 同前缀推导）
 #   --keep-sources 保留母盘原 apt 源（不切镜像）
 #   -h, --help    显示帮助

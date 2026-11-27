@@ -1,7 +1,7 @@
 #!/bin/bash
 # golden-image-setup-almalinux10.sh - 一键母盘定制（AlmaLinux 10.2 / RHEL 系 → NVMe-oF SAN 引导母盘）
 #
-# 对应 docs/guides/golden-image-customization-debian12.md 的 A-F 六阶段：
+# 对应 docs/zh/distributions.md 的 A-F 六阶段：
 #   A. 系统与内核   自带内核 6.12（CONFIG_NVME_AUTH=m / CONFIG_NVME_TCP_TLS=y）
 #   B. initramfs     dracut 95nbft（NBCT 凭据消费 + 内核段 TLS）；网络由
 #                    NetworkManager（nm-initrd-generator + ip=dhcp）承担
