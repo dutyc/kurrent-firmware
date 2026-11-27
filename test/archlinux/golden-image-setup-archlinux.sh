@@ -175,6 +175,10 @@ phase_a() {
     apply_sources
     pacman -S --needed --noconfirm nvme-cli jq keyutils grub efibootmgr \
         dosfstools e2fsprogs iproute2 dhcpcd python3
+    # nvme-cli/archinstall may seed an instance host NQN and host id on first
+    # use; the host NQN must come from the NBCT table on every boot, so the
+    # golden image must not carry them.
+    rm -f /etc/nvme/hostnqn /etc/nvme/hostid /etc/nvme/discovery.conf
     install_tlshd
     verify_kernel_tls
     # Kernel-segment TLS tooling: fail loudly instead of silently dropping to
