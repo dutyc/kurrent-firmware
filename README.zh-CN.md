@@ -28,7 +28,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 - **NVMe-oF SAN 引导**——原生 `nvmetcp` 驱动（TP 8000 / NVM Express Base 2.x），UEFI 固件直连 NVMe/TCP target 引导磁盘。
 - **DH-HMAC-CHAP 认证**——单向往认证（SHA-256/384/512、DH 组至 ffdhe4096），DHHC-1 密钥格式带 CRC32 校验；按 MAC 下发 `hostnqn`，target 可启用严格模式（`allow_any_host=0`）。
 - **凭据接力（NBCT）**——固件按会话写入密钥与 host NQN；initramfs 种子模块（[initramfs-nbft/](initramfs-nbft)）读表并以 `nvme connect --dhchap-secret` 重连，内核侧无需二次获取凭据。
-- **母盘定制矩阵**——Debian 12/13、Ubuntu 24.04/26.04、Fedora 44、AlmaLinux 10.2 与 openSUSE Leap 16.0 的 SAN 母盘均完成冷启动验收：[发行版矩阵](docs/zh/distributions.md)。
+- **母盘定制矩阵**——Debian 12/13、Ubuntu 24.04/26.04、Fedora 44、AlmaLinux 10.2、openSUSE Leap 16.0 与 Arch Linux 的 SAN 母盘均完成冷启动验收：[发行版矩阵](docs/zh/distributions.md)。
 - **网卡与固件定制**——RTL8125/RTL8126 原生驱动、SNP 本地引导回退、设备身份密钥与 TOFU 指纹链路；十二个补丁，另有一个可选的 Secure Boot 叠加补丁：[构建与产物](docs/zh/build.md)。
 - **可选 Secure Boot 配置**——独立于默认 L1 固件构建的签名形态：内置引导脚本与固定引导 CA：[构建与产物](docs/zh/build.md)。
 

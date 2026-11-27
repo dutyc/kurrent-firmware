@@ -28,7 +28,7 @@ Protocol design, message formats and wire details: [nvmeof-research.md](docs/zh/
 - **NVMe-oF SAN boot** — a native `nvmetcp` driver (TP 8000 / NVM Express Base 2.x); UEFI firmware boots disks straight off an NVMe/TCP target.
 - **DH-HMAC-CHAP authentication** — one-way (SHA-256/384/512, DH groups up to ffdhe4096), DHHC-1 keys with CRC32; per-MAC `hostnqn` enables strict-mode targets (`allow_any_host=0`).
 - **Credential relay (NBCT)** — the firmware writes the per-session secret and host NQN; the initramfs seed module ([initramfs-nbft/](initramfs-nbft)) reads the table and reconnects with `nvme connect --dhchap-secret` — no second network fetch of credentials.
-- **Golden image matrix** — SAN golden images for Debian 12/13, Ubuntu 24.04/26.04, Fedora 44, AlmaLinux 10.2 and openSUSE Leap 16.0 have all passed cold-boot acceptance: [distribution matrix](docs/en/distributions.md).
+- **Golden image matrix** — SAN golden images for Debian 12/13, Ubuntu 24.04/26.04, Fedora 44, AlmaLinux 10.2, openSUSE Leap 16.0 and Arch Linux have all passed cold-boot acceptance: [distribution matrix](docs/en/distributions.md).
 - **NIC & firmware customizations** — native RTL8125/RTL8126 drivers, SNP local-boot fallback, device identity keys and TOFU fingerprinting; twelve patches plus an optional Secure Boot overlay: [build and artifacts](docs/en/build.md).
 - **Optional Secure Boot profile** — signed firmware with embedded boot scripts and a pinned boot CA, built separately from the default L1 firmware: [build and artifacts](docs/en/build.md).
 
