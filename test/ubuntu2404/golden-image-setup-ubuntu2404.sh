@@ -55,7 +55,7 @@ GRUB_MKIMAGE=grub-mkimage
 GRUB_REGEN=update-grub
 GRUB_DEFAULT_ONLY=1
 GRUB_DROP_WORDS="quiet"
-PHASE_E_LVM_FALLBACK=0
+PHASE_E_LVM_FALLBACK=1
 PHASE_E_LVM_PARAM=0
 
 # ==== EMBEDDED initramfs-nbft components ====
