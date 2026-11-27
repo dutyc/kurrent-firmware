@@ -185,7 +185,6 @@ phase_a() {
     # plaintext.
     [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils/tlshd missing; kernel-stage TLS unavailable"; exit 1; }
     [ -x /usr/bin/keyctl ] || { echo "ERROR: keyutils/keyctl missing; TLS-PSK injection unavailable"; exit 1; }
-    /usr/sbin/tlshd -v
 }
 
 apply_sources() {
@@ -209,7 +208,10 @@ install_tlshd() {
 }
 
 build_ktls_utils() {
-    if [ -x /usr/sbin/tlshd ] && /usr/sbin/tlshd -v 2>/dev/null | grep -q "ktls-utils ${KTLS_UTILS_TAG#ktls-utils-}"; then
+    # tlshd has no version option; a marker written at install time keeps
+    # reruns idempotent.
+    local state=/usr/lib/ktls-utils.golden-version
+    if [ -x /usr/sbin/tlshd ] && [ "$(cat "$state" 2>/dev/null)" = "$KTLS_UTILS_TAG" ]; then
         echo "    tlshd is already ${KTLS_UTILS_TAG}, skipping the build"
         return
     fi
@@ -240,7 +242,8 @@ build_ktls_utils() {
     [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils installed without /usr/sbin/tlshd"; exit 1; }
     # A wrong prefix can leave /usr/etc/tlshd behind; the canonical path is /etc/tlshd.
     rm -rf /usr/etc/tlshd
-    echo "    ktls-utils installed: $(/usr/sbin/tlshd -v 2>&1 | head -1)"
+    echo "$KTLS_UTILS_TAG" > "$state"
+    echo "    ktls-utils ${KTLS_UTILS_TAG} installed"
 }
 
 verify_kernel_tls() {
