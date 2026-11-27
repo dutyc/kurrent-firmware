@@ -53,7 +53,7 @@ at its first payload.
 through `bash test/ci-gates.sh pcap`.
 
 `assets/BOOTX64-2.14-generic.EFI` is the GRUB image embedded into the golden
-scripts; see `docs/build-artifacts.md` for its origin and licence.
+scripts; see `docs/guides/build-artifacts.md` for its origin and licence.
 
 ## Test NQNs
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # golden-image-setup-fedora44.sh - 一键母盘定制（Fedora 44 → NVMe-oF SAN 引导母盘）
 #
-# 对应 docs/golden-image-customization-debian12.md 的 A-F 六阶段：
+# 对应 docs/guides/golden-image-customization-debian12.md 的 A-F 六阶段：
 #   A. 系统与内核   自带内核(NVME_AUTH 已启用)（CONFIG_NVME_AUTH 已启用，免换内核）
 #   B. initramfs 种子模块（dracut 95nbft：NBFT/NBCT 消费，hostid 修复）
 #   C. 系统配置     fstab（root UUID 写死 + 注释 /boot/efi）、DHCP、hostname 占位
@@ -29,7 +29,7 @@
 #   --yes         跳过 E 阶段交互确认
 #   --grub-efi F  注入宿主预构建 BOOTX64.EFI（跳过母盘内 grub2-mkimage）。
 #                 低版本 grub 产物在 SAN 引导路径实测卡死（Debian 12 grub 2.06，
-#                 2026-09-04，见 docs/golden-image-customization-debian12.md 6.3），需 2.12+；
+#                 2026-09-04，见 docs/guides/golden-image-customization-debian12.md 6.3），需 2.12+；
 #                 默认注入脚本内嵌的 GRUB 2.14 产物（零宿主依赖）。
 #   --mirror URL  dnf 镜像（默认 http://mirrors.aliyun.com/fedora）
 #   --keep-sources 保留母盘原 dnf 源（不切镜像）
