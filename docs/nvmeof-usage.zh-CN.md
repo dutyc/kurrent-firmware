@@ -17,7 +17,7 @@
 
 ## 2. 固件产物与部署
 
-`./build/build.sh` 构建产物输出到 `dist/`（完整清单见 `docs/build-artifacts.zh-CN.md`）：
+`./build/build.sh` 构建产物输出到 `dist/`（完整清单见 `docs/guides/build-artifacts.zh-CN.md`）：
 
 | 产物 | 引导环境 | 典型部署 |
 |---|---|---|

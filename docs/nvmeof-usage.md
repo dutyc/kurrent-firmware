@@ -17,7 +17,7 @@ The firmware contains a purpose-built `nvmetcp` driver (patch 0005) that provide
 
 ## 2. Firmware Artifacts and Deployment
 
-`./build/build.sh` writes artifacts to `dist/` (the full list is in `docs/build-artifacts.md`):
+`./build/build.sh` writes artifacts to `dist/` (the full list is in `docs/guides/build-artifacts.md`):
 
 | Artifact | Boot environment | Typical deployment |
 |---|---|---|
