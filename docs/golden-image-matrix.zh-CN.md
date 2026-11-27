@@ -102,7 +102,7 @@ snaplen 截断后的后续载荷仍计入同一连接）。
 ### Debian 12（首个闭环版本，基线）
 - 介质：netinst + preseed 自动安装；backports 内核（6.12 系，NVMe-oF 认证所需）
 - 源切换：bookworm + bookworm-backports + security（阿里云，ForceIPv4）
-- 验收轨迹：2026-09-08 单文件形态 A-F 实测（含 E）→ 同日 PXE 冷启动验收至 GDM
+- 验收轨迹：2026-11-27 真实安装 + A–F + PXE TLS 冷启动至 login，用户态 `ktls-utils` / `libnvme` / `nvme-cli` 由源码构建（[debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md)）
 
 ### Debian 13（netinst + 独立变体脚本）
 - 介质：netinst 13.6.0 + preseed；内核用发行版自带（trixie 6.12 已满足）

@@ -36,3 +36,4 @@ current code.
 - [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) — unauthenticated SAN boot verification
 - [production-boot-verification.md](archive/production-boot-verification.md) — production boot-chain verification
 - [real-reinstall-tls-coldboot-verification.md](archive/real-reinstall-tls-coldboot-verification.md) — real reinstall and TLS cold-boot verification (Debian 13 / Ubuntu 26.04)
+- [debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md) — Debian 12 TLS-only cold-boot verification with source-built userspace

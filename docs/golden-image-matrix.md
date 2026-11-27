@@ -106,7 +106,7 @@ gaps, retransmissions and snaplen truncation).
 ### Debian 12 (first closed-loop version, baseline)
 - Medium: netinst + preseed automated installation; backports kernel (6.12 series, required for NVMe-oF authentication)
 - Source switch: bookworm + bookworm-backports + security (Alibaba Cloud, ForceIPv4)
-- Acceptance trajectory: 2026-09-08 single-file form measured through A-F (including E) → PXE cold-boot acceptance to GDM the same day
+- Acceptance trajectory: 2026-11-27 real install + A–F + PXE TLS cold boot to login, with source-built `ktls-utils` / `libnvme` / `nvme-cli` ([debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md))
 
 ### Debian 13 (netinst + separate variant script)
 - Medium: netinst 13.6.0 + preseed; the kernel is the distribution's own (trixie 6.12 already satisfies the requirement)
