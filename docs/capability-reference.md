@@ -81,7 +81,7 @@ ICREQ → CONNECT_ADMIN → AUTH → PROP_SET → IDENTIFY_CTRL → IDENTIFY_NS
 
 The authentication sub-state machine has 5 steps: `START → COMPLETE_NEGOTIATE → CHALLENGE → COMPLETE_REPLY → SUCCESS1 → START`.
 
-Three bugs found and fixed during troubleshooting (wire evidence in [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)):
+Three bugs found and fixed during troubleshooting (wire evidence in [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)):
 
 1. **A transient `-EAGAIN` kills the session**: a send failure while the TCP window is closed aborted the session → now the driver waits for the window to reopen and retries (`tx_in_flight` gating prevents duplicate sends)
 2. **Duplicate AuthReceive sends**: the window retry path overlapped the normal advancement path → sends are now idempotent and the step advances uniformly
@@ -303,17 +303,17 @@ iPXE                                        nvmet(TCP:4420)         control plan
 
 - SMBIOS type 17 memory settings: `mem-total` (aggregated over all slots), `mem-type`/`mem-speed` (first slot)
 - PCI `driver_name` population: `${net0/chip}` prints the device table name (e.g. `RTL8125`)
-- Purpose: the device-side data source for the main repository's dynamic variable chain and for node registration. For the full list see [device-info-reporting.md](device-info-reporting.md)
+- Purpose: the device-side data source for the main repository's dynamic variable chain and for node registration. For the full list see [device-info-reporting.md](reference/device-info-reporting.md)
 
 ### 5.2 NIC Adaptation (Patches 0001-0003)
 
 - RTL8125 (2.5GbE) and RTL8126 (5GbE, ICVerID detection + PHY configuration dispatch) driver customization
 - `snponly.efi`: when chainloading fails it falls back to taking over all SNP/NII/MNP devices, excluding the SNP handles installed by iPXE itself (patch 0003; this prevents local boot from creating NICs recursively and exhausting the heap)
-- For the support matrix see [network-support.md](network-support.md)
+- For the support matrix see [network-support.md](reference/network-support.md)
 
 ### 5.3 Build and Deployment
 
-- Patch chain `0001-0011` (baseline `e6e51ccb`); `build/build.sh` resets the working tree and applies the patches in order on every run, and the artifacts go to `dist/` (SHA256SUMS)
+- Patch chain `0001-0012` (baseline `e6e51ccb`); `build/build.sh` resets the working tree and applies the patches in order on every run, and the artifacts go to `dist/` (SHA256SUMS)
 - Artifact form: UEFI only, 7 files in total—`ipxe.efi`, `ipxe-debug.efi`, `snponly.efi`, `snponly-debug.efi` under `pxe-uefi/`; `ipxe.efi`, `ipxe-debug.efi`, `snponly.efi` under `direct-uefi/` (all with `auto.ipxe` embedded)
 - Debug builds: `DEBUG=nvmetcp,nvmetcp_auth:3` (authentication logs), `DEBUG=realtek:3` (NIC)
 - `embed/auto.ipxe` is a configuration asset (not a source patch); changing it requires no patch regeneration
@@ -329,7 +329,7 @@ iPXE                                        nvmet(TCP:4420)         control plan
 | QEMU rounds | `bash test/run-qemu-auth.sh [round]` (outside the sandbox) | Full-chain log `diag/qemu-<round>.log` + packet capture |
 | pcap analysis | `python3 test/parse-pcap-auth.py` / `-stream.py` | Wire evidence chain: ATR, the four authentication messages, no 0x8018 throughout |
 
-For the complete procedure see [nvmeof-test-procedure.md](nvmeof-test-procedure.md). Log evidence chain:
+For the complete procedure see [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.md). Log evidence chain:
 
 ```text
 sending Connect (qid 0) → completion: cid 1 status 0x0
@@ -344,7 +344,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 - [ ] The boot chain script (boot.ipxe chain) `chain`s `/boot-vars` to fetch variables before `sanboot`, and `sanboot` uses `${nbft-secret}`
 - [ ] The key store matches `DHHCP_KEY` in `nvmet-setup.sh`; format `DHHC-1:XX:` (two-digit type) + CRC32 final value little-endian; reuse the self-check logic
 - [ ] The server-side `hosts/<HostNQN>/` matches the NQN the client actually uses (SMBIOS UUID or fallback NQN)
-- [ ] The firmware contains the complete patch chain 0001-0011 (the authentication fix is merged into 0005; with an older chain that lacks the fix, the authentication flow skips the Property Set and results in `0x8018`)
+- [ ] The firmware contains the complete patch chain 0001-0012 (the authentication fix is merged into 0005; with an older chain that lacks the fix, the authentication flow skips the Property Set and results in `0x8018`)
 - [ ] Authentication chain verification: QEMU rounds + pcap evidence chain (Chapter 6)
 - [ ] Plan authentication key injection for the kernel NBFT path (initramfs-nbft) according to the gap in 4.8
 
@@ -353,11 +353,11 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | Document | Purpose |
 |---|---|
 | [nvmeof-usage.md](nvmeof-usage.md) | Usage guide (server configuration, sanboot usage, QEMU verification) |
-| [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | Complete test procedure for the test/ scripts |
+| [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.md) | Complete test procedure for the test/ scripts |
 | [customizations.md](customizations.md) | Design and implementation of patch 0005 |
-| [device-trust-usage.md](device-trust-usage.md) | Usage of the device trust root capabilities (0006-0008, 0011: akgen/akpub/quote/nvclear, TPM attestation, TOFU, NVRAM settings) |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | Full troubleshooting history of authentication (0x8018 root cause, wire evidence) |
-| [nvmeof-research.md](nvmeof-research.md) | Protocol research and design |
-| [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | SAN boot verification record without authentication |
+| [device-trust-usage.md](guides/device-trust-usage.md) | Usage of the device trust root capabilities (0006-0008, 0011: akgen/akpub/quote/nvclear, TPM attestation, TOFU, NVRAM settings) |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | Full troubleshooting history of authentication (0x8018 root cause, wire evidence) |
+| [nvmeof-research.md](archive/nvmeof-research.md) | Protocol research and design |
+| [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | SAN boot verification record without authentication |
 | `initramfs-nbft/README.md` | NBFT consumption seed module (kernel path) |
 | [patches/README.md](../patches/README.md) | Patch chain, licensing (NVMe driver files GPL-2.0 only), upgrade procedure |

@@ -4,7 +4,7 @@
 
 ## 定位
 
-设备信息采集 = 身份（SMBIOS type 1/2/3）、CPU（CPUID）、内存（SMBIOS type 17）、网卡（netdev 设置）四组设置项，经 HTTP GET query string 上报。官方能力优先：身份、CPU、网卡（除芯片名）字段官方已有；内存参数与网卡芯片名为唯一缺口，由补丁 `0004` 补齐（见 [customizations.zh-CN.md](customizations.zh-CN.md)）。
+设备信息采集 = 身份（SMBIOS type 1/2/3）、CPU（CPUID）、内存（SMBIOS type 17）、网卡（netdev 设置）四组设置项，经 HTTP GET query string 上报。官方能力优先：身份、CPU、网卡（除芯片名）字段官方已有；内存参数与网卡芯片名为唯一缺口，由补丁 `0004` 补齐（见 [customizations.zh-CN.md](../customizations.zh-CN.md)）。
 
 ## 设置项清单
 
@@ -81,7 +81,7 @@ echo ${netX/chip} ${netX/busid}
 echo ${manufacturer} ${product} ${cpumodel}
 ```
 
-### 健壮性（无 SMBIOS 时兜底）
+### 健壮性（无 SMBIOS 时回退）
 
 ```ipxe
 isset ${mem-total} || set mem-total 0

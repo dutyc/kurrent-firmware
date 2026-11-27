@@ -22,7 +22,7 @@ The build pipeline (`build.sh`) compiles the firmware into 7 UEFI form factors, 
 
 `build-sb.sh` produces a separate signed set under `dist/secureboot/`
 (`snponly-sb.efi`, `manifest.json`, `SHA256SUMS`). It does not replace or
-modify the seven artifacts above. See [secureboot.md](secureboot.md).
+modify the seven artifacts above. See [secureboot.md](../secureboot.md).
 
 ## Golden image helpers
 

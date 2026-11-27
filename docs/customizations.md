@@ -64,7 +64,7 @@ RTL8126 5GbE:
   - `realtek_hw_start_8126`: ZRXDC disabled + default ASPM entry latency (CSI path) + 8125 common initialisation + PHY configuration
   - Mount points: `realtek_detect` / `realtek_open` / `realtek_probe` dispatch on `mac_ver == 70`
 - **Verification**: full build passes all 10 artifacts (including the `DEBUG=realtek:3` debug target); field testing on physical hardware pending.
-- **Audit**: the dual-source PHY table audit and the lightweight PHY MCU firmware version-check policy are documented in [8126-porting-audit.md](8126-porting-audit.md) (Chinese only).
+- **Audit**: the dual-source PHY table audit and the lightweight PHY MCU firmware version-check policy are documented in [8126-porting-audit.md](archive/8126-porting-audit.md) (Chinese only).
 - **Licence**: the 8126 adaptation is derived from the Realtek r8126 driver (GPL-2.0-only, Copyright 2025 Realtek Semiconductor Corp.) and the Linux kernel r8169 driver (GPL-2.0-only); it is licensed under GPL-2.0 only and may not be redistributed under UBDL (see the header of `patches/0001`).
 
 ### 2. Debug build fix (`0002`)
@@ -85,7 +85,7 @@ RTL8126 5GbE:
   - `struct smbios_memory_device` (type 17 layout verified against three dmidecode versions: Memory Type `0x12`, Speed `0x15`, Extended Size `0x1C`) + `SMBIOS_TYPE_MEMORY_DEVICE 17`
   - `${mem-total}` (uint32 MB, aggregated over all modules: `0xFFFF` skipped, `0x7FFF` falls back to Extended Size, bit 15 = GB), `${mem-type}` (first module, mapped to strings such as `DDR5`), `${mem-speed}` (first module, MT/s) — custom fetches dispatched by name, reusing the existing SMBIOS settings scope
   - `pci_probe` now sets `driver_name` from the matching device-table entry, enabling `${net0/chip}` (e.g. `RTL8125`) for all PCI NICs
-- **Usage**: settings reference and report URL templates in [device-info-reporting.md](device-info-reporting.md) / [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md).
+- **Usage**: settings reference and report URL templates in [device-info-reporting.md](reference/device-info-reporting.md) / [device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md).
 - **Verification**: full build passes all 10 artifacts; settings embedded (strings check); behaviour on real hardware pending (URL encoding of spaces / special characters).
 
 ### 5. NVMe-oF (NVMe over TCP) SAN support (`0005`)
@@ -100,7 +100,7 @@ RTL8126 5GbE:
   - Identify NS LBAF offset fix (64→128)
   - A registered `hostnqn` setting overrides the UUID-derived default in `nvmetcp_set_host_nqn()`; plain `nvme://` URIs without the setting keep the old fallback (`nqn.2014-08.org.ipxe:<uuid>`)
 - **Usage**: end-to-end guide (nvmet target setup incl. auth, `sanboot` syntax, QEMU validation) in [nvmeof-usage.md](nvmeof-usage.md).
-- **Debug log**: full authentication investigation timeline with wire-level evidence in [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) (Chinese only).
+- **Debug log**: full authentication investigation timeline with wire-level evidence in [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) (Chinese only).
 - **Verification**: QEMU/OVMF + Ubuntu 26.04 kernel 7.0 nvmet target, GRUB 2.14 SAN boot chain passing; full-chain re-runs show `sending Property Set (CC)` present, all commands `status=0x0000` on the wire, `0x8018` zero occurrences. Host NQN injection per MAC accepted by nvmet `hosts/` strict mode (`test/nvmet-setup.sh` with `AUTH=1`).
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_ONLY )` — GPL-2.0 only, not redistributable under UBDL.
 
@@ -168,7 +168,7 @@ RTL8126 5GbE:
   - `akgen`: creates or reports the existing key; `akpub`: exports `ak-public` (SubjectPublicKeyInfo DER), `ak-name` (TPM2B_NAME: `000b` followed by the SHA-256 of the public area), `ak-type` (`ecc_p256` / `rsa2048`) and `sb` (EFI `SecureBoot` variable, `1` / `0`); `quote <nonce>`: one `TPM2_Quote` over PCR 0/2/4/7 with the nonce as `qualifyingData`, exporting `quote` (raw TPMS_ATTEST, no TPM2B length prefix) and `quote-sig` (ECDSA-SHA256 DER, or RSASSA-PKCS1-v1_5 for an RSA AK)
   - all six settings (DHCP tags 0x60-0x65) live in the in-memory settings root for the current boot only; nothing reaches the EFI variable NVS backend
   - without a TPM the commands fail with `-ENODEV` / `-ENOENT` and nothing else, so a boot script can take its no-TPM path; there is no software fallback
-- **Verification**: QEMU/OVMF + swtpm (software TPM, not real hardware). The AK survives a cold reboot and a regenerated OVMF variable store with an identical `ak-name`; `test/verify-ak-quote.py` independently parses the TPMS_ATTEST and verifies the signature; the control plane's real `/devices/report` → `/devices/challenge` → `/boot-vars` flow records `device.attest ok`. Negative cases: a firmware change (different PCR 7) yields `pcr_mismatch`, replaying a nonce yields `nonce_invalid`, and a firmware without a TPM reports `no_tpm` without crashing. See [device-trust-usage.md](device-trust-usage.md) for the command and setting contract.
+- **Verification**: QEMU/OVMF + swtpm (software TPM, not real hardware). The AK survives a cold reboot and a regenerated OVMF variable store with an identical `ak-name`; `test/verify-ak-quote.py` independently parses the TPMS_ATTEST and verifies the signature; the control plane's real `/devices/report` → `/devices/challenge` → `/boot-vars` flow records `device.attest ok`. Negative cases: a firmware change (different PCR 7) yields `pcr_mismatch`, replaying a nonce yields `nonce_invalid`, and a firmware without a TPM reports `no_tpm` without crashing. See [device-trust-usage.md](guides/device-trust-usage.md) for the command and setting contract.
 - **Licence**: original kurrent-firmware implementation, `FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`; `EFI_TCG2_PROTOCOL` constants are the standard UEFI specification values.
 
 ### 12. Secure Boot key enrollment (`0012`)

@@ -4,7 +4,7 @@
 
 本仓库的母盘（golden image）资产按发行版组织：每个发行版一个自包含一键脚本，共享同一套
 A-F 六阶段定制流程（流程原理与手工步骤见
-[golden-image-customization-debian12.md](golden-image-customization-debian12.zh-CN.md)）；
+[golden-image-customization-debian12.md](guides/golden-image-customization-debian12.zh-CN.md)）；
 宿主侧辅助脚本与打包器统一在 `test/shared/`。
 
 所有 `golden-image-setup-*.sh` 均已内嵌 initramfs-nbft 三组件与 GRUB 2.14 产物
@@ -39,7 +39,7 @@ test/
     ├── fwtest-net.sh            # 隔离验收网桥 br-fwtest + tap0fw（root）
     ├── fwtest-nvmet-tls.sh      # 验收靶：DH-HMAC-CHAP host + TLS1.3/required 端口 + PSK
     ├── fwtest-boot.sh           # 隔离 PXE 冷启动（dnsmasq 容器 + QEMU/OVMF + 抓包）
-    ├── pcap-flows.py            # 抓包判据：流首字节 0x16 / 明文凭据 / :4420 计数
+    ├── pcap-flows.py            # 抓包判据：连接首个载荷字节 0x16 / 明文凭据 / :4420 计数
     └── assets/BOOTX64-2.14-generic.EFI   # GRUB 2.14 产物（实测引导基线）
 ```
 
@@ -47,20 +47,21 @@ test/
 
 | 发行版 | 版本 | 安装介质 | 无人值守 | 定制脚本 | 软件源 | 内核 | 验收状态 |
 |---|---|---|---|---|---|---|---|
-| Debian 12 | bookworm | netinst ISO | preseed（d-i） | `test/debian12/` | 阿里云（bookworm + backports） | 6.12.95+deb12-amd64（backports） | ✅ 2026-09-08 PXE 认证冷启动 → GDM |
+| Debian 12 | bookworm | netinst ISO | preseed（d-i） | `test/debian12/` | 阿里云（bookworm + backports） | 6.12.95+deb12-amd64（backports） | ⚠️ 2026-11-27 重装 + PXE TLS 冷启动 → login；需源码构建用户态，代价见[验收记录](archive/debian12-tls-coldboot-verification.md) |
 | Debian 13 | 13.6.0 | netinst ISO | preseed（d-i） | `test/debian13/` | 阿里云（trixie，免 backports） | 6.12.94+deb13（自带） | ✅ 2026-09-10 PXE 认证冷启动 → login |
-| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2404/` | noble（deb822 ubuntu.sources） | 6.8 系（GA） | ✅ 2026-09-10 PXE 认证冷启动 → login |
+| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2404/` | noble（deb822 ubuntu.sources） | 6.8 系（GA） | ✅ 2026-11-27 重装 + PXE TLS 冷启动 → login |
 | Ubuntu 26.04 | 26.04.1 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2604/` | suite 运行时检测（deb822） | 7.0.0-31-generic | ✅ 2026-09-11 PXE 认证冷启动 → login |
-| Fedora 44 | 44（Server DVD 1.7） | DVD ISO | kickstart（Anaconda） | `test/fedora44/` | dnf：阿里云（fedora + updates） | 6.19.10-300.fc44（自带） | ✅ 2026-09-12 PXE 认证冷启动 → login |
+| Fedora 44 | 44（Server DVD 1.7） | DVD ISO | kickstart（Anaconda） | `test/fedora44/` | dnf：阿里云（fedora + updates） | 6.19.10-300.fc44（自带） | ✅ 2026-11-27 重装 + PXE TLS 冷启动 → login |
 | AlmaLinux 10.2 | 10.2（minimal ISO） | minimal ISO | kickstart（Anaconda，HTTP） | `test/almalinux10/` | dnf：华为云（BaseOS/AppStream/CRB/Extras） | 6.12.0-211.7.3.el10_2（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login（两轮） |
 | openSUSE Leap 16.0 | 16.0（online installer） | online ISO（Agama） | Agama profile（`inst.auto=`） | `test/opensuse-leap16/` | zypper：TUNA OSS | 6.12.0-160000（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login |
 
 验收判据（各发行版一致）：target 端出现 **两条**控制器记录——固件段与内核段各一次；
 认证/加密按控制面下发的路径记录：DH-HMAC-CHAP 路径为 `..., DH-HMAC-CHAP`，
 TLS 1.3 路径为 `..., TLS.`。串口出现登录提示。
-TLS 路径另加抓包判据：到数据端口（4422/4421）的每条客户端 TCP 流首字节为 `0x16`，
+TLS 路径另加抓包判据：到数据端口（4422/4421）的每条客户端 TCP 连接首个载荷字节为 `0x16`，
 PSK / DH-HMAC-CHAP 密钥不出现在明文载荷中，到明文端口 4420 的包数为 0
-（`test/shared/pcap-flows.py` 自动判定）。
+（`test/shared/pcap-flows.py` 自动判定；连接以客户端 SYN 为起点，序号空洞、重传与
+snaplen 截断后的后续载荷仍计入同一连接）。
 
 > 原生 NBFT 消费 ≠ 原生认证：RHEL 的 `nm-initrd-generator`/`95nvmf` 与 SUSE 的
 > dracut `nvmf` 都能从 NBFT 自动建链，但 **NBFT 标准表不含 DH-HMAC-CHAP 密钥与
@@ -101,7 +102,7 @@ PSK / DH-HMAC-CHAP 密钥不出现在明文载荷中，到明文端口 4420 的�
 ### Debian 12（首个闭环版本，基线）
 - 介质：netinst + preseed 自动安装；backports 内核（6.12 系，NVMe-oF 认证所需）
 - 源切换：bookworm + bookworm-backports + security（阿里云，ForceIPv4）
-- 验收轨迹：2026-09-08 单文件形态 A-F 实测（含 E）→ 同日 PXE 冷启动验收至 GDM
+- 验收轨迹：2026-11-27 真实安装 + A–F + PXE TLS 冷启动至 login；需源码构建用户态（`ktls-utils` / `libnvme` / `nvme-cli`），代价与边界见[debian12-tls-coldboot-verification.md](archive/debian12-tls-coldboot-verification.md)
 
 ### Debian 13（netinst + 独立变体脚本）
 - 介质：netinst 13.6.0 + preseed；内核用发行版自带（trixie 6.12 已满足）

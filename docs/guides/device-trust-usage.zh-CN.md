@@ -4,8 +4,8 @@
 
 > 面向 Kurrent 主仓库的固件侧能力使用说明：TPM 2.0 设备身份（AK 与
 > PCR quote）、TOFU HTTPS 信任、NVRAM 持久化设置与证明接口契约。对应
-> 固件补丁 0006/0007/0008/0011（见 [patches/README.md](../patches/README.md)
-> 与 [customizations.md](customizations.md) 的 ## 6/7/8/11）。
+> 固件补丁 0006/0007/0008/0011（见 [patches/README.md](../../patches/README.md)
+> 与 [customizations.md](../customizations.md) 的 ## 6/7/8/11）。
 
 ## 1. 能力总览
 
@@ -104,7 +104,7 @@ nvclear: device NVRAM cleared
   clear: <errno>`；任一项失败时末行输出 `nvclear: incomplete` 并返回
   非零，供脚本判定。
 - 清理效果**重启后仍然成立**（补丁 0006 让长度归零的选项块也真正下发
-  写操作，见 [customizations.md](customizations.md) 的 §6）。
+  写操作，见 [customizations.md](../customizations.md) 的 §6）。
 - 只动本项目这两个设置，不触碰其它 UEFI 变量。
 - 等价的手工写法是逐项 `clear nvo/<设置名>`——**必须带 `nvo/` 块前缀**；
   裸 `clear server-fingerprint` 只清掉内存影子，见 §3 与 §7。
@@ -369,7 +369,7 @@ echo TRUSTROOT-BOOT-FAILED
 | 控制面报 `sb_disabled` | 自报 `sb=0`，新设备需 Secure Boot 开启 | 开启 Secure Boot 并重新入池 |
 | HTTPS 拉取被拒（`TOFU-FETCH-FAIL` 类现象） | 服务器证书与 NVRAM 中已固定的指纹不一致 | 确认服务器证书未轮换；需轮换时重置 NVRAM 指纹 |
 | 访问第二个 HTTPS 主机被拒 | 固定为全局单锚：固件只信任首个 https 连接中被固定的证书 | 统一 HTTPS 入口/证书，其余流量走 TFTP/HTTP（见 §4） |
-| TLS 握手失败 | 服务端 TLS > 1.2 或密码套件不受支持 | 服务端限制 `TLS ≤ 1.2`（见 [test/https-server.py](../test/https-server.py) 的套件清单） |
+| TLS 握手失败 | 服务端 TLS > 1.2 或密码套件不受支持 | 服务端限制 `TLS ≤ 1.2`（见 [test/https-server.py](../../test/https-server.py) 的套件清单） |
 | `clear server-fingerprint` 后指纹仍在 | 裸 `clear`/`set` 对 NVS 封装 tag 无效 | 必须用 `clear nvo/server-fingerprint`（块前缀，见 §6.4）或 `nvclear`（§2.4） |
 | `nvclear` 报 `not present` | 该项本就为空 | 正常，无需处理 |
 | `nvclear` 报 `could not clear` / 末行 `incomplete` | 后端写失败（EFI `SetVariable` 出错） | 抓串口日志看具体 errno；检查 NVRAM 空间与只读策略 |

@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-label="Kurrent 里程碑：TPM 设备信任根与 Secure Boot 自动注册">
+  <title>Kurrent 里程碑 —— TPM 设备信任根与 Secure Boot 自动注册（2026-11）</title>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#0f0f0f" stroke-width="1" opacity="0.045"/>
+    </pattern>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#14161a"/>
+    </marker>
+    <style>
+      .paper { fill:#f6f5f1; }
+      .ink   { fill:#14161a; }
+      .mut   { fill:#6b6f76; }
+      .ln    { stroke:#14161a; fill:none; }
+      .lnm   { stroke:#b9b7b0; fill:none; }
+      text   { font-family: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", sans-serif; }
+    </style>
+  </defs>
+
+  <rect class="paper" x="0" y="0" width="1600" height="1000"/>
+  <rect x="0" y="0" width="1600" height="1000" fill="url(#grid)"/>
+  <rect class="ln" x="24" y="24" width="1552" height="952" stroke-width="3"/>
+  <rect class="lnm" x="40" y="40" width="1520" height="920" stroke-width="1"/>
+
+  <!-- ===== header ===== -->
+  <text class="mut" x="64" y="92" font-size="19" letter-spacing="3.5">KURRENT · FIRMWARE + CONTROL PLANE</text>
+  <text class="ink" x="1536" y="92" font-size="19" letter-spacing="2.5" text-anchor="end">2026-11-12 → 11-26</text>
+  <path class="ln" d="M 64 112 L 1536 112" stroke-width="2.5"/>
+
+  <!-- ===== headline ===== -->
+  <text class="ink" x="64" y="262" font-size="150" font-weight="800" letter-spacing="12">信任根</text>
+  <text class="mut" x="70" y="330" font-size="40" letter-spacing="20">HARDWARE TRUST ROOT</text>
+  <text class="ink" x="70" y="372" font-size="22" letter-spacing="0.5">TPM 2.0 证明密钥 · PCR quote · sbenroll PK/KEK/db · 12 补丁</text>
+
+  <!-- ===== stamp ===== -->
+  <g transform="rotate(-8 1300 240)">
+    <rect class="ln" x="1120" y="168" width="360" height="146" rx="8" stroke-width="6"/>
+    <rect class="lnm" x="1133" y="181" width="334" height="120" rx="4" stroke-width="2.5"/>
+    <text class="ink" x="1300" y="230" font-size="32" font-weight="700" letter-spacing="4" text-anchor="middle">KEY STAYS</text>
+    <text class="ink" x="1300" y="266" font-size="32" font-weight="700" letter-spacing="4" text-anchor="middle">INSIDE TPM</text>
+    <text class="mut" x="1300" y="291" font-size="17" letter-spacing="1" text-anchor="middle">私钥不出 TPM</text>
+  </g>
+
+  <!-- ===== anchor 01: device identity ===== -->
+  <text class="mut" x="64" y="416" font-size="17" letter-spacing="3">ANCHOR 01 — DEVICE IDENTITY / 设备身份</text>
+  <rect class="ln" x="64" y="432" width="1472" height="118" rx="22" stroke-width="4"/>
+
+  <g>
+    <rect class="ln" x="88" y="458" width="292" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="108" y="482" font-size="14" letter-spacing="2.5">01 · TPM 2.0</text>
+    <text class="ink" x="108" y="510" font-size="25" font-weight="700">AK 0x81000001</text>
+
+    <rect class="ln" x="408" y="458" width="292" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="428" y="482" font-size="14" letter-spacing="2.5">02 · TPM2_Quote</text>
+    <text class="ink" x="428" y="510" font-size="25" font-weight="700">PCR 0/2/4/7</text>
+
+    <rect class="ln" x="728" y="458" width="292" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="748" y="482" font-size="14" letter-spacing="2.5">03 · CONTROL PLANE</text>
+    <text class="ink" x="748" y="510" font-size="25" font-weight="700">attest + nonce</text>
+
+    <path class="ln" d="M 384 492 L 400 492" stroke-width="3" marker-end="url(#arw)"/>
+    <path class="ln" d="M 704 492 L 720 492" stroke-width="3" marker-end="url(#arw)"/>
+  </g>
+
+  <text class="mut" x="1056" y="478" font-size="16">ECC P-256（RSA-2048 回退）</text>
+  <text class="mut" x="1056" y="504" font-size="16">AK 持久化并跨冷启动复用</text>
+  <text class="mut" x="1056" y="530" font-size="16">pcr_mismatch / nonce_invalid / no_tpm 均拒绝</text>
+
+  <!-- ===== anchor 02: platform keys ===== -->
+  <text class="mut" x="64" y="588" font-size="17" letter-spacing="3">ANCHOR 02 — PLATFORM KEYS / Secure Boot 自动注册</text>
+  <rect class="ln" x="64" y="604" width="1472" height="118" rx="22" stroke-width="4"/>
+
+  <g>
+    <rect class="ln" x="88" y="630" width="240" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="108" y="654" font-size="14" letter-spacing="2.5">04 · SETUP MODE</text>
+    <text class="ink" x="108" y="682" font-size="25" font-weight="700">空变量</text>
+
+    <rect class="ln" x="356" y="630" width="300" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="376" y="654" font-size="14" letter-spacing="2.5">05 · sbenroll</text>
+    <text class="ink" x="376" y="682" font-size="25" font-weight="700">PK → KEK → db</text>
+
+    <rect class="ln" x="684" y="630" width="260" height="68" rx="9" stroke-width="2.5"/>
+    <text class="mut" x="704" y="654" font-size="14" letter-spacing="2.5">06 · REBOOT</text>
+    <text class="ink" x="704" y="682" font-size="25" font-weight="700">验签启动 sb=1</text>
+
+    <path class="ln" d="M 332 664 L 348 664" stroke-width="3" marker-end="url(#arw)"/>
+    <path class="ln" d="M 660 664 L 676 664" stroke-width="3" marker-end="url(#arw)"/>
+  </g>
+
+  <text class="mut" x="984" y="654" font-size="16">认证变量 payload 构建期生成，镜像只带证书与签名</text>
+  <text class="mut" x="984" y="680" font-size="16">幂等：ok / already enrolled；他人 PK 记 foreign 且不写变量</text>
+
+  <!-- ===== evidence strip ===== -->
+  <text class="mut" x="64" y="770" font-size="18" letter-spacing="3">EVIDENCE</text>
+
+  <g>
+    <rect class="ln" x="64" y="788" width="335" height="112" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="88" y="820" font-size="15" letter-spacing="2.5">补丁重放</text>
+    <text class="ink" x="88" y="856" font-size="30" font-weight="700">738f4354</text>
+    <text class="mut" x="88" y="882" font-size="14">12 补丁（0001–0012）树哈希</text>
+
+    <rect class="ln" x="419" y="788" width="335" height="112" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="443" y="820" font-size="15" letter-spacing="2.5">TPM 证明</text>
+    <text class="ink" x="443" y="856" font-size="30" font-weight="700">attest ok</text>
+    <text class="mut" x="443" y="882" font-size="14">QEMU/OVMF + swtpm 冷重启</text>
+
+    <rect class="ln" x="774" y="788" width="335" height="112" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="798" y="820" font-size="15" letter-spacing="2.5">Secure Boot 注册</text>
+    <text class="ink" x="798" y="856" font-size="30" font-weight="700">sb=1</text>
+    <text class="mut" x="798" y="882" font-size="14">PK/KEK/db 写入后验签启动</text>
+
+    <rect class="ln" x="1129" y="788" width="335" height="112" rx="12" stroke-width="2.5"/>
+    <text class="mut" x="1153" y="820" font-size="15" letter-spacing="2.5">快照一致</text>
+    <text class="ink" x="1153" y="856" font-size="30" font-weight="700">34 files</text>
+    <text class="mut" x="1153" y="882" font-size="14">reference/ 逐字节 0 差异</text>
+  </g>
+
+  <!-- ===== footer ===== -->
+  <path class="ln" d="M 64 918 L 1536 918" stroke-width="2"/>
+  <text class="ink" x="64" y="950" font-size="18" letter-spacing="1.5">KURRENT — 2026 年 11 月里程碑</text>
+  <text class="mut" x="1536" y="950" font-size="18" letter-spacing="1.5" text-anchor="end">kurrent-firmware · 0001–0012 · 2026-11-26</text>
+</svg>

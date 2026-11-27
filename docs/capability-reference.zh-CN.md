@@ -81,7 +81,7 @@ ICREQ → CONNECT_ADMIN → AUTH → PROP_SET → IDENTIFY_CTRL → IDENTIFY_NS
 
 认证子状态机 5 步：`START → COMPLETE_NEGOTIATE → CHALLENGE → COMPLETE_REPLY → SUCCESS1 → START`。
 
-排障中发现并修复的三个 bug（wire 证据见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)）：
+排障中发现并修复的三个 bug（wire 证据见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)）：
 
 1. **瞬态 `-EAGAIN` 杀掉会话**：TCP 窗口关闭时发送失败即关会话 → 改为等待窗口恢复后重试（`tx_in_flight` 门控，防重复发送）
 2. **AuthReceive 重复发送**：窗口重试路径与正常推进路径重叠 → 发送幂等 + step 统一推进
@@ -303,17 +303,17 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 
 - SMBIOS type 17 内存设置：`mem-total`（全插槽聚合）、`mem-type`/`mem-speed`（首槽）
 - PCI `driver_name` 填充：`${net0/chip}` 输出设备表名（如 `RTL8125`）
-- 用途：主仓库动态变量链的设备侧数据源、节点注册信息。详细清单见 [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md)
+- 用途：主仓库动态变量链的设备侧数据源、节点注册信息。详细清单见 [device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md)
 
 ### 5.2 网卡适配（补丁 0001-0003）
 
 - RTL8125（2.5GbE）与 RTL8126（5GbE，ICVerID 检测 + PHY 配置分派）驱动定制
 - `snponly.efi`：链加载失败时回退接管全部 SNP/NII/MNP 设备，并排除 iPXE 自安装的 SNP 句柄（补丁 0003；避免本地引导时递归建网卡耗尽堆）
-- 支持矩阵见 [network-support.zh-CN.md](network-support.zh-CN.md)
+- 支持矩阵见 [network-support.zh-CN.md](reference/network-support.zh-CN.md)
 
 ### 5.3 构建与部署
 
-- 补丁链 `0001-0011`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
+- 补丁链 `0001-0012`（基线 `e6e51ccb`），`build/build.sh` 每次重置工作树后按序应用，产物入 `dist/`（SHA256SUMS）
 - 产物形态：仅 UEFI，共 7 个文件——`pxe-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`、`snponly-debug.efi`；`direct-uefi/` 下 `ipxe.efi`、`ipxe-debug.efi`、`snponly.efi`（均内嵌 `auto.ipxe`）
 - 调试构建：`DEBUG=nvmetcp,nvmetcp_auth:3`（认证日志）、`DEBUG=realtek:3`（网卡）
 - `embed/auto.ipxe` 是配置资产（非源码补丁），修改无需重新生成补丁
@@ -329,7 +329,7 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 | QEMU 轮次 | `bash test/run-qemu-auth.sh [round]`（沙箱外） | 全链路日志 `diag/qemu-<round>.log` + 抓包 |
 | pcap 分析 | `python3 test/parse-pcap-auth.py` / `-stream.py` | wire 证据链：ATR、认证四消息、全程无 0x8018 |
 
-完整流程见 [nvmeof-test-procedure.md](nvmeof-test-procedure.zh-CN.md)。日志证据链：
+完整流程见 [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.zh-CN.md)。日志证据链：
 
 ```text
 sending Connect (qid 0) → completion: cid 1 status 0x0
@@ -344,7 +344,7 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 - [ ] 引导链脚本（boot.ipxe 链）在 `sanboot` 前先 `chain` `/boot-vars` 拉取变量，`sanboot` 使用 `${nbft-secret}`
 - [ ] 密钥库与 `nvmet-setup.sh` 的 `DHHCP_KEY` 一致；格式 `DHHC-1:XX:`（两位类型）+ CRC32 终值小端；复用自检逻辑
 - [ ] 服务端 `hosts/<HostNQN>/` 与客户端实际 NQN 匹配（SMBIOS UUID 或回退 NQN）
-- [ ] 固件包含完整补丁链 0001-0011（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
+- [ ] 固件包含完整补丁链 0001-0012（认证修复已并入 0005；旧链缺修复时认证流程会跳过 Property Set 导致 `0x8018`）
 - [ ] 认证链路验证：QEMU 轮次 + pcap 证据链（第 6 章）
 - [ ] 内核 NBFT 路径（initramfs-nbft）的认证密钥注入按 4.8 缺口规划
 
@@ -353,11 +353,11 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | 文档 | 定位 |
 |---|---|
 | [nvmeof-usage.md](nvmeof-usage.zh-CN.md) | 使用指南（服务端配置、sanboot 用法、QEMU 验证） |
-| [nvmeof-test-procedure.md](nvmeof-test-procedure.zh-CN.md) | test/ 脚本完整测试流程 |
+| [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.zh-CN.md) | test/ 脚本完整测试流程 |
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现 |
-| [device-trust-usage.md](device-trust-usage.zh-CN.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
-| [nvmeof-research.md](nvmeof-research.md) | 协议研究与设计 |
-| [nvmeof-san-boot-verification.md](nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |
+| [device-trust-usage.md](guides/device-trust-usage.zh-CN.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
+| [nvmeof-research.md](archive/nvmeof-research.md) | 协议研究与设计 |
+| [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |
 | `initramfs-nbft/README.md` | NBFT 消费种子模块（内核路径） |
 | [patches/README.md](../patches/README.md) | 补丁链、授权（NVMe 驱动文件 GPL-2.0 only）、升级流程 |

@@ -2,8 +2,8 @@
 
 [English](nvmeof-usage.md) | [中文](nvmeof-usage.zh-CN.md)
 
-> 适用范围：补丁链 `0001-0011`（基线 `e6e51ccb`）构建的固件。
-> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
+> 适用范围：补丁链 `0001-0012`（基线 `e6e51ccb`）构建的固件。
+> 实现细节见 [customizations.zh-CN.md](customizations.zh-CN.md)（补丁 0005）；认证排障历程见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)。
 
 ## 1. 能力概述
 
@@ -17,7 +17,7 @@
 
 ## 2. 固件产物与部署
 
-`./build/build.sh` 构建产物输出到 `dist/`（完整清单见 `docs/build-artifacts.zh-CN.md`）：
+`./build/build.sh` 构建产物输出到 `dist/`（完整清单见 `docs/guides/build-artifacts.zh-CN.md`）：
 
 | 产物 | 引导环境 | 典型部署 |
 |---|---|---|
@@ -217,7 +217,7 @@ I/O queue established
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
-| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0005 |
+| `command failed: status 0x8018`（Identify 被拒） | Command Sequence Error：控制器未启用（`CC.EN==0`），**Property Set 被跳过** | 认证完成时序问题，见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) Bug 3；确认固件含补丁 0005 |
 | 日志始终无 `sending Property Set (CC)` | 认证未完成或 phase 竞态 | 同上；检查服务端认证配置与密钥 |
 | 认证后 `Connection reset` | AuthReceive 被重复发送（固件不含补丁 0005 的发送幂等修复） | 重建含 0005 的固件 |
 | `authentication required but no secret` | 服务端要求认证但未提供 secret | 检查 URI `?secret=` 参数与 `${nbft-secret}` 注入 |
@@ -226,7 +226,7 @@ I/O queue established
 
 ## 6. 限制与注意事项
 
-- 固件必须包含**完整补丁链 0001-0011**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
+- 固件必须包含**完整补丁链 0001-0012**：认证修复代码已并入 `0005`（原独立补丁 0007），缺失或旧链构建时认证流程会跳过 Property Set 导致 0x8018
 - `nvmetcp` 驱动无编译期默认调试输出；需要认证/状态机日志（含 `authentication succeeded`）时以 `DEBUG=nvmetcp,nvmetcp_auth:3` 手动构建（仅 `DEBUG=nvmetcp:3` 看不到 `nvmetcp_auth.c` 的打印）
 - 认证仅支持 DH-HMAC-CHAP（SHA-256/384/512），DH 群支持 0/2048/3072/4096（服务端可配 `ffdhe4096`）
 - Host NQN 依赖 SMBIOS UUID；无 UUID 平台（如 QEMU+OVMF）回退固定 NQN，服务端需按实际值配置
@@ -237,7 +237,7 @@ I/O queue established
 | 文档 | 定位 |
 |---|---|
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现（结果性文档） |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
-| [network-support.zh-CN.md](network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
-| [build-artifacts.zh-CN.md](build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
+| [network-support.zh-CN.md](reference/network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
+| [build-artifacts.zh-CN.md](guides/build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |
 | [patches/README.zh-CN.md](../patches/README.zh-CN.md) | 补丁链清单、基线、授权与升级流程 |

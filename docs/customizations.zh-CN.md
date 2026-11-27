@@ -64,7 +64,7 @@ RTL8126 5GbE：
   - `realtek_hw_start_8126`：ZRXDC 关闭 + ASPM 默认入口延迟（CSI 路径）+ 8125 公共初始化 + PHY 配置
   - 挂载：`realtek_detect` / `realtek_open` / `realtek_probe` 按 `mac_ver == 70` 分派
 - **验证**：完整构建 10 产物全部通过（含 `DEBUG=realtek:3` debug 目标）；待物理机实测。
-- **审计**：双来源 PHY 表对照审计与 PHY MCU 微码轻量方案（版本检查）详见 [8126-porting-audit.md](8126-porting-audit.md)。
+- **审计**：双来源 PHY 表对照审计与 PHY MCU 微码轻量方案（版本检查）详见 [8126-porting-audit.md](archive/8126-porting-audit.md)。
 - **许可**：8126 适配部分参考 Realtek r8126 驱动（GPL-2.0-only，Copyright 2025 Realtek Semiconductor Corp.）与 Linux 内核 r8169（GPL-2.0-only），仅按 GPL-2.0 授权，不得以 UBDL 再分发（见 `patches/0001` 头部声明）。
 
 ### 2. debug 构建修复（`0002`）
@@ -76,7 +76,7 @@ RTL8126 5GbE：
 
 - **背景**：官方 `snponly.efi` 仅支持固件 PXE 链加载场景（只接管加载 iPXE 的那个设备）；从本地 UEFI（U 盘/磁盘）引导时找不到任何网卡，直接进入 shell。这是"主板无 PXE 网络启动选项"场景的配套适配——本地介质引导时同样需要网络接管能力。
 - **修改**：`src/drivers/net/efi/snponly.c`——链加载定位失败时回退接管全部 SNP/NII/MNP 设备，但**排除 iPXE 自己安装的 SNP 句柄**；PXE 链加载场景行为不变。
-- **作用**：native 驱动不可用（如特定主板 RTL8168 初始化挂起）的机器，本地引导也有 SNP 兜底路径。排除自安装句柄是本地引导的必要条件：否则回退会绑定到 `efi_snp_probe()` 刚为本机网卡安装的 SNP 句柄，递归产生 `net0..netN`，直到 4 MB 堆耗尽——此后所有 HTTPS/TLS 分配（8 KB 菜单记录、TLS 1.3 sanboot）都会 `ENOMEM`。
+- **作用**：native 驱动不可用（如特定主板 RTL8168 初始化挂起）的机器，本地引导也有 SNP 回退路径。排除自安装句柄是本地引导的必要条件：否则回退会绑定到 `efi_snp_probe()` 刚为本机网卡安装的 SNP 句柄，递归产生 `net0..netN`，直到 4 MB 堆耗尽——此后所有 HTTPS/TLS 分配（8 KB 菜单记录、TLS 1.3 sanboot）都会 `ENOMEM`。
 
 ### 4. 设备信息采集（`0004`）
 
@@ -85,7 +85,7 @@ RTL8126 5GbE：
   - `struct smbios_memory_device`（type 17 布局经 dmidecode 三个版本交叉验证：Memory Type `0x12`、Speed `0x15`、Extended Size `0x1C`）+ `SMBIOS_TYPE_MEMORY_DEVICE 17`
   - `${mem-total}`（uint32 MB，全插槽聚合：`0xFFFF` 跳过、`0x7FFF` 回退 Extended Size、bit15=GB）、`${mem-type}`（首槽，映射为 `DDR5` 等字符串）、`${mem-speed}`（首槽，MT/s）——按名分派的自定义 fetch，复用现有 SMBIOS 设置 scope
   - `pci_probe` 现从匹配的设备表项填充 `driver_name`，使 `${net0/chip}`（如 `RTL8125`）对所有 PCI 网卡生效
-- **用法**：设置项清单与上报 URL 模板见 [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md)。
+- **用法**：设置项清单与上报 URL 模板见 [device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md)。
 - **验证**：完整构建 10 产物全部通过；设置已编入（字符串验证）；真机行为待实测（空格 / 特殊字符的 URL 编码）。
 
 ### 5. NVMe-oF（NVMe over TCP）SAN 支持（`0005`）
@@ -100,7 +100,7 @@ RTL8126 5GbE：
   - Identify NS 的 LBAF 偏移修正（64→128）
   - 注册 `hostnqn` 设置项，覆盖 `nvmetcp_set_host_nqn()` 中 UUID 派生的默认值；未设置该选项的普通 `nvme://` URI 保持原回退行为（`nqn.2014-08.org.ipxe:<uuid>`）
 - **用法**：端到端指南（nvmet 服务端配置含认证、`sanboot` 语法、QEMU 验证）见 [nvmeof-usage.md](nvmeof-usage.zh-CN.md)。
-- **排障日志**：完整认证调查时间线与 wire 层证据见 [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md)。
+- **排障日志**：完整认证调查时间线与 wire 层证据见 [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md)。
 - **验证**：QEMU/OVMF + Ubuntu 26.04 内核 7.0 nvmet target，GRUB 2.14 SAN 引导链路通过；全链路复跑：`sending Property Set (CC)` 出现、wire 层全部命令 `status=0x0000`、`0x8018` 出现 0 次。引导服务器按 MAC 注入 host NQN，nvmet `hosts/` 严格模式接受（`test/nvmet-setup.sh` 的 `AUTH=1`）。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_ONLY )`——仅按 GPL-2.0 授权，不得以 UBDL 再分发。
 
@@ -168,7 +168,7 @@ RTL8126 5GbE：
   - `akgen`：创建或报告已存在的密钥；`akpub`：导出 `ak-public`（SubjectPublicKeyInfo DER）、`ak-name`（TPM2B_NAME：`000b` 后接公钥区的 SHA-256）、`ak-type`（`ecc_p256` / `rsa2048`）与 `sb`（EFI `SecureBoot` 变量，`1` / `0`）；`quote <nonce>`：一次 `TPM2_Quote` 覆盖 PCR 0/2/4/7、以 nonce 作 `qualifyingData`，导出 `quote`（原始 TPMS_ATTEST，无 TPM2B 长度前缀）与 `quote-sig`（ECDSA-SHA256 DER；RSA AK 则为 RSASSA-PKCS1-v1_5）
   - 六项设置（DHCP 标签 0x60-0x65）仅存于本次开机的内存设置根，不落 EFI 变量 NVS 后端
   - 无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，不产生其它行为，引导脚本因此可走无 TPM 分支；没有软件回退
-- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.zh-CN.md)。
+- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](guides/device-trust-usage.zh-CN.md)。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`EFI_TCG2_PROTOCOL` 常量为 UEFI 规范标准值。
 
 ### 12. Secure Boot 密钥注册（`0012`）

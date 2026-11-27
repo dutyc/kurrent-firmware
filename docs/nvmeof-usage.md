@@ -2,8 +2,8 @@
 
 [English](nvmeof-usage.md) | [中文](nvmeof-usage.zh-CN.md)
 
-> Scope: firmware built from patch chain `0001-0011` (baseline `e6e51ccb`).
-> For implementation details see [customizations.md](customizations.md) (patch 0005); for the authentication troubleshooting history see [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md).
+> Scope: firmware built from patch chain `0001-0012` (baseline `e6e51ccb`).
+> For implementation details see [customizations.md](customizations.md) (patch 0005); for the authentication troubleshooting history see [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md).
 
 ## 1. Capability Overview
 
@@ -17,7 +17,7 @@ The firmware contains a purpose-built `nvmetcp` driver (patch 0005) that provide
 
 ## 2. Firmware Artifacts and Deployment
 
-`./build/build.sh` writes artifacts to `dist/` (the full list is in `docs/build-artifacts.md`):
+`./build/build.sh` writes artifacts to `dist/` (the full list is in `docs/guides/build-artifacts.md`):
 
 | Artifact | Boot environment | Typical deployment |
 |---|---|---|
@@ -217,7 +217,7 @@ Wire sequence in `netdump-auth.pcap` (parser `test/parse-pcap-auth.py`): ICREQ/I
 
 | Symptom | Meaning | Remedy |
 |---|---|---|
-| `command failed: status 0x8018` (Identify rejected) | Command Sequence Error: the controller is not enabled (`CC.EN==0`), **Property Set was skipped** | Authentication completion sequencing problem, see [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) Bug 3; confirm the firmware contains patch 0005 |
+| `command failed: status 0x8018` (Identify rejected) | Command Sequence Error: the controller is not enabled (`CC.EN==0`), **Property Set was skipped** | Authentication completion sequencing problem, see [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) Bug 3; confirm the firmware contains patch 0005 |
 | No `sending Property Set (CC)` in the log at all | Authentication did not complete or a phase race occurred | As above; check the server authentication configuration and key |
 | `Connection reset` after authentication | AuthReceive sent more than once (firmware lacks the send idempotency fix from patch 0005) | Rebuild the firmware with 0005 |
 | `authentication required but no secret` | The server requires authentication but no secret was provided | Check the URI `?secret=` parameter and the `${nbft-secret}` injection |
@@ -226,7 +226,7 @@ Wire sequence in `netdump-auth.pcap` (parser `test/parse-pcap-auth.py`): ICREQ/I
 
 ## 6. Limitations and Cautions
 
-- The firmware must contain the **complete patch chain 0001-0011**: the authentication fix is merged into `0005` (formerly the separate patch 0007); a build missing it or using an older chain skips Property Set during authentication and ends in 0x8018
+- The firmware must contain the **complete patch chain 0001-0012**: the authentication fix is merged into `0005` (formerly the separate patch 0007); a build missing it or using an older chain skips Property Set during authentication and ends in 0x8018
 - The `nvmetcp` driver has no default debug output at build time; to obtain authentication/state machine logs (including `authentication succeeded`) build manually with `DEBUG=nvmetcp,nvmetcp_auth:3` (`DEBUG=nvmetcp:3` alone does not show output from `nvmetcp_auth.c`)
 - Authentication supports DH-HMAC-CHAP only (SHA-256/384/512); DH groups 0/2048/3072/4096 are supported (the server may be configured with `ffdhe4096`)
 - The Host NQN depends on the SMBIOS UUID; platforms without a UUID (such as QEMU+OVMF) fall back to a fixed NQN, and the server must be configured for the actual value
@@ -237,7 +237,7 @@ Wire sequence in `netdump-auth.pcap` (parser `test/parse-pcap-auth.py`): ICREQ/I
 | Document | Scope |
 |---|---|
 | [customizations.md](customizations.md) | Design and implementation of patch 0005 (result-oriented document) |
-| [nvmeof-auth-debug-log.md](nvmeof-auth-debug-log.md) | Full authentication troubleshooting history: timeline of three bugs, 0x8018 decoding, verification evidence (process-oriented document) |
-| [network-support.md](network-support.md) | NIC support matrix and test records |
-| [build-artifacts.md](build-artifacts.md) | Build artifact list and selection guide |
+| [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | Full authentication troubleshooting history: timeline of three bugs, 0x8018 decoding, verification evidence (process-oriented document) |
+| [network-support.md](reference/network-support.md) | NIC support matrix and test records |
+| [build-artifacts.md](guides/build-artifacts.md) | Build artifact list and selection guide |
 | [patches/README.md](../patches/README.md) | Patch chain inventory, baseline, licensing and upgrade procedure |
