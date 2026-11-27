@@ -118,13 +118,18 @@ nbct_field() {
 # The kernel resolves the TLS pre-shared key from a `psk` key whose
 # description is the PSK identity "NVMe0R01 <hostnqn> <subsysnqn>" and whose
 # payload is the raw 32-byte key.  The keyring is the one the nvme-keyring
-# module creates (".nvme"); it is linked into no session, so it cannot be
-# found by name -- its serial is read from /proc/keys instead.  keyctl reads
-# the payload from stdin, so the hex NBCT field is decoded on the fly.
+# module creates (".nvme"); it starts out linked into no session, so its
+# serial is read from /proc/keys instead of searching for it by name.  The
+# keyring is then linked into the session: newer kernels hand the handshake
+# upcall a PSK serial and tlshd can only read a key it possesses.  keyctl
+# reads the payload from stdin, so the hex NBCT field is decoded on the fly.
 KEYCTL="${KEYCTL:-$(command -v keyctl || echo /usr/bin/keyctl)}"
 # Kernel key listing path; overridable so host-side unit tests can supply a
 # synthetic listing instead of the real /proc/keys.
 KEYS_FILE="${KEYS_FILE:-/proc/keys}"
+# Host table used to pin TLS target addresses for tlshd's reverse lookup;
+# overridable for the same reason.
+HOSTS_FILE="${HOSTS_FILE:-/etc/hosts}"
 
 # Find the serial of the kernel ".nvme" keyring.  keyctl needs it in 0x form:
 # a bare number is parsed as decimal, so a hex serial containing letters would
@@ -168,6 +173,8 @@ inject_tls_psk() {
         warn "kernel .nvme keyring not found in /proc/keys"
         return 1
     }
+    "$KEYCTL" link "$kr" @s >/dev/null 2>&1 || \
+        warn "failed to link kernel .nvme keyring into the session"
     hex_to_raw "$hex" | "$KEYCTL" padd psk \
         "NVMe0R01 ${hostnqn} ${subnqn}" "$kr" >/dev/null 2>&1
 }
@@ -223,6 +230,15 @@ nbct_connect() {
         # itself, so DH-HMAC-CHAP is not requested alongside it.
         tls=0
         if [ -n "$tls_trsvcid" ]; then
+            # tlshd reverse-resolves the target address with
+            # getnameinfo(NI_NAMEREQD) before starting the handshake.  An
+            # initramfs has no NSS data or PTR records, so the lookup would
+            # fail and tlshd would abort the upcall (the kernel then reports
+            # a handshake timeout).  Pin the address locally instead.
+            if ! grep -qE "^[^#]*[[:space:]]${traddr}([[:space:]]|$)" \
+                    "$HOSTS_FILE" 2>/dev/null; then
+                printf "%s %s\n" "$traddr" "nvmeof-target" >> "$HOSTS_FILE"
+            fi
             if [ -z "$hostnqn" ]; then
                 warn "NBCT entry $i requests TLS but carries no hostnqn"
                 rc=1

@@ -171,17 +171,19 @@ build_entry "$WORK/e/NBCT" '192.0.2.20' '4420' 'nqn.2026-07.com.kurrent:disk0' \
 # Fake /proc/keys listing carrying the .nvme keyring (hex serial 1a2b3c4d).
 printf '1a2b3c4d I--Q---   1 perm 3f010000  1000 keyring  .nvme: 2\n' \
 	> "$WORK/e/keys"
-# Fake keyctl records its argv and captures the raw stdin payload.
+# Fake keyctl records its argv and captures the raw stdin payload of padd.
 cat > "$WORK/e/keyctl" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >> "$KEYCTL_LOG"
-cat > "$KEYCTL_STDIN"
+case "$1" in
+padd) cat > "$KEYCTL_STDIN" ;;
+esac
 EOF
 chmod +x "$WORK/e/keyctl"
 
-: > "$MOCK_LOG"; : > "$WORK/e/keyctl.log"
+: > "$MOCK_LOG"; : > "$WORK/e/keyctl.log"; : > "$WORK/e/hosts"
 MOCK_LOG="$MOCK_LOG" NVME="$WORK/mock-nvme" NBFT_SYSFS_PATH="$WORK/e" \
-	KEYCTL="$WORK/e/keyctl" KEYS_FILE="$WORK/e/keys" \
+	KEYCTL="$WORK/e/keyctl" KEYS_FILE="$WORK/e/keys" HOSTS_FILE="$WORK/e/hosts" \
 	KEYCTL_LOG="$WORK/e/keyctl.log" KEYCTL_STDIN="$WORK/e/stdin.bin" \
 	"$SHELL_UNDER_TEST" "$SCRIPT" --connect 2>"$WORK/stderr.log" || true
 
@@ -192,6 +194,14 @@ EOF
 
 check "TLS entry injects the PSK under the NVMe0R01 identity into .nvme" <<'EOF'
 grep -Fq "padd psk NVMe0R01 nqn.2026-07.com.kurrent:host.test nqn.2026-07.com.kurrent:disk0 0x1a2b3c4d" "$WORK/e/keyctl.log"
+EOF
+
+check "TLS entry links .nvme into the session so the PSK is possessed" <<'EOF'
+grep -Fq "link 0x1a2b3c4d @s" "$WORK/e/keyctl.log"
+EOF
+
+check "TLS entry pins the target address for tlshd's reverse lookup" <<'EOF'
+grep -Eq '^192\.0\.2\.20 nvmeof-target$' "$WORK/e/hosts"
 EOF
 
 check "injected PSK payload is the raw bytes decoded from the hex field" <<'EOF'
