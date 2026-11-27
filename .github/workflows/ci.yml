@@ -31,6 +31,9 @@ jobs:
       - name: Initramfs TLS wiring
         run: bash test/ci-gates.sh boot
 
+      - name: Packet-capture flow analysis
+        run: bash test/ci-gates.sh pcap
+
       - name: Patch replay and reference snapshot
         run: bash test/ci-gates.sh replay
 

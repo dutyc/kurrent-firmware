@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Repository gates shared by CI and local runs.
 #
-# Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|boot|replay|build>
+# Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|boot|pcap|replay|build>
 #
 #   syntax      bash -n / sh -n for every tracked shell script
 #   shellcheck  ShellCheck at error severity on the same set
 #   embed       every EMBED_B64_* payload matches its repository source
 #   boot        initramfs TLS wiring: config path shipped, kTLS ciphers added
+#   pcap        pcap flow aggregation tests (synthetic captures, no real pcap)
 #   replay      apply patches 0001.. in order to the pinned upstream commit
 #               and compare reference/ byte for byte
 #   build       full build/build.sh and verify dist/SHA256SUMS
@@ -78,6 +79,11 @@ gate_boot() {
     return "$rc"
 }
 
+gate_pcap() {
+    python3 test/shared/test_pcap_flows.py
+    echo "pcap flows: OK"
+}
+
 gate_replay() {
     local url commit src patch ref rel
     url=$(sed -n 's/^UPSTREAM_URL="\${UPSTREAM_URL:-\(.*\)}"$/\1/p' build/build.sh)
@@ -121,10 +127,11 @@ syntax) gate_syntax ;;
 shellcheck) gate_shellcheck ;;
 embed) gate_embed ;;
 boot) gate_boot ;;
+pcap) gate_pcap ;;
 replay) gate_replay ;;
 build) gate_build ;;
 *)
-    echo "usage: $0 <syntax|shellcheck|embed|boot|replay|build>" >&2
+    echo "usage: $0 <syntax|shellcheck|embed|boot|pcap|replay|build>" >&2
     exit 1
     ;;
 esac
