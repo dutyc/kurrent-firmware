@@ -53,7 +53,7 @@ Some server-grade NICs ship their own UEFI SNP boot ROM; these need no driver po
 
 ## Conditional (Known Issues)
 
-- **Realtek RTL8168, some versions**: native driver initialisation hangs (field-proven in this project; investigation terminated) — use the SNP fallback, see [8168-research-log.md](archive/8168-research-log.md)
+- **Realtek RTL8168, some versions**: native driver initialisation hangs (field-proven in this project; investigation terminated) — use the SNP fallback, see [8168-research-log.md](../archive/8168-research-log.md)
 - **SNP driver iSCSI hang** (field-proven in this project): affects **every NIC without a native driver that must use the UEFI NIC driver** — i.e. NICs booted via SNP (Unsupported and Via Protocol Layer sections) carry the same risk
 - **Intel I219 series**: special `INTEL_PBSIZE_RST` / `NO_PHY_RST` handling (historic bug fixes, low practical impact)
 - **Marvell/Aquantia AQC series**: Marvell-official lightweight driver (~1/6 of Linux atlantic); link negotiation relies on hardware auto-negotiation (no rate management); dynamic firmware load for AQC113 not implemented (fails with `-ENOTSUP` if NIC firmware is blank); no field-test record in this project

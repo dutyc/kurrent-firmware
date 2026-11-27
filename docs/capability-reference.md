@@ -303,13 +303,13 @@ iPXE                                        nvmet(TCP:4420)         control plan
 
 - SMBIOS type 17 memory settings: `mem-total` (aggregated over all slots), `mem-type`/`mem-speed` (first slot)
 - PCI `driver_name` population: `${net0/chip}` prints the device table name (e.g. `RTL8125`)
-- Purpose: the device-side data source for the main repository's dynamic variable chain and for node registration. For the full list see [device-info-reporting.md](device-info-reporting.md)
+- Purpose: the device-side data source for the main repository's dynamic variable chain and for node registration. For the full list see [device-info-reporting.md](reference/device-info-reporting.md)
 
 ### 5.2 NIC Adaptation (Patches 0001-0003)
 
 - RTL8125 (2.5GbE) and RTL8126 (5GbE, ICVerID detection + PHY configuration dispatch) driver customization
 - `snponly.efi`: when chainloading fails it falls back to taking over all SNP/NII/MNP devices, excluding the SNP handles installed by iPXE itself (patch 0003; this prevents local boot from creating NICs recursively and exhausting the heap)
-- For the support matrix see [network-support.md](network-support.md)
+- For the support matrix see [network-support.md](reference/network-support.md)
 
 ### 5.3 Build and Deployment
 
@@ -329,7 +329,7 @@ iPXE                                        nvmet(TCP:4420)         control plan
 | QEMU rounds | `bash test/run-qemu-auth.sh [round]` (outside the sandbox) | Full-chain log `diag/qemu-<round>.log` + packet capture |
 | pcap analysis | `python3 test/parse-pcap-auth.py` / `-stream.py` | Wire evidence chain: ATR, the four authentication messages, no 0x8018 throughout |
 
-For the complete procedure see [nvmeof-test-procedure.md](nvmeof-test-procedure.md). Log evidence chain:
+For the complete procedure see [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.md). Log evidence chain:
 
 ```text
 sending Connect (qid 0) → completion: cid 1 status 0x0
@@ -353,9 +353,9 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | Document | Purpose |
 |---|---|
 | [nvmeof-usage.md](nvmeof-usage.md) | Usage guide (server configuration, sanboot usage, QEMU verification) |
-| [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | Complete test procedure for the test/ scripts |
+| [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.md) | Complete test procedure for the test/ scripts |
 | [customizations.md](customizations.md) | Design and implementation of patch 0005 |
-| [device-trust-usage.md](device-trust-usage.md) | Usage of the device trust root capabilities (0006-0008, 0011: akgen/akpub/quote/nvclear, TPM attestation, TOFU, NVRAM settings) |
+| [device-trust-usage.md](guides/device-trust-usage.md) | Usage of the device trust root capabilities (0006-0008, 0011: akgen/akpub/quote/nvclear, TPM attestation, TOFU, NVRAM settings) |
 | [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | Full troubleshooting history of authentication (0x8018 root cause, wire evidence) |
 | [nvmeof-research.md](archive/nvmeof-research.md) | Protocol research and design |
 | [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | SAN boot verification record without authentication |

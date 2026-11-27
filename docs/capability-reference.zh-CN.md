@@ -303,13 +303,13 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 
 - SMBIOS type 17 内存设置：`mem-total`（全插槽聚合）、`mem-type`/`mem-speed`（首槽）
 - PCI `driver_name` 填充：`${net0/chip}` 输出设备表名（如 `RTL8125`）
-- 用途：主仓库动态变量链的设备侧数据源、节点注册信息。详细清单见 [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md)
+- 用途：主仓库动态变量链的设备侧数据源、节点注册信息。详细清单见 [device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md)
 
 ### 5.2 网卡适配（补丁 0001-0003）
 
 - RTL8125（2.5GbE）与 RTL8126（5GbE，ICVerID 检测 + PHY 配置分派）驱动定制
 - `snponly.efi`：链加载失败时回退接管全部 SNP/NII/MNP 设备，并排除 iPXE 自安装的 SNP 句柄（补丁 0003；避免本地引导时递归建网卡耗尽堆）
-- 支持矩阵见 [network-support.zh-CN.md](network-support.zh-CN.md)
+- 支持矩阵见 [network-support.zh-CN.md](reference/network-support.zh-CN.md)
 
 ### 5.3 构建与部署
 
@@ -329,7 +329,7 @@ iPXE                                     nvmet(TCP:4420)         控制面(:8000
 | QEMU 轮次 | `bash test/run-qemu-auth.sh [round]`（沙箱外） | 全链路日志 `diag/qemu-<round>.log` + 抓包 |
 | pcap 分析 | `python3 test/parse-pcap-auth.py` / `-stream.py` | wire 证据链：ATR、认证四消息、全程无 0x8018 |
 
-完整流程见 [nvmeof-test-procedure.md](nvmeof-test-procedure.zh-CN.md)。日志证据链：
+完整流程见 [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.zh-CN.md)。日志证据链：
 
 ```text
 sending Connect (qid 0) → completion: cid 1 status 0x0
@@ -353,9 +353,9 @@ I/O queue established → == GRUB BOOTED FROM NVME/TCP SAN DISK ==
 | 文档 | 定位 |
 |---|---|
 | [nvmeof-usage.md](nvmeof-usage.zh-CN.md) | 使用指南（服务端配置、sanboot 用法、QEMU 验证） |
-| [nvmeof-test-procedure.md](nvmeof-test-procedure.zh-CN.md) | test/ 脚本完整测试流程 |
+| [nvmeof-test-procedure.md](guides/nvmeof-test-procedure.zh-CN.md) | test/ 脚本完整测试流程 |
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现 |
-| [device-trust-usage.md](device-trust-usage.zh-CN.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
+| [device-trust-usage.md](guides/device-trust-usage.zh-CN.md) | 设备信任根能力使用说明（0006-0008、0011：akgen/akpub/quote/nvclear、TPM 证明、TOFU、NVRAM 设置） |
 | [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程（0x8018 根因、wire 证据） |
 | [nvmeof-research.md](archive/nvmeof-research.md) | 协议研究与设计 |
 | [nvmeof-san-boot-verification.md](archive/nvmeof-san-boot-verification.md) | 无认证 SAN 引导验证记录 |

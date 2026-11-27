@@ -4,7 +4,7 @@
 
 本仓库的母盘（golden image）资产按发行版组织：每个发行版一个自包含一键脚本，共享同一套
 A-F 六阶段定制流程（流程原理与手工步骤见
-[golden-image-customization-debian12.md](golden-image-customization-debian12.zh-CN.md)）；
+[golden-image-customization-debian12.md](guides/golden-image-customization-debian12.zh-CN.md)）；
 宿主侧辅助脚本与打包器统一在 `test/shared/`。
 
 所有 `golden-image-setup-*.sh` 均已内嵌 initramfs-nbft 三组件与 GRUB 2.14 产物

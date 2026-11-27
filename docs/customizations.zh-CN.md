@@ -85,7 +85,7 @@ RTL8126 5GbE：
   - `struct smbios_memory_device`（type 17 布局经 dmidecode 三个版本交叉验证：Memory Type `0x12`、Speed `0x15`、Extended Size `0x1C`）+ `SMBIOS_TYPE_MEMORY_DEVICE 17`
   - `${mem-total}`（uint32 MB，全插槽聚合：`0xFFFF` 跳过、`0x7FFF` 回退 Extended Size、bit15=GB）、`${mem-type}`（首槽，映射为 `DDR5` 等字符串）、`${mem-speed}`（首槽，MT/s）——按名分派的自定义 fetch，复用现有 SMBIOS 设置 scope
   - `pci_probe` 现从匹配的设备表项填充 `driver_name`，使 `${net0/chip}`（如 `RTL8125`）对所有 PCI 网卡生效
-- **用法**：设置项清单与上报 URL 模板见 [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md)。
+- **用法**：设置项清单与上报 URL 模板见 [device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md)。
 - **验证**：完整构建 10 产物全部通过；设置已编入（字符串验证）；真机行为待实测（空格 / 特殊字符的 URL 编码）。
 
 ### 5. NVMe-oF（NVMe over TCP）SAN 支持（`0005`）
@@ -168,7 +168,7 @@ RTL8126 5GbE：
   - `akgen`：创建或报告已存在的密钥；`akpub`：导出 `ak-public`（SubjectPublicKeyInfo DER）、`ak-name`（TPM2B_NAME：`000b` 后接公钥区的 SHA-256）、`ak-type`（`ecc_p256` / `rsa2048`）与 `sb`（EFI `SecureBoot` 变量，`1` / `0`）；`quote <nonce>`：一次 `TPM2_Quote` 覆盖 PCR 0/2/4/7、以 nonce 作 `qualifyingData`，导出 `quote`（原始 TPMS_ATTEST，无 TPM2B 长度前缀）与 `quote-sig`（ECDSA-SHA256 DER；RSA AK 则为 RSASSA-PKCS1-v1_5）
   - 六项设置（DHCP 标签 0x60-0x65）仅存于本次开机的内存设置根，不落 EFI 变量 NVS 后端
   - 无 TPM 时命令以 `-ENODEV` / `-ENOENT` 失败，不产生其它行为，引导脚本因此可走无 TPM 分支；没有软件回退
-- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](device-trust-usage.zh-CN.md)。
+- **验证**：QEMU/OVMF + swtpm（软件 TPM，非真机）。AK 经冷重启与重新生成的 OVMF 变量存储后仍然存在且 `ak-name` 一致；`test/verify-ak-quote.py` 独立解析 TPMS_ATTEST 并验签；控制面真实 `/devices/report` → `/devices/challenge` → `/boot-vars` 流程记录 `device.attest ok`。负向：固件变化（PCR 7 不同）得 `pcr_mismatch`，重放 nonce 得 `nonce_invalid`，无 TPM 固件报 `no_tpm` 且不崩溃。命令与设置契约见 [device-trust-usage.md](guides/device-trust-usage.zh-CN.md)。
 - **授权**：kurrent-firmware 自研实现，`FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )`；`EFI_TCG2_PROTOCOL` 常量为 UEFI 规范标准值。
 
 ### 12. Secure Boot 密钥注册（`0012`）

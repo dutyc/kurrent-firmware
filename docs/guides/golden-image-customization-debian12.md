@@ -2,15 +2,15 @@
 
 [English](golden-image-customization-debian12.md) | [中文](golden-image-customization-debian12.zh-CN.md)
 
-> Status: a measured operational checklist derived from full-chain validation of the production boot chain (2026-08-25, [production-boot-verification.md](archive/production-boot-verification.md)).
+> Status: a measured operational checklist derived from full-chain validation of the production boot chain (2026-08-25, [production-boot-verification.md](../archive/production-boot-verification.md)).
 >
 > Scope: a freshly installed Debian 12 golden image (virtual machine or physical machine image); once customized it can be cloned and distributed as a stateless boot golden image — the client carries no local medium, no identity information is fixed on the disk, and identity and credentials are injected from outside the boot chain.
 >
-> Related documents: [initramfs-nbft/README.md](../initramfs-nbft/README.md) (seed module components), [golden-image-matrix.md](golden-image-matrix.md) (per-distribution matrix and script locations), [production-boot-verification.md](archive/production-boot-verification.md) (full-chain verification record), [customizations.md](customizations.md) (firmware patch design).
+> Related documents: [initramfs-nbft/README.md](../../initramfs-nbft/README.md) (seed module components), [golden-image-matrix.md](../golden-image-matrix.md) (per-distribution matrix and script locations), [production-boot-verification.md](../archive/production-boot-verification.md) (full-chain verification record), [customizations.md](../customizations.md) (firmware patch design).
 >
 > **Supported baseline (decision of 2026-08-27)**: Debian 12 (+ backports 6.12) and later, Ubuntu 24.04 LTS and later, RHEL 9 and later (AlmaLinux 10 and later; 10.2 measured), SLES 15 and later, openSUSE Leap 16 and later, Fedora 44 and later, Arch rolling. **Distributions below the baseline are not adapted** (details in Section 10).
 >
-> **Automation (since 2026-09-02)**: the six stages A–F are wrapped in the one-shot script [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh); running `sudo bash test/debian12/golden-image-setup-debian12.sh` inside the golden image system performs the whole customization automatically (idempotent, re-runnable). The sections below retain the manual steps and the rationale as a reference for script behavior. Validation status: **measured end to end inside the target golden image VM in single-file self-contained form since 2026-09-08 (stages A–F including E, followed by SAN cold-boot acceptance to GDM)**; earlier trajectory: A–D+F through chroot (2026-09-02), local bootability through QEMU (2026-09-02, see 8.1).
+> **Automation (since 2026-09-02)**: the six stages A–F are wrapped in the one-shot script [test/debian12/golden-image-setup-debian12.sh](../../test/debian12/golden-image-setup-debian12.sh); running `sudo bash test/debian12/golden-image-setup-debian12.sh` inside the golden image system performs the whole customization automatically (idempotent, re-runnable). The sections below retain the manual steps and the rationale as a reference for script behavior. Validation status: **measured end to end inside the target golden image VM in single-file self-contained form since 2026-09-08 (stages A–F including E, followed by SAN cold-boot acceptance to GDM)**; earlier trajectory: A–D+F through chroot (2026-09-02), local bootability through QEMU (2026-09-02, see 8.1).
 
 ## 1. Customization Overview
 
@@ -256,7 +256,7 @@ On 2026-09-02 one round was performed on a VMware Debian 12 image customized thr
 
 ### 8.2 SAN Cold-boot Acceptance (the final round before delivery to the main project)
 
-After the golden image is written back to a disk, one QEMU + nvmet cold boot is performed (reproduction steps and criteria in [production-boot-verification.md](archive/production-boot-verification.md) §5):
+After the golden image is written back to a disk, one QEMU + nvmet cold boot is performed (reproduction steps and criteria in [production-boot-verification.md](../archive/production-boot-verification.md) §5):
 
 - Criterion 1: the serial console shows `qid 0: authenticated with hash hmac(sha256) dhgroup ffdhe4096` (once for the firmware segment and once for the kernel segment);
 - Criterion 2: `nvme0n1: p1 p2 p3` → rootfs mounted → `Welcome to Debian` → `debian login:`;
@@ -297,7 +297,7 @@ After the golden image is written back to a disk, one QEMU + nvmet cold boot is 
 | **SLES** 16 | 16.x | **6.16** | ✓ | ✓ same origin | **works out of the box** |
 | **openSUSE** Leap 16 | 16.x | 6.16 (updatable to 7.0) | ✓ | ✓ same origin as SLES | **works out of the box** |
 | **openSUSE** Tumbleweed | rolling | 7.x | ✓ | ✓ | **works out of the box** |
-| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf (dracut-network subpackage) + locally built 95nbft module | ✅ measured (2026-09-12 cold-boot acceptance, see the [distribution matrix](golden-image-matrix.md)) |
+| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf (dracut-network subpackage) + locally built 95nbft module | ✅ measured (2026-09-12 cold-boot acceptance, see the [distribution matrix](../golden-image-matrix.md)) |
 | **Arch** | rolling | 7.x | ✓ | nvme-cli 2.16 `nvmf-autoconnect` | partial |
 
 ### Ecosystem-Level Facts (as of 2026-08)
@@ -309,5 +309,5 @@ After the golden image is written back to a disk, one QEMU + nvmet cold boot is 
 ## 11. References
 
 - `diag/convert-gpt-4k.sh` (4K GPT conversion reference implementation), `diag/esp4k-prod.img` (4K FAT32 ESP reference artifact), `diag/grub-prod.cfg` (GRUB menu reference), `diag/initrd-612-hostid.img` (hostid-fixed initrd reference)
-- [production-boot-verification.md](archive/production-boot-verification.md) (full-chain verification evidence)
-- [initramfs-nbft/README.md](../initramfs-nbft/README.md) (seed component installation and testing)
+- [production-boot-verification.md](../archive/production-boot-verification.md) (full-chain verification evidence)
+- [initramfs-nbft/README.md](../../initramfs-nbft/README.md) (seed component installation and testing)

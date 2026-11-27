@@ -238,6 +238,6 @@ Wire sequence in `netdump-auth.pcap` (parser `test/parse-pcap-auth.py`): ICREQ/I
 |---|---|
 | [customizations.md](customizations.md) | Design and implementation of patch 0005 (result-oriented document) |
 | [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | Full authentication troubleshooting history: timeline of three bugs, 0x8018 decoding, verification evidence (process-oriented document) |
-| [network-support.md](network-support.md) | NIC support matrix and test records |
-| [build-artifacts.md](build-artifacts.md) | Build artifact list and selection guide |
+| [network-support.md](reference/network-support.md) | NIC support matrix and test records |
+| [build-artifacts.md](guides/build-artifacts.md) | Build artifact list and selection guide |
 | [patches/README.md](../patches/README.md) | Patch chain inventory, baseline, licensing and upgrade procedure |

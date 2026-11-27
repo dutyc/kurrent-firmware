@@ -1,24 +1,33 @@
 # Documentation
 
-Two groups of documents live here.
+The documents are grouped by purpose. Every document under the root,
+`guides/` and `reference/` exists in English and as a `.zh-CN.md` counterpart.
 
-## User guides (English and Chinese)
+## Core documents
 
-Each guide has an English base file and a `.zh-CN.md` counterpart.
+| Document | English | Chinese |
+|---|---|---|
+| Capability reference for Kurrent | [capability-reference.md](capability-reference.md) | [capability-reference.zh-CN.md](capability-reference.zh-CN.md) |
+| Firmware customizations | [customizations.md](customizations.md) | [customizations.zh-CN.md](customizations.zh-CN.md) |
+| Golden image matrix | [golden-image-matrix.md](golden-image-matrix.md) | [golden-image-matrix.zh-CN.md](golden-image-matrix.zh-CN.md) |
+| NVMe-oF usage | [nvmeof-usage.md](nvmeof-usage.md) | [nvmeof-usage.zh-CN.md](nvmeof-usage.zh-CN.md) |
+| Secure Boot profile | [secureboot.md](secureboot.md) | [secureboot.zh-CN.md](secureboot.zh-CN.md) |
+
+## Guides
 
 | Guide | English | Chinese |
 |---|---|---|
-| Build artifacts | [build-artifacts.md](build-artifacts.md) | [build-artifacts.zh-CN.md](build-artifacts.zh-CN.md) |
-| Capability reference for Kurrent | [capability-reference.md](capability-reference.md) | [capability-reference.zh-CN.md](capability-reference.zh-CN.md) |
-| Firmware customizations | [customizations.md](customizations.md) | [customizations.zh-CN.md](customizations.zh-CN.md) |
-| Device information reporting | [device-info-reporting.md](device-info-reporting.md) | [device-info-reporting.zh-CN.md](device-info-reporting.zh-CN.md) |
-| Device trust usage | [device-trust-usage.md](device-trust-usage.md) | [device-trust-usage.zh-CN.md](device-trust-usage.zh-CN.md) |
-| Golden image matrix | [golden-image-matrix.md](golden-image-matrix.md) | [golden-image-matrix.zh-CN.md](golden-image-matrix.zh-CN.md) |
-| Golden image customization (Debian 12) | [golden-image-customization-debian12.md](golden-image-customization-debian12.md) | [golden-image-customization-debian12.zh-CN.md](golden-image-customization-debian12.zh-CN.md) |
-| Network support | [network-support.md](network-support.md) | [network-support.zh-CN.md](network-support.zh-CN.md) |
-| NVMe-oF usage | [nvmeof-usage.md](nvmeof-usage.md) | [nvmeof-usage.zh-CN.md](nvmeof-usage.zh-CN.md) |
-| NVMe-oF test procedure | [nvmeof-test-procedure.md](nvmeof-test-procedure.md) | [nvmeof-test-procedure.zh-CN.md](nvmeof-test-procedure.zh-CN.md) |
-| Secure Boot profile | [secureboot.md](secureboot.md) | [secureboot.zh-CN.md](secureboot.zh-CN.md) |
+| Build artifacts | [guides/build-artifacts.md](guides/build-artifacts.md) | [guides/build-artifacts.zh-CN.md](guides/build-artifacts.zh-CN.md) |
+| Golden image customization (Debian 12) | [guides/golden-image-customization-debian12.md](guides/golden-image-customization-debian12.md) | [guides/golden-image-customization-debian12.zh-CN.md](guides/golden-image-customization-debian12.zh-CN.md) |
+| NVMe-oF test procedure | [guides/nvmeof-test-procedure.md](guides/nvmeof-test-procedure.md) | [guides/nvmeof-test-procedure.zh-CN.md](guides/nvmeof-test-procedure.zh-CN.md) |
+| Device trust usage | [guides/device-trust-usage.md](guides/device-trust-usage.md) | [guides/device-trust-usage.zh-CN.md](guides/device-trust-usage.zh-CN.md) |
+
+## Reference
+
+| Reference | English | Chinese |
+|---|---|---|
+| Device information reporting | [reference/device-info-reporting.md](reference/device-info-reporting.md) | [reference/device-info-reporting.zh-CN.md](reference/device-info-reporting.zh-CN.md) |
+| Network support | [reference/network-support.md](reference/network-support.md) | [reference/network-support.zh-CN.md](reference/network-support.zh-CN.md) |
 
 ## Archive
 

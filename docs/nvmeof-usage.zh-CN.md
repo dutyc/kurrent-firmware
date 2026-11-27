@@ -238,6 +238,6 @@ I/O queue established
 |---|---|
 | [customizations.zh-CN.md](customizations.zh-CN.md) | 补丁 0005 设计与实现（结果性文档） |
 | [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) | 认证排障全历程：三个 bug 时间线、0x8018 解码、验证证据（过程性文档） |
-| [network-support.zh-CN.md](network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
-| [build-artifacts.zh-CN.md](build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |
+| [network-support.zh-CN.md](reference/network-support.zh-CN.md) | 网卡支持矩阵与实测记录 |
+| [build-artifacts.zh-CN.md](guides/build-artifacts.zh-CN.md) | 构建产物列表与选用指南 |
 | [patches/README.zh-CN.md](../patches/README.zh-CN.md) | 补丁链清单、基线、授权与升级流程 |

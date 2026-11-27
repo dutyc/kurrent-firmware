@@ -145,7 +145,7 @@ DHHC-1 密钥（`DHHC-1:01:...`）在三个脚本中各自固定，**必须保�
 
 ## 8. 相关文档
 
-- [nbft-boot-verification.md](archive/nbft-boot-verification.md) — NBFT 整机引导六环链路验证（NBFT 消费 → rootfs 挂载 → 登录提示符）
-- [nvmeof-usage.zh-CN.md](nvmeof-usage.zh-CN.md) — 固件 NVMe-OF 端到端用法（部署、sanboot、验证方法）
-- [nvmeof-auth-debug-log.md](archive/nvmeof-auth-debug-log.md) — 认证排障历程（0x8018 根因、状态机修复、遗留项状态）
-- [customizations.zh-CN.md](customizations.zh-CN.md) — 定制清单（0005 补丁说明）
+- [nbft-boot-verification.md](../archive/nbft-boot-verification.md) — NBFT 整机引导六环链路验证（NBFT 消费 → rootfs 挂载 → 登录提示符）
+- [nvmeof-usage.zh-CN.md](../nvmeof-usage.zh-CN.md) — 固件 NVMe-OF 端到端用法（部署、sanboot、验证方法）
+- [nvmeof-auth-debug-log.md](../archive/nvmeof-auth-debug-log.md) — 认证排障历程（0x8018 根因、状态机修复、遗留项状态）
+- [customizations.zh-CN.md](../customizations.zh-CN.md) — 定制清单（0005 补丁说明）

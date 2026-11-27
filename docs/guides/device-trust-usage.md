@@ -5,8 +5,8 @@
 > Firmware-side capability notes for the Kurrent main repository: TPM 2.0 device
 > identity (AK and PCR quote), TOFU HTTPS trust, NVRAM-persisted settings and the
 > attestation interface contract. Corresponds to firmware patches
-> 0006/0007/0008/0011 (see [patches/README.md](../patches/README.md) and sections
-> ## 6/7/8/11 of [customizations.md](customizations.md)).
+> 0006/0007/0008/0011 (see [patches/README.md](../../patches/README.md) and sections
+> ## 6/7/8/11 of [customizations.md](../customizations.md)).
 
 ## 1. Capability Overview
 
@@ -116,7 +116,7 @@ nvclear: device NVRAM cleared
   on it.
 - The clearing effect **persists across reboots** (patch 0006 makes zero-length
   option blocks actually issue a write; see §6 of
-  [customizations.md](customizations.md)).
+  [customizations.md](../customizations.md)).
 - Only these two settings of this project are touched; no other UEFI variables are
   modified.
 - The equivalent manual form is `clear nvo/<setting>` per item—**the `nvo/` block
@@ -398,7 +398,7 @@ echo TRUSTROOT-BOOT-FAILED
 | Control plane reports `sb_disabled` | The device self-reported `sb=0`, and new devices require Secure Boot | Enable Secure Boot and re-enrol the device |
 | HTTPS fetch rejected (`TOFU-FETCH-FAIL` class of symptom) | The server certificate does not match the fingerprint pinned in NVRAM | Confirm the server certificate has not been rotated; if rotation is required, reset the NVRAM fingerprint |
 | Access to a second HTTPS host rejected | Pinning is a single global anchor: the firmware only trusts the certificate pinned by the first https connection | Unify the HTTPS ingress/certificate and send other traffic over TFTP/HTTP (see §4) |
-| TLS handshake fails | Server TLS > 1.2, or the cipher suite is unsupported | Restrict the server to `TLS ≤ 1.2` (see the cipher suite list in [test/https-server.py](../test/https-server.py)) |
+| TLS handshake fails | Server TLS > 1.2, or the cipher suite is unsupported | Restrict the server to `TLS ≤ 1.2` (see the cipher suite list in [test/https-server.py](../../test/https-server.py)) |
 | Fingerprint still present after `clear server-fingerprint` | A bare `clear`/`set` has no effect on NVS encapsulated tags | Use `clear nvo/server-fingerprint` (block prefix, see §6.4) or `nvclear` (§2.4) |
 | `nvclear` reports `not present` | The item was already empty | Normal, no action needed |
 | `nvclear` reports `could not clear` / last line `incomplete` | Backend write failure (EFI `SetVariable` error) | Capture the serial log for the specific errno; check NVRAM space and read-only policy |

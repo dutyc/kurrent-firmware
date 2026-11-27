@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Device information collection = four categories of settings: identity (SMBIOS type 1/2/3), CPU (CPUID), memory (SMBIOS type 17), and network adapter (netdev settings), reported via HTTP GET query string. Official capabilities are prioritized: identity, CPU, and network adapter fields (except chip name) are already available officially; memory parameters and the network adapter chip name are the only gaps, filled by patch `0004` (see [customizations.zh-CN.md](customizations.zh-CN.md)).
+Device information collection = four categories of settings: identity (SMBIOS type 1/2/3), CPU (CPUID), memory (SMBIOS type 17), and network adapter (netdev settings), reported via HTTP GET query string. Official capabilities are prioritized: identity, CPU, and network adapter fields (except chip name) are already available officially; memory parameters and the network adapter chip name are the only gaps, filled by patch `0004` (see [customizations.zh-CN.md](../customizations.zh-CN.md)).
 
 ## Settings List
 

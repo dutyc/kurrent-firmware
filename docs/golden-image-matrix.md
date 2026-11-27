@@ -5,7 +5,7 @@
 The golden image assets in this repository are organized by distribution: each distribution has one
 self-contained one-shot script, and all of them share the same six-stage A-F customization flow
 (rationale and manual steps in
-[golden-image-customization-debian12.md](golden-image-customization-debian12.md));
+[golden-image-customization-debian12.md](guides/golden-image-customization-debian12.md));
 host-side helper scripts and the packer are collected under `test/shared/`.
 
 Every `golden-image-setup-*.sh` embeds the three initramfs-nbft components and the GRUB 2.14 artifact

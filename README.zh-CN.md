@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-GPL--2.0-green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware)
 [![Version](https://img.shields.io/github/v/tag/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware/releases)
-[![Platform](https://img.shields.io/badge/Platform-x86_64%20UEFI-0f766e)](docs/network-support.zh-CN.md)
+[![Platform](https://img.shields.io/badge/Platform-x86_64%20UEFI-0f766e)](docs/reference/network-support.zh-CN.md)
 [![Upstream](https://img.shields.io/badge/Upstream-iPXE%20e6e51ccb-111111)](patches/README.zh-CN.md)
 [![Patches](https://img.shields.io/badge/Patches-10-7c3aed)](docs/customizations.zh-CN.md)
 
@@ -29,7 +29,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 - **DH-HMAC-CHAP 认证**——单向往认证（SHA-256/384/512、DH 组至 ffdhe4096），DHHC-1 密钥格式带 CRC32 校验；按 MAC 下发 `hostnqn`，target 可启用严格模式（`allow_any_host=0`）。
 - **凭据接力（NBCT）**——固件按会话写入密钥与 host NQN；initramfs 种子模块（[initramfs-nbft/](initramfs-nbft/)）读表并以 `nvme connect --dhchap-secret` 重连，内核侧无需二次获取凭据。
 - **母盘定制矩阵**——Debian 12/13、Ubuntu 24.04/26.04、Fedora 44、AlmaLinux 10.2 与 openSUSE Leap 16.0 的 SAN 母盘均完成冷启动验收：[发行版矩阵](docs/golden-image-matrix.md)。
-- **网卡与固件定制**——RTL8125/RTL8126 原生驱动、SNP 本地引导兜底、设备身份密钥与 TOFU 指纹链路；十个 L1 补丁，另有一个可选的 Secure Boot 叠加补丁：[定制详解](docs/customizations.zh-CN.md)、[网卡支持矩阵](docs/network-support.zh-CN.md)。
+- **网卡与固件定制**——RTL8125/RTL8126 原生驱动、SNP 本地引导兜底、设备身份密钥与 TOFU 指纹链路；十个 L1 补丁，另有一个可选的 Secure Boot 叠加补丁：[定制详解](docs/customizations.zh-CN.md)、[网卡支持矩阵](docs/reference/network-support.zh-CN.md)。
 - **可选 Secure Boot 配置**——独立于默认 L1 固件构建的签名形态：内置引导脚本与固定引导 CA：[Secure Boot 配置](docs/secureboot.md)。
 
 ## 快速开始
@@ -45,7 +45,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 完整文档见 [`docs/`](./docs/) 目录，常用入口：
 
 - [NVMe-OF 使用指南](docs/nvmeof-usage.md)——target 配置（含 DH-HMAC-CHAP）、`sanboot` 用法与 QEMU 验证
-- [构建产物](docs/build-artifacts.zh-CN.md)——产物清单、形态选择与校验
+- [构建产物](docs/guides/build-artifacts.zh-CN.md)——产物清单、形态选择与校验
 - [母盘定制发行版矩阵](docs/golden-image-matrix.md)——各发行版定制脚本、差异对照与验收状态
 - [能力实现参考（Kurrent 集成用）](docs/capability-reference.md)——固件能力与接口契约、凭据注入链路
 - [补丁集说明](patches/README.zh-CN.md)——授权边界与上游升级流程

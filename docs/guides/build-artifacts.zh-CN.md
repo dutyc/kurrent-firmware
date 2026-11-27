@@ -20,7 +20,7 @@
 
 ## Secure Boot 配置
 
-`build-sb.sh` 在 `dist/secureboot/` 下单独产出一组签名产物（`snponly-sb.efi`、`manifest.json`、`SHA256SUMS`），不替换也不修改上述 7 种产物。详见 [secureboot.md](secureboot.zh-CN.md)。
+`build-sb.sh` 在 `dist/secureboot/` 下单独产出一组签名产物（`snponly-sb.efi`、`manifest.json`、`SHA256SUMS`），不替换也不修改上述 7 种产物。详见 [secureboot.md](../secureboot.zh-CN.md)。
 
 ## 母盘辅助资产
 

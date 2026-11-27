@@ -2,7 +2,7 @@
 
 > 状态：**通过**（2026-11-27）。从安装介质真实安装、在盘内执行 A–F 定制，并经 QEMU + OVMF 从 iPXE 冷启动到 `login:`；目标端出现固件段与内核段两条 `..., TLS.` 控制器记录。本轮不使用 trixie 软件源。
 >
-> 关联文档：[golden-image-matrix.md](../golden-image-matrix.md)（发行版矩阵与验收判据）、[golden-image-customization-debian12.md](../golden-image-customization-debian12.md)（A–F 手工步骤）、[real-reinstall-tls-coldboot-verification.md](real-reinstall-tls-coldboot-verification.md)（上一轮 Debian 13 / Ubuntu 26.04 记录与靶场说明）。
+> 关联文档：[golden-image-matrix.md](../golden-image-matrix.md)（发行版矩阵与验收判据）、[golden-image-customization-debian12.md](../guides/golden-image-customization-debian12.md)（A–F 手工步骤）、[real-reinstall-tls-coldboot-verification.md](real-reinstall-tls-coldboot-verification.md)（上一轮 Debian 13 / Ubuntu 26.04 记录与靶场说明）。
 
 ## 代价与适用边界
 

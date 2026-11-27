@@ -2,15 +2,15 @@
 
 [English](golden-image-customization-debian12.md) | [中文](golden-image-customization-debian12.zh-CN.md)
 
-> 状态：基于生产引导链全链路验证（2026-08-25，[production-boot-verification.md](archive/production-boot-verification.md)）的实测操作清单。
+> 状态：基于生产引导链全链路验证（2026-08-25，[production-boot-verification.md](../archive/production-boot-verification.md)）的实测操作清单。
 >
 > 适用范围：刚刚新装完成 Debian 12 的母盘（虚拟机或物理机镜像），定制后可作为无状态引导母盘克隆分发——客户端零本地介质、盘内不固定任何身份信息，身份与凭据由引导链外部注入。
 >
-> 关联文档：[initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子模块组件说明）、[golden-image-matrix.md](golden-image-matrix.zh-CN.md)（各发行版矩阵与脚本位置）、[production-boot-verification.md](archive/production-boot-verification.md)（全链路验证记录）、[customizations.md](customizations.md)（固件补丁设计）。
+> 关联文档：[initramfs-nbft/README.md](../../initramfs-nbft/README.md)（种子模块组件说明）、[golden-image-matrix.md](../golden-image-matrix.zh-CN.md)（各发行版矩阵与脚本位置）、[production-boot-verification.md](../archive/production-boot-verification.md)（全链路验证记录）、[customizations.md](../customizations.md)（固件补丁设计）。
 >
 > **支持基线（2026-08-27 裁定）**：Debian 12（+backports 6.12）及以上、Ubuntu 24.04 LTS 及以上、RHEL 9 及以上（AlmaLinux 10 及以上；10.2 已实测）、SLES 15 及以上、openSUSE Leap 16 及以上、Fedora 44 及以上、Arch rolling。**低于基线的发行版不做适配**（明细见第 10 节）。
 >
-> **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/debian12/golden-image-setup-debian12.sh](../test/debian12/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/debian12/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：**2026-09-08 起以单文件自包含形态在目标母盘 VM 内端到端实测通过（A–F 全程含 E，随后 SAN 冷启动验收至 GDM）**；早期轨迹：A–D+F 经 chroot（2026-09-02）、本地可引导性经 QEMU（2026-09-02，见 8.1）。
+> **自动化（2026-09-02 起）**：A–F 六阶段已封装为一键脚本 [test/debian12/golden-image-setup-debian12.sh](../../test/debian12/golden-image-setup-debian12.sh)，在母盘系统内 `sudo bash test/debian12/golden-image-setup-debian12.sh` 即可全自动定制（幂等，可重跑）；下方各节保留手工步骤与原理说明，作为脚本行为的参照。验证状态：**2026-09-08 起以单文件自包含形态在目标母盘 VM 内端到端实测通过（A–F 全程含 E，随后 SAN 冷启动验收至 GDM）**；早期轨迹：A–D+F 经 chroot（2026-09-02）、本地可引导性经 QEMU（2026-09-02，见 8.1）。
 
 ## 1. 定制总览
 
@@ -254,7 +254,7 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 
 ### 8.2 SAN 冷启动验收（交付主项目前的最后一轮）
 
-母盘写回磁盘后，QEMU + nvmet 冷启动一轮（复现步骤与判据见 [production-boot-verification.md](archive/production-boot-verification.md) §5）：
+母盘写回磁盘后，QEMU + nvmet 冷启动一轮（复现步骤与判据见 [production-boot-verification.md](../archive/production-boot-verification.md) §5）：
 
 - 判据 1：串口出现 `qid 0: authenticated with hash hmac(sha256) dhgroup ffdhe4096`（固件段 + 内核段各一次）；
 - 判据 2：`nvme0n1: p1 p2 p3` → rootfs 挂载 → `Welcome to Debian` → `debian login:`；
@@ -295,7 +295,7 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 | **SLES** 16 | 16.x | **6.16** | ✓ | ✓ 同源 | **开箱即用** |
 | **openSUSE** Leap 16 | 16.x | 6.16（可更新至 7.0） | ✓ | ✓ 与 SLES 同源 | **开箱即用** |
 | **openSUSE** Tumbleweed | rolling | 7.x | ✓ | ✓ | **开箱即用** |
-| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf（dracut-network 子包）+ 自建 95nbft 模块 | ✅ 已实测（2026-09-12 冷启动验收，见 [发行版矩阵](golden-image-matrix.zh-CN.md)） |
+| **Fedora** | 44+ | **7.0.9** | ✓ | dracut 74nvmf（dracut-network 子包）+ 自建 95nbft 模块 | ✅ 已实测（2026-09-12 冷启动验收，见 [发行版矩阵](../golden-image-matrix.zh-CN.md)） |
 | **Arch** | rolling | 7.x | ✓ | nvme-cli 2.16 `nvmf-autoconnect` | 部分 |
 
 ### 生态层事实（2026-08 时点）
@@ -307,5 +307,5 @@ grep -n "HOSTNAME\|hostname" /etc/hostname /etc/hosts   # 仅占位值
 ## 11. 参考资料
 
 - `diag/convert-gpt-4k.sh`（4K GPT 转换参考实现）、`diag/esp4k-prod.img`（4K FAT32 ESP 参考产物）、`diag/grub-prod.cfg`（GRUB 菜单参考）、`diag/initrd-612-hostid.img`（hostid 修复 initrd 参考）
-- [production-boot-verification.md](archive/production-boot-verification.md)（全链路验证证据）
-- [initramfs-nbft/README.md](../initramfs-nbft/README.md)（种子组件安装与测试）
+- [production-boot-verification.md](../archive/production-boot-verification.md)（全链路验证证据）
+- [initramfs-nbft/README.md](../../initramfs-nbft/README.md)（种子组件安装与测试）
