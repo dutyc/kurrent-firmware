@@ -55,10 +55,21 @@ build() {
     add_binary /usr/bin/modprobe
     add_binary /usr/bin/udevadm
 
-    # Golden images are hardware-independent: ship every network driver,
-    # equivalent to the net hook's add_checked_modules. The production NIC is
-    # unknown, so autodetect on the installation VM would be wrong.
-    add_checked_modules '/drivers/net/'
+    # Wired NICs only: the production adapter is unknown, so ship the common
+    # server and client wired drivers instead of auto-detecting on the
+    # installation VM. Wireless, USB, WWAN and CAN adapters are not boot
+    # paths and are excluded.
+    local _nic
+    for _nic in virtio_net vmxnet3 hv_netvsc \
+        e1000 e1000e igb igc ixgbe ixgbevf i40e iavf ice \
+        r8169 tg3 bnx2 bnx2x bnxt_en \
+        mlx4_core mlx5_core \
+        qede qlcnic netxen_nic cxgb4 sfc nfp liquidio atlantic sky2 skge \
+        alx atl1c atl1e be2net \
+        ena gve mana hns3 amd_xgbe \
+        8139too via_rhine sis900; do
+        modinfo -n "$_nic" >/dev/null 2>&1 && add_module "$_nic"
+    done
 
     add_file /usr/local/sbin/nbft-connect /usr/local/sbin/nbft-connect
     # tlshd exits at once when its configuration is missing. ktls-utils 1.5.0
