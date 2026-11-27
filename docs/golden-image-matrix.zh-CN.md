@@ -47,11 +47,11 @@ test/
 
 | 发行版 | 版本 | 安装介质 | 无人值守 | 定制脚本 | 软件源 | 内核 | 验收状态 |
 |---|---|---|---|---|---|---|---|
-| Debian 12 | bookworm | netinst ISO | preseed（d-i） | `test/debian12/` | 阿里云（bookworm + backports） | 6.12.95+deb12-amd64（backports） | ✅ 2026-09-08 PXE 认证冷启动 → GDM |
+| Debian 12 | bookworm | netinst ISO | preseed（d-i） | `test/debian12/` | 阿里云（bookworm + backports） | 6.12.95+deb12-amd64（backports） | ✅ 2026-11-27 重装 + PXE TLS 冷启动 → login |
 | Debian 13 | 13.6.0 | netinst ISO | preseed（d-i） | `test/debian13/` | 阿里云（trixie，免 backports） | 6.12.94+deb13（自带） | ✅ 2026-09-10 PXE 认证冷启动 → login |
-| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2404/` | noble（deb822 ubuntu.sources） | 6.8 系（GA） | ✅ 2026-09-10 PXE 认证冷启动 → login |
+| Ubuntu 24.04 | 24.04.4 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2404/` | noble（deb822 ubuntu.sources） | 6.8 系（GA） | ✅ 2026-11-27 重装 + PXE TLS 冷启动 → login |
 | Ubuntu 26.04 | 26.04.1 LTS | live-server ISO | autoinstall（subiquity） | `test/ubuntu2604/` | suite 运行时检测（deb822） | 7.0.0-31-generic | ✅ 2026-09-11 PXE 认证冷启动 → login |
-| Fedora 44 | 44（Server DVD 1.7） | DVD ISO | kickstart（Anaconda） | `test/fedora44/` | dnf：阿里云（fedora + updates） | 6.19.10-300.fc44（自带） | ✅ 2026-09-12 PXE 认证冷启动 → login |
+| Fedora 44 | 44（Server DVD 1.7） | DVD ISO | kickstart（Anaconda） | `test/fedora44/` | dnf：阿里云（fedora + updates） | 6.19.10-300.fc44（自带） | ✅ 2026-11-27 重装 + PXE TLS 冷启动 → login |
 | AlmaLinux 10.2 | 10.2（minimal ISO） | minimal ISO | kickstart（Anaconda，HTTP） | `test/almalinux10/` | dnf：华为云（BaseOS/AppStream/CRB/Extras） | 6.12.0-211.7.3.el10_2（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login（两轮） |
 | openSUSE Leap 16.0 | 16.0（online installer） | online ISO（Agama） | Agama profile（`inst.auto=`） | `test/opensuse-leap16/` | zypper：TUNA OSS | 6.12.0-160000（自带，`CONFIG_NVME_TCP_TLS=y`） | ✅ 2026-10-31 PXE TLS 冷启动 → login |
 
