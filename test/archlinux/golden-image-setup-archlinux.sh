@@ -257,7 +257,9 @@ verify_kernel_tls() {
     if [ -n "$conf" ]; then
         for sym in CONFIG_NVME_TCP_TLS CONFIG_NVME_AUTH CONFIG_NVME_KEYRING CONFIG_TLS CONFIG_NET_HANDSHAKE CONFIG_KEYS; do
             if [ "$conf" = /proc/config.gz ]; then
-                zcat "$conf" | grep -qE "^${sym}=[ym]$" || {
+                # grep -q would exit early and zcat would take SIGPIPE under
+                # pipefail; consume the whole stream instead.
+                zcat "$conf" | grep -E "^${sym}=[ym]$" >/dev/null || {
                     echo "ERROR: $conf lacks $sym (kernel-stage NVMe/TCP TLS unavailable)"; exit 1
                 }
             else
