@@ -99,10 +99,10 @@ phase_a() {
     apt-get update
     apt-get install -y nvme-cli jq initramfs-tools grub-efi-amd64-bin dosfstools
     # 内核段 NVMe/TCP TLS（段 1.3c）：keyctl（keyutils）注入 .nvme PSK；tlshd（ktls-utils）
-    # 承担内核 TLS 握手 upcall。分两条装：个别发行版仓库无 ktls-utils 时不影响 keyutils，
-    # 也不阻断母盘构建（该发行版内核段 TLS 自动降级明文，hook 侧只告警）。
-    apt-get install -y keyutils || echo "    note: keyutils missing, TLS-PSK injection unavailable"
-    apt-get install -y ktls-utils || echo "    note: ktls-utils missing, kernel-stage TLS unavailable (plaintext)"
+    # 承担内核 TLS 握手 upcall。两者是 TLS-only 引导路径的硬依赖，缺失即中止构建。
+    apt-get install -y keyutils ktls-utils
+    [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils/tlshd not installed; kernel-stage TLS unavailable"; exit 1; }
+    command -v keyctl >/dev/null || { echo "ERROR: keyutils/keyctl not installed; TLS-PSK injection unavailable"; exit 1; }
     # 内核 NVME_AUTH 校验（Ubuntu 24.04 noble 自带 6.8+，无需换内核）
     CONF="/boot/config-${KVER}"
     [ -f "$CONF" ] || { echo "ERROR: $CONF 不存在"; exit 1; }
@@ -155,7 +155,18 @@ phase_b() {
     # 因此用 grep -c 消费完整输出后再判断
     nbft_count=$(lsinitramfs "/boot/initrd.img-$KVER" 2>/dev/null | grep -c 'nbft' || true)
     [ "$nbft_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 nbft 组件"; exit 1; }
-    echo "    initrd.img-$KVER already carries the nbft components ($nbft_count items)"
+    local initrd_list tls_count m m_count
+    initrd_list=$(lsinitramfs "/boot/initrd.img-$KVER" 2>/dev/null || true)
+    tls_count=$(printf '%s\n' "$initrd_list" | grep -c 'tlshd' || true)
+    [ "$tls_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 tlshd（内核段 TLS 必需）"; exit 1; }
+    for m in tls gcm ccm chacha20poly1305 ghash-generic aesni-intel ghash-clmulni-intel; do
+        m_count=$(printf '%s\n' "$initrd_list" | grep -cE "/$m\.ko(\.zst)?$" || true)
+        if [ "$m_count" -eq 0 ] && grep -qE "/($m|${m//-/_})\.ko$" "/lib/modules/$KVER/modules.builtin" 2>/dev/null; then
+            continue
+        fi
+        [ "$m_count" -gt 0 ] || { echo "ERROR: initrd 中未找到 kTLS 模块 $m（内核段加密密钥安装会失败）"; exit 1; }
+    done
+    echo "    initrd.img-$KVER already carries the nbft components ($nbft_count items), tlshd ($tls_count items) and kTLS modules"
 }
 
 
