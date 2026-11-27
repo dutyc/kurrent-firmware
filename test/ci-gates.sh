@@ -4,7 +4,7 @@
 # Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|boot|pcap|replay|build>
 #
 #   syntax      bash -n / sh -n for every tracked shell script
-#   shellcheck  ShellCheck at error severity on the same set
+#   `shellcheck`  ShellCheck at error severity on the same set
 #   embed       every EMBED_B64_* payload matches its repository source
 #   boot        initramfs TLS wiring: config path shipped, kTLS ciphers added
 #   pcap        pcap flow aggregation tests (synthetic captures, no real pcap)
