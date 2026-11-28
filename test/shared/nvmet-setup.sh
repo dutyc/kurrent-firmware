@@ -1,8 +1,8 @@
 #!/bin/bash
 # NVMe-oF target setup for QEMU validation of the iPXE nvmetcp driver.
 # Idempotent: safe to re-run.
-# Usage: sudo bash test/nvmet-setup.sh
-#        sudo AUTH=1 bash test/nvmet-setup.sh   # enable DH-HMAC-CHAP auth
+# Usage: sudo bash test/shared/nvmet-setup.sh
+#        sudo AUTH=1 bash test/shared/nvmet-setup.sh   # enable DH-HMAC-CHAP auth
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -33,7 +33,7 @@ HOSTNQN="nqn.2014-08.org.ipxe:ipxe"
 # "Failed to setup authentication, dhchap status 2".
 # Regenerate with: python3 -c 'import zlib,base64; k=b"0123456789abcdef0123456789abcdef"; print("DHHC-1:01:"+base64.b64encode(k+zlib.crc32(k).to_bytes(4,"little")).decode())'
 # The same string is delivered to iPXE via the HTTP credential endpoint
-# (test/cred-server.py) as the sanboot ?secret= parameter.
+# (test/manual/auth/cred-server.py) as the sanboot ?secret= parameter.
 DHHCP_KEY="DHHC-1:01:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYOtVl3"
 
 # Self-check the key before writing it to configfs (set -e aborts on failure).
@@ -57,8 +57,7 @@ modprobe nvmet_tcp
 
 echo "==> Backing file"
 # Create the backing file only if missing; the disk image itself is built
-# by test/make-grub-bootdisk.sh (512M validation disk) or
-# test/make-debian-san-disk.sh (2G SAN boot disk).  truncate -s would
+# by test/manual/nbft/make-debian-san-disk.sh (2G SAN boot disk).  truncate -s would
 # otherwise truncate an existing larger image.
 if [ ! -e "$IMG" ]; then
         truncate -s 2G "$IMG"

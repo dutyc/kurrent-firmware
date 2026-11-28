@@ -12,7 +12,7 @@ script, making the secret available to the subsequent sanboot command.
 NOTE: this is a test-only endpoint.  In the real architecture this
 endpoint sits behind strict authentication (TLS/mTLS, client identity).
 
-Usage: python3 test/cred-server.py [port]   (default port 8000)
+Usage: python3 test/manual/auth/cred-server.py [port]   (default port 8000)
 """
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer

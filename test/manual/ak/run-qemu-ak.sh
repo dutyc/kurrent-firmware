@@ -6,7 +6,7 @@
 # The two rounds MUST share diag/ak/swtpm and diag/OVMF_VARS-ak.fd.
 # Round 1 deletes both first, so it must always run before round 2.
 #
-# Usage: bash test/run-qemu-ak.sh <1|2> [--no-tpm]
+# Usage: bash test/manual/ak/run-qemu-ak.sh <1|2> [--no-tpm]
 #
 #   --no-tpm       run without a TPM device: akgen/akpub/quote must fail
 #                  without crashing and the script must still finish.
@@ -16,9 +16,9 @@
 #   --log PATH     serial log path (default diag/ak/round<round>[-notpm].log)
 #
 # Prerequisites:
-#   build the firmware with test/ak-test.ipxe embedded and deploy it:
+#   build the firmware with test/manual/ak/ak-test.ipxe embedded and deploy it:
 #     make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
-#       EMBED=test/ak-test.ipxe
+#       EMBED=test/manual/ak/ak-test.ipxe
 #     cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi \
 #        diag/tmp/EFI/BOOT/BOOTX64.EFI
 #
@@ -29,7 +29,7 @@
 # Run outside the sandbox (requires /dev/kvm).
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG
