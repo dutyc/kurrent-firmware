@@ -6,7 +6,8 @@
 #   layout      test/ holds tests and fixtures only; golden/ holds provisioning
 #   syntax      bash -n / sh -n for every tracked shell script
 #   `shellcheck`  ShellCheck at error severity on the same set
-#   embed       every EMBED_B64_* payload matches its repository source
+#   embed       tracked templates carry no payloads; with a GRUB EFI available,
+#               generate the scripts and verify them against their sources
 #   boot        initramfs TLS wiring: config path shipped, kTLS ciphers added
 #   pcap        pcap flow aggregation tests (synthetic captures, no real pcap)
 #   replay      apply patches 0001.. in order to the pinned upstream commit
@@ -91,7 +92,31 @@ gate_shellcheck() {
 }
 
 gate_embed() {
-    python3 test/shared/verify-embed.py
+    local rc=0
+    # Tracked scripts are templates: payloads are generated into dist/golden.
+    if git grep -I -q -E "^EMBED_B64_[A-Z0-9_]+='[^']+'" -- '*.sh'; then
+        echo "ERROR: tracked scripts still embed base64 payloads:" >&2
+        git grep -I -l -E "^EMBED_B64_[A-Z0-9_]+='[^']+'" -- '*.sh' >&2
+        rc=1
+    fi
+    local efi=${GOLDEN_EFI:-dist/grub/BOOTX64-2.14-generic.EFI}
+    if [ -n "${GOLDEN_EFI:-}" ] && [ ! -f "$efi" ]; then
+        echo "ERROR: GOLDEN_EFI does not exist: $efi" >&2
+        rc=1
+    elif [ -f "$efi" ]; then
+        local tmp
+        tmp=$(mktemp -d "${TMPDIR:-/tmp}/golden-embed.XXXXXX")
+        if python3 golden/shared/embed-components.py --out "$tmp" --efi "$efi" &&
+            python3 test/shared/verify-embed.py --dir "$tmp" --efi "$efi"; then
+            echo "embed: generated scripts match their sources"
+        else
+            rc=1
+        fi
+        rm -rf "$tmp"
+    else
+        echo "embed: tracked templates carry no payloads (GRUB EFI absent; generation skipped)"
+    fi
+    return "$rc"
 }
 
 gate_boot() {

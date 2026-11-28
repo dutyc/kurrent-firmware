@@ -1,0 +1,20 @@
+# Pinned inputs for golden/shared/build-grub-efi.sh.
+#
+# The image is built from the Ubuntu 26.04 grub-efi-amd64-bin package below;
+# its embedded version string is 2.14-2ubuntu1. The host grub-mkimage used by
+# --rebuild comes from grub2-common and must match 2.14-2ubuntu2.x.
+
+GRUB_VERSION="2.14"
+GRUB_DEB_NAME="grub-efi-amd64-bin_2.14-2ubuntu1_amd64.deb"
+GRUB_DEB_URL="https://archive.ubuntu.com/ubuntu/pool/main/g/grub2-unsigned/grub-efi-amd64-bin_2.14-2ubuntu1_amd64.deb"
+GRUB_DEB_SHA256="9dbe44fb101e428c674b299011d1f20248222ce781e7f9bd2d0336a3b39520b1"
+GRUB_MKIMAGE_VERSION_PREFIX="2.14-2ubuntu2."
+
+GRUB_MODULES="normal search search_fs_uuid part_gpt part_msdos ext2 fat linux xzio gzio serial terminal echo ls configfile test"
+
+GRUB_EFI_NAME="BOOTX64-2.14-generic.EFI"
+GRUB_EFI_SHA256="d912bcd33be528f5520dbc0121a8197ebad9065c8329ee4afc710a8c2986b691"
+GRUB_EFI_SIZE="778240"
+
+GRUB_RELEASE_TAG="grub-efi-2.14"
+GRUB_RELEASE_ASSET="BOOTX64-2.14-generic.EFI"
