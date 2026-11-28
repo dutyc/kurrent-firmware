@@ -20,11 +20,8 @@
 | openSUSE Leap 16.0 | 16.0 | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
 | Arch Linux | rolling（2026.11.01 ISO） | 7.3.6-arch1-1 | ✅ TLS 冷启动 |
 
-验收运行使用各发行版原生的无人值守安装方式，但仓库不把安装输入作为交付物。仅保留
-三份验收夹具：`golden/almalinux10/almalinux10.ks.in`、
-`golden/archlinux/archinstall.json.in` 与
-`golden/opensuse-leap16/leap16-profile.json`。安装按使用者自己的流程完成，A–F 从
-已安装系统开始。
+验收运行使用各发行版原生的无人值守安装方式；安装输入与本地 VM 工具不随仓库提供。
+安装按使用者自己的流程完成，A–F 从已安装系统开始。
 
 Debian 12 需要源码构建的 NVMe 用户态（`ktls-utils` / `libnvme` / `nvme-cli`），
 因为 bookworm 没有打包 TLS 能力工具链；代价记录在
@@ -61,8 +58,7 @@ initramfs 使用 mkinitcpio 钩子（`install/nbft`、`hooks/nbft`），移除 `
 1. 从最接近的现有变体派生脚本，逐项核对参数（安装器内核/initrd 文件名、
    使用无人值守安装器时的引导参数、包管理源格式）；目标盘用 4K 逻辑块。
 2. 用自有流程安装并关机。
-3. 用 `golden/shared/golden-vm-run.sh`（或 `golden-ubuntu-vm-run.sh`）启动定制 VM，
-   拷入脚本并运行 A–F。
+3. 用使用者自己的 VM 或虚拟化方式启动已安装盘，运行 A–F。
 4. 运行隔离的宿主侧验收（见 [verification.md](verification.md)）；生产桥与端口不动。
 5. 组件变更后重新内嵌，并运行 `test/test-nbft-connect-nbct.sh`。
 
