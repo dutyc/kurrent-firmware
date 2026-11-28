@@ -48,6 +48,7 @@ Full documentation lives under [`docs/`](docs); frequently used entries:
 - [Firmware interface contract](docs/en/interface.md) — boot chain, control plane endpoints, TPM attestation, NBCT handoff
 - [Distribution matrix](docs/en/distributions.md) — per-distro setup scripts, acceptance status and the A–F flow
 - [Verification](docs/en/verification.md) — repository gates and the isolated cold-boot acceptance
+- [Milestone](MILESTONE.md) — project milestones with supporting evidence (Chinese)
 - [Patch set](patches/README.md) — licensing and upstream baseline upgrade workflow
 
 ## Platform Repository
