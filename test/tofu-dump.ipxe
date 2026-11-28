@@ -1,7 +1,0 @@
-#!ipxe
-# Dump the current NVO values as seen by the firmware.
-show nvo/server-fingerprint
-show nvo/trust
-show trust
-echo TOFU-DUMP-DONE
-exit
