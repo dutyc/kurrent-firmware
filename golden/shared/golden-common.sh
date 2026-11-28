@@ -871,6 +871,30 @@ $(golden_available_modules lvm)"
     rm -f "$list"
 }
 
+# dracut 的 kernel-network-modules 按 eth 符号扫描整个 drivers/net（只排除
+# wireless/isdn/uwb），--drivers 无法约束它，USB 网卡驱动因此进入 initramfs。
+# 该模块是 network-manager/systemd-networkd 的依赖，不能 --omit；用同一份有线
+# 白名单覆盖其 installkernel，保留依赖解析与内核网络基础模块。
+golden_dracut_wired_network_module() {
+    local drivers=$1 mod=
+    for mod in /usr/lib/dracut/modules.d/*kernel-network-modules; do
+        [ -d "$mod" ] && break
+        mod=
+    done
+    [ -n "$mod" ] || { echo "ERROR: dracut kernel-network-modules not found"; return 1; }
+    cat > "$mod/module-setup.sh" <<EOF
+#!/usr/bin/bash
+# Overwritten by golden-image-setup: the packaged module scans all of
+# drivers/net, which pulls USB NIC drivers regardless of --drivers.
+check() { return 255; }
+installkernel() {
+    instmods $drivers
+    instmods '=drivers/net/mdio' '=drivers/net/phy' '=drivers/net/team'
+    instmods ecb arc4 bridge stp llc ipv6 bonding 8021q ipvlan macvlan af_packet
+}
+EOF
+}
+
 # Space-separated dracut driver list: wired NICs plus storage/filesystem/kTLS.
 # Passing this to dracut --drivers replaces the full --no-hostonly driver set,
 # so dracut still pulls the dependencies of every listed module.
