@@ -867,6 +867,19 @@ $(golden_available_modules lvm)"
     rm -f "$list"
 }
 
+# Space-separated dracut driver list: wired NICs plus storage/filesystem/kTLS.
+# Passing this to dracut --drivers replaces the full --no-hostonly driver set,
+# so dracut still pulls the dependencies of every listed module.
+golden_dracut_wired_drivers() {
+    local mods
+    mods=$(golden_available_wired_nics)
+    mods="$mods $(golden_available_modules $GOLDEN_CORE_MODULES)"
+    if command -v lvm >/dev/null 2>&1; then
+        mods="$mods $(golden_available_modules lvm)"
+    fi
+    printf '%s\n' "$mods" | awk 'NF && !seen[$0]++ { printf "%s%s", sep, $0; sep=" " } END { print "" }'
+}
+
 # Full B stage for the NetworkManager variants (shared package-independent part).
 phase_b_dracut_nm() {
     log "[B] initramfs seed module (dracut 95nbft: NBCT credentials + kernel TLS)"
@@ -874,19 +887,28 @@ phase_b_dracut_nm() {
     install -m 0755 "$COMPONENT_DIR/nbft-connect" /usr/libexec/nbft-connect
     golden_install_tlshd_config
     golden_write_dracut_module_nm /usr/lib/dracut/modules.d/95nbft
-    # --no-hostonly：母盘跨硬件（网卡/存储驱动全量）。
+    # --no-hostonly keeps the image portable; --drivers replaces its full
+    # driver set with the shared wired NIC and storage/crypto whitelist.
     # --omit nvmf：发行版原生 95nvmf 只做无凭据的 connect-all --nbft，
     # 与本模块的 NBCT 带凭据连接互斥，必须排除以免先发明文/无认证握手。
-    dracut --force --no-hostonly --add "nbft network network-manager" \
-        --omit "nvmf" --kver "$KVER"
-    # 注意：grep -q 提前退出会让上游 lsinitrd 吃到 SIGPIPE（pipefail 下误判失败），
-    # 因此用 grep -c 消费完整输出后再判断
-    local img=$INITRD_SRC nbft_count nm_count tls_count
-    nbft_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'nbft' || true)
-    nm_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'NetworkManager' || true)
-    tls_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'tlshd' || true)
+    local drivers img=$INITRD_SRC list nbft_count nm_count tls_count
+    drivers=$(golden_dracut_wired_drivers)
+    [ -n "$drivers" ] || { echo "ERROR: no wired dracut drivers available"; exit 1; }
+    dracut --force --no-hostonly --drivers "$drivers" \
+        --add "nbft network network-manager" --omit "nvmf" --kver "$KVER"
+    list=$(mktemp "${TMPDIR:-/tmp}/golden-initrd.XXXXXX")
+    lsinitrd "$img" > "$list" 2>/dev/null || {
+        rm -f "$list"
+        echo "ERROR: lsinitrd failed for $img"
+        exit 1
+    }
+    nbft_count=$(grep -c 'nbft' "$list" || true)
+    nm_count=$(grep -c 'NetworkManager' "$list" || true)
+    tls_count=$(grep -c 'tlshd' "$list" || true)
     [ "$nbft_count" -gt 0 ] || { echo "ERROR: $img has no nbft component"; exit 1; }
     [ "$nm_count" -gt 0 ] || { echo "ERROR: $img has no NetworkManager (initrd DHCP owner)"; exit 1; }
     [ "$tls_count" -gt 0 ] || { echo "ERROR: $img has no tlshd (required for kernel TLS)"; exit 1; }
+    golden_verify_initramfs "$img" "$list" "$KVER" "dracut"
+    rm -f "$list"
     echo "    $img contains nbft ($nbft_count), NetworkManager ($nm_count), tlshd ($tls_count)"
 }
