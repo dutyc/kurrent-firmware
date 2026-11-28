@@ -9,7 +9,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-**Kurrent Firmware** 是 **Kurrent（周流）的固件引擎**——让裸机在引导层流动起来。不包含 iPXE 源码，仅维护差异补丁与构建资产，可在任意上游基线之上重建；核心是 **NVMe-oF（NVMe over TCP）SAN 引导**——自研 `nvmetcp` 驱动（含 DH-HMAC-CHAP 认证）补齐上游缺口，配合带内引导凭证表（NBCT）让内核侧重连复用固件持有的密钥，固件与 target 之间不需要任何额外引导软件。
+**Kurrent Firmware** 是 Kurrent（周流）的固件引擎——让裸机在引导层流动起来。不随仓库分发 iPXE 源码，只维护差异补丁与构建资产，可在任意上游基线之上重建。核心是 NVMe-oF（NVMe over TCP）SAN 引导：自研 `nvmetcp` 驱动（含 DH-HMAC-CHAP 认证）补齐上游缺口，配合带内引导凭证表（NBCT）让内核侧重连复用固件持有的密钥——固件与 target 之间不再需要任何额外引导软件。
 
 ## 引导链路
 
@@ -53,7 +53,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 
 ## 主仓库
 
-**[Kurrent](https://github.com/dutyc/ipxe-all-ready)**（周流）—— 把「无状态」贯彻到算力层本身的云原生平台：算力不绑定任何具体硬件，节点插电即活、可丢弃、可瞬间重建。同一理念的一体两面：Kurrent 让算力无状态，本仓库让引导固件流动。
+**[Kurrent](https://github.com/dutyc/kurrent)**（周流）—— 把「无状态」贯彻到算力层本身的云原生平台：算力不绑定任何具体硬件，节点插电即活、可丢弃、可瞬间重建。同一理念的一体两面：Kurrent 让算力无状态，本仓库让引导固件流动。
 
 ## 社区与贡献
 

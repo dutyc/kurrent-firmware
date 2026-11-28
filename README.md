@@ -9,7 +9,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-**Kurrent Firmware** is the **firmware engine for Kurrent** — *make bare metal flow at the boot layer*. It contains no iPXE source code — only difference patches and build assets — rebuildable on any upstream baseline. Its core is **NVMe-oF (NVMe over TCP) SAN boot** — a native `nvmetcp` driver (with DH-HMAC-CHAP authentication) fills the upstream gap, plus an in-band boot-credentials table (NBCT) so the kernel-side reconnect reuses the firmware's secret; no extra boot software between the firmware and the target.
+**Kurrent Firmware** is the firmware engine for Kurrent — *make bare metal flow at the boot layer*. It ships no iPXE source, only difference patches and build assets, rebuildable on any upstream baseline. Its core is NVMe-oF (NVMe over TCP) SAN boot: a native `nvmetcp` driver with DH-HMAC-CHAP authentication fills the upstream gap, and an in-band boot-credentials table (NBCT) lets the kernel-side reconnect reuse the firmware's secret — no extra boot software sits between the firmware and the target.
 
 ## Boot chain
 
@@ -53,7 +53,7 @@ Full documentation lives under [`docs/`](docs); frequently used entries:
 
 ## Platform Repository
 
-**[Kurrent](https://github.com/dutyc/ipxe-all-ready)** (周流) — the cloud-native platform that carries statelessness to the compute layer itself: compute is not bound to any specific hardware; nodes boot on plug-in, discardable and rebuildable in seconds. Two sides of the same idea: the platform makes compute stateless; this repository makes the boot firmware flow.
+**[Kurrent](https://github.com/dutyc/kurrent)** (周流) — the cloud-native platform that carries statelessness to the compute layer itself: compute is not bound to any specific hardware; nodes boot on plug-in, discardable and rebuildable in seconds. Two sides of the same idea: the platform makes compute stateless; this repository makes the boot firmware flow.
 
 ## Community & Contribution
 
