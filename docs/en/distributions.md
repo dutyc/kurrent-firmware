@@ -6,7 +6,8 @@ Each distribution has one `golden/<distro>/golden-image-setup-<distro>.sh`
 template that runs the shared A–F customization flow; the host-side helpers and
 the generator live under `golden/shared/`. Build-time generation fills the
 templates with the `initramfs-nbft` components and the GRUB 2.14 image, writing
-single-file scripts under `dist/golden/` for publication as Release assets; a
+single-file scripts under `dist/golden/`; the CI `golden` job uploads that
+directory with `SHA256SUMS` as the `golden-image-setup` build artifact. A
 generated script can be copied into a golden image and run there. The GRUB
 image is fetched from the `grub-efi-2.14` Release and checked against
 `golden/shared/grub-efi.lock`. After a component change, regenerate:

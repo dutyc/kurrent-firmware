@@ -88,7 +88,8 @@ Native drivers are adapted for high-performance NICs (2.5G and above); ordinary
 `golden/*/golden-image-setup-*.sh` are templates with empty `EMBED_B64_*`
 variables. Build-time generation fills them from the runtime components, the
 `golden/shared/` sources and the GRUB 2.14 image, writing single-file scripts
-under `dist/golden/` for publication as Release assets. Generated scripts can
+under `dist/golden/`; the CI `golden` job uploads that directory with
+`SHA256SUMS` as the `golden-image-setup` build artifact. Generated scripts can
 still be copied into a golden image and run there.
 
 The GRUB image is not tracked: `golden/shared/build-grub-efi.sh` downloads it

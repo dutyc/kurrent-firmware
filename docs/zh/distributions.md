@@ -5,7 +5,8 @@
 每个发行版有一个 `golden/<distro>/golden-image-setup-<distro>.sh` 模板，运行
 共享的 A–F 定制流程；宿主侧辅助脚本与生成器在 `golden/shared/` 下。构建期
 生成器把 `initramfs-nbft` 组件与 GRUB 2.14 镜像填入模板，输出到
-`dist/golden/`，作为 Release 资产发布；生成的脚本单文件即可拷入母盘运行。
+`dist/golden/`；CI 的 `golden` 任务把该目录连同 `SHA256SUMS` 作为
+`golden-image-setup` 构建产物上传。生成的脚本单文件即可拷入母盘运行。
 GRUB 镜像从 `grub-efi-2.14` Release 取用，并按 `golden/shared/grub-efi.lock`
 校验 SHA256。组件变更后重新生成：
 

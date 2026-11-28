@@ -79,7 +79,8 @@ dist/secureboot/
 
 `golden/*/golden-image-setup-*.sh` 是模板，`EMBED_B64_*` 为空；构建期由
 生成器把运行期组件、`golden/shared/` 源与 GRUB 2.14 镜像填入，输出到
-`dist/golden/`，作为 Release 资产发布。生成的脚本仍是单文件，可直接拷入
+`dist/golden/`；CI 的 `golden` 任务把该目录连同 `SHA256SUMS` 作为
+`golden-image-setup` 构建产物上传。生成的脚本仍是单文件，可直接拷入
 母盘运行。
 
 GRUB 镜像不入库：`golden/shared/build-grub-efi.sh` 从 `grub-efi-2.14`
