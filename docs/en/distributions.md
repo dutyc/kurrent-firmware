@@ -11,16 +11,23 @@ golden image and run. After a component change, re-run
 
 ## Supported distributions
 
-| Distribution | Version | Unattended | Kernel | Acceptance |
-|---|---|---|---|---|
-| Debian 12 | bookworm | preseed (d-i) | 6.12 (backports) | ⚠️ TLS cold boot; source-built NVMe userspace required |
-| Debian 13 | 13.6.0 | preseed (d-i) | 6.12 (shipped) | ✅ authenticated cold boot |
-| Ubuntu 24.04 | 24.04 LTS | autoinstall (subiquity) | 6.8 (GA) | ✅ TLS cold boot |
-| Ubuntu 26.04 | 26.04 LTS | autoinstall (subiquity) | 7.0 (shipped) | ✅ authenticated cold boot |
-| Fedora 44 | 44 | kickstart (Anaconda) | 6.19 (shipped) | ✅ TLS cold boot |
-| AlmaLinux 10.2 | 10.2 | kickstart (Anaconda) | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
-| openSUSE Leap 16.0 | 16.0 | Agama profile | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
-| Arch Linux | rolling (2026.11.01 ISO) | archinstall JSON | 7.3.6-arch1-1 | ✅ TLS cold boot |
+| Distribution | Version | Kernel | Acceptance |
+|---|---|---|---|
+| Debian 12 | bookworm | 6.12 (backports) | ⚠️ TLS cold boot; source-built NVMe userspace required |
+| Debian 13 | 13.6.0 | 6.12 (shipped) | ✅ authenticated cold boot |
+| Ubuntu 24.04 | 24.04 LTS | 6.8 (GA) | ✅ TLS cold boot |
+| Ubuntu 26.04 | 26.04 LTS | 7.0 (shipped) | ✅ authenticated cold boot |
+| Fedora 44 | 44 | 6.19 (shipped) | ✅ TLS cold boot |
+| AlmaLinux 10.2 | 10.2 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
+| openSUSE Leap 16.0 | 16.0 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
+| Arch Linux | rolling (2026.11.01 ISO) | 7.3.6-arch1-1 | ✅ TLS cold boot |
+
+Acceptance runs use each distribution's native unattended installation, but
+installer inputs are not deliverables of this repository. Three acceptance
+fixtures stay in the tree: `golden/almalinux10/almalinux10.ks.in`,
+`golden/archlinux/archinstall.json.in` and
+`golden/opensuse-leap16/leap16-profile.json`. Installation follows the
+operator's own process, and A–F starts from an installed system.
 
 Debian 12 needs a source-built NVMe userspace (`ktls-utils` / `libnvme` /
 `nvme-cli`) because bookworm has no packaged TLS-capable tooling; the costs are
@@ -59,9 +66,9 @@ GPT/ESP rebuild and still refreshes the ESP content.
 ## Adding a distribution
 
 1. Derive the script from the closest existing variant and check every parameter
-   (installer kernel/initrd names, preseed/autoinstall/kickstart boot arguments,
-   package-manager source format). Use a 4K logical-block disk for the target.
-2. Run the unattended installation through to automatic power-off.
+   (installer kernel/initrd names, boot arguments when using an unattended
+   installer, package-manager source format). Use a 4K logical-block disk for the target.
+2. Install with your own process and power off.
 3. Start the customization VM with `golden/shared/golden-vm-run.sh` (or
    `golden-ubuntu-vm-run.sh`), copy the script in and run A–F.
 4. Run the isolated host-side acceptance (see [verification.md](verification.md));
