@@ -83,7 +83,7 @@ Kurrent 的设备身份从“软件私钥签名”迁到“TPM 内证明密钥 +
 | TPM 证明 | QEMU/OVMF + swtpm：首登记 `device.attest ok`；冷重启 AK 复用且 `ak-name` 不变；负向 `pcr_mismatch` / `nonce_invalid` / `no_tpm` 均按预期失败 |
 | Secure Boot 注册 | QEMU/OVMF（空变量、Setup Mode）+ swtpm：PK/KEK/db 写入、结果 `ok`；重启后验签通过并上报 `sb=1`；重复执行 `ok (already enrolled)` 不写变量；预置厂商 PK 报 `foreign` 且变量不变 |
 | 首跳目标 | `build/build-sb.sh` 的 `KURRENT_SB_TARGET`；`dist/secureboot/ipxe-sb.efi` 经 `sbverify` 验签通过 |
-| 测试资产治理 | 7 份发行版脚本共用 A–F 公共库；6 个 QEMU runner 共用启动库；CI 覆盖语法、ShellCheck（错误级）、内嵌一致性、补丁重放与完整构建 |
+| 测试资产治理 | 8 份发行版脚本共用 A–F 公共库；6 个 QEMU runner 共用启动库；CI 覆盖语法、ShellCheck（错误级）、内嵌一致性、补丁重放与完整构建 |
 
 ### 还没做 / 遗留
 

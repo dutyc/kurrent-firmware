@@ -48,6 +48,7 @@ UEFI → iPXE nvmetcp（TLS 1.3 PSK）→ NVMe/TCP :4421 → nvmet target
 - [固件接口契约](docs/zh/interface.md)——引导链、控制面端点、TPM 证明、NBCT 接力
 - [发行版矩阵](docs/zh/distributions.md)——各发行版定制脚本、验收状态与 A–F 流程
 - [验证](docs/zh/verification.md)——仓库门禁与隔离冷启动验收
+- [里程碑](MILESTONE.md)——带证据的项目里程碑
 - [补丁集说明](patches/README.zh-CN.md)——授权边界与上游升级流程
 
 ## 主仓库

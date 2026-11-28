@@ -1,10 +1,11 @@
 # golden
 
 Provisioning assets for the distribution golden images. Each `golden/<distro>/`
-directory holds the unattended-install inputs and the `golden-image-setup-*.sh`
-script that runs the shared A–F customization stages; `golden/shared/` holds the
-common library, the host-side VM helpers, the embed tooling and the GRUB image
-that the scripts embed.
+directory holds that distribution's `golden-image-setup-*.sh`, which runs the
+shared A–F customization stages; three directories also keep the installer
+inputs used as acceptance fixtures, which are not deliverables.
+`golden/shared/` holds the common library, the host-side VM helpers, the embed
+tooling and the GRUB image that the scripts embed.
 
 Tests, QEMU ranges, capture analysis and fixtures stay under `test/`. The
 distribution matrix and the A–F flow are documented in

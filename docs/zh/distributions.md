@@ -9,16 +9,22 @@
 
 ## 支持的发行版
 
-| 发行版 | 版本 | 无人值守 | 内核 | 验收 |
-|---|---|---|---|---|
-| Debian 12 | bookworm | preseed（d-i） | 6.12（backports） | ⚠️ TLS 冷启动；需源码构建 NVMe 用户态 |
-| Debian 13 | 13.6.0 | preseed（d-i） | 6.12（自带） | ✅ 认证冷启动 |
-| Ubuntu 24.04 | 24.04 LTS | autoinstall（subiquity） | 6.8（GA） | ✅ TLS 冷启动 |
-| Ubuntu 26.04 | 26.04 LTS | autoinstall（subiquity） | 7.0（自带） | ✅ 认证冷启动 |
-| Fedora 44 | 44 | kickstart（Anaconda） | 6.19（自带） | ✅ TLS 冷启动 |
-| AlmaLinux 10.2 | 10.2 | kickstart（Anaconda） | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
-| openSUSE Leap 16.0 | 16.0 | Agama profile | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
-| Arch Linux | rolling（2026.11.01 ISO） | archinstall JSON | 7.3.6-arch1-1 | ✅ TLS 冷启动 |
+| 发行版 | 版本 | 内核 | 验收 |
+|---|---|---|---|
+| Debian 12 | bookworm | 6.12（backports） | ⚠️ TLS 冷启动；需源码构建 NVMe 用户态 |
+| Debian 13 | 13.6.0 | 6.12（自带） | ✅ 认证冷启动 |
+| Ubuntu 24.04 | 24.04 LTS | 6.8（GA） | ✅ TLS 冷启动 |
+| Ubuntu 26.04 | 26.04 LTS | 7.0（自带） | ✅ 认证冷启动 |
+| Fedora 44 | 44 | 6.19（自带） | ✅ TLS 冷启动 |
+| AlmaLinux 10.2 | 10.2 | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
+| openSUSE Leap 16.0 | 16.0 | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
+| Arch Linux | rolling（2026.11.01 ISO） | 7.3.6-arch1-1 | ✅ TLS 冷启动 |
+
+验收运行使用各发行版原生的无人值守安装方式，但仓库不把安装输入作为交付物。仅保留
+三份验收夹具：`golden/almalinux10/almalinux10.ks.in`、
+`golden/archlinux/archinstall.json.in` 与
+`golden/opensuse-leap16/leap16-profile.json`。安装按使用者自己的流程完成，A–F 从
+已安装系统开始。
 
 Debian 12 需要源码构建的 NVMe 用户态（`ktls-utils` / `libnvme` / `nvme-cli`），
 因为 bookworm 没有打包 TLS 能力工具链；代价记录在
@@ -53,8 +59,8 @@ initramfs 使用 mkinitcpio 钩子（`install/nbft`、`hooks/nbft`），移除 `
 ## 新增发行版
 
 1. 从最接近的现有变体派生脚本，逐项核对参数（安装器内核/initrd 文件名、
-   preseed/autoinstall/kickstart 引导参数、包管理源格式）；目标盘用 4K 逻辑块。
-2. 运行无人值守安装直至自动关机。
+   使用无人值守安装器时的引导参数、包管理源格式）；目标盘用 4K 逻辑块。
+2. 用自有流程安装并关机。
 3. 用 `golden/shared/golden-vm-run.sh`（或 `golden-ubuntu-vm-run.sh`）启动定制 VM，
    拷入脚本并运行 A–F。
 4. 运行隔离的宿主侧验收（见 [verification.md](verification.md)）；生产桥与端口不动。
