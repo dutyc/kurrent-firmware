@@ -12,7 +12,11 @@
 #   INITRD_SRC_TEMPLATE, INITRD_ESP_NAME_TEMPLATE (@KVER@ is substituted),
 #   IDENTITY_DIRS (array)
 # Optional overrides:
-#   NBFT_SHELL (default bash), GRUB_CFG (default /boot/grub2/grub.cfg)
+#   VMLINUZ_SRC_TEMPLATE (default /boot/vmlinuz-@KVER@),
+#   VMLINUZ_ESP_NAME_TEMPLATE (default vmlinuz-@KVER@; Arch images use the
+#   unversioned /boot/vmlinuz-linux),
+#   NBFT_SHELL (default bash), GRUB_CFG (default /boot/grub2/grub.cfg),
+#   GRUB_MKCONFIG (default grub2-mkconfig; Arch uses grub-mkconfig)
 
 ESP_VOLID=${ESP_VOLID:-855B91DF}
 ESP_UUID=${ESP_UUID:-855B-91DF}
@@ -21,10 +25,13 @@ DO_DISK=${DO_DISK:-1}
 YES=${YES:-0}
 KEEP_SOURCES=${KEEP_SOURCES:-0}
 GRUB_EFI=${GRUB_EFI:-}
+VMLINUZ_SRC_TEMPLATE=${VMLINUZ_SRC_TEMPLATE:-/boot/vmlinuz-@KVER@}
+VMLINUZ_ESP_NAME_TEMPLATE=${VMLINUZ_ESP_NAME_TEMPLATE:-vmlinuz-@KVER@}
 NBFT_SHELL=${NBFT_SHELL:-bash}
 GRUB_CFG=${GRUB_CFG:-/boot/grub2/grub.cfg}
 MKFS_FAT_OPTS=${MKFS_FAT_OPTS:--S 4096}
 GRUB_MKIMAGE=${GRUB_MKIMAGE:-grub2-mkimage}
+GRUB_MKCONFIG=${GRUB_MKCONFIG:-grub2-mkconfig}
 GRUB_REGEN=${GRUB_REGEN:-mkconfig}
 GRUB_DEFAULT_ONLY=${GRUB_DEFAULT_ONLY:-0}
 GRUB_DROP_WORDS=${GRUB_DROP_WORDS:-quiet rhgb}
@@ -117,6 +124,8 @@ golden_init() {
     esac
     INITRD_SRC=${INITRD_SRC_TEMPLATE//@KVER@/$KVER}
     INITRD_ESP_NAME=${INITRD_ESP_NAME_TEMPLATE//@KVER@/$KVER}
+    VMLINUZ_SRC=${VMLINUZ_SRC_TEMPLATE//@KVER@/$KVER}
+    VMLINUZ_ESP_NAME=${VMLINUZ_ESP_NAME_TEMPLATE//@KVER@/$KVER}
 }
 
 # ---------------------------------------------------------------- C ----------
@@ -250,10 +259,12 @@ PYEOF
         update-grub
         echo "    update-grub done"
     else
-        # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）
-        grub2-mkconfig -o "$GRUB_CFG" >/dev/null || \
-            echo "WARN: grub2-mkconfig failed (non-fatal: SAN boot uses ESP/grub.cfg)"
-        echo "    grub2-mkconfig done"
+        # 盘内 grub.cfg 再生成（SAN 实引导走 ESP/grub.cfg，此处保盘内一致性）。
+        # Arch 安装未创建 /boot/grub，先补目录，避免 grub-mkconfig 写临时文件失败。
+        mkdir -p "$(dirname "$GRUB_CFG")"
+        "$GRUB_MKCONFIG" -o "$GRUB_CFG" >/dev/null || \
+            echo "WARN: $GRUB_MKCONFIG failed (non-fatal: SAN boot uses ESP/grub.cfg)"
+        echo "    $GRUB_MKCONFIG done"
     fi
 }
 
@@ -301,11 +312,12 @@ gpt_sector() {
 }
 
 esp_is_4k_volid() { # $1 设备：4K FAT32 且 volid=855B91DF → 0
+    # FAT32 的卷标在 BPB 偏移 0x43；0x27 是 FAT12/16 的位置（本库写 0x43）。
     python3 - "$1" <<'PYEOF'
 import sys
 with open(sys.argv[1], 'rb') as f:
     b = f.read(512)
-ok = len(b) == 512 and b[11] | (b[12] << 8) == 4096 and b[39:43] == b'\xdf\x91\x5b\x85'
+ok = len(b) == 512 and b[11] | (b[12] << 8) == 4096 and b[67:71] == b'\xdf\x91\x5b\x85'
 sys.exit(0 if ok else 1)
 PYEOF
 }
@@ -379,7 +391,7 @@ PYEOF
         echo "    --skip-disk: GPT conversion and ESP rebuild skipped, content refreshed"
     fi
 
-    [ -f "/boot/vmlinuz-$KVER" ] || { echo "ERROR: /boot/vmlinuz-$KVER missing"; exit 1; }
+    [ -f "$VMLINUZ_SRC" ] || { echo "ERROR: $VMLINUZ_SRC missing"; exit 1; }
     [ -f "$INITRD_SRC" ] || { echo "ERROR: $INITRD_SRC missing"; exit 1; }
 
     if ! findmnt /boot/efi >/dev/null 2>&1; then
@@ -389,7 +401,7 @@ PYEOF
     fi
     find /boot/efi -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
-    cp -a "/boot/vmlinuz-$KVER" /boot/efi/
+    cp -a "$VMLINUZ_SRC" "/boot/efi/$VMLINUZ_ESP_NAME"
     cp -a "$INITRD_SRC" "/boot/efi/$INITRD_ESP_NAME"
     mkdir -p /boot/efi/EFI/BOOT
 
@@ -437,7 +449,7 @@ set default=0
 set timeout=5
 menuentry '${MENU_LABEL} (SAN, ${KVER})' {
     search --no-floppy --fs-uuid --set=root ${ESP_UUID}
-    linux /vmlinuz-${KVER} root=UUID=${rootuuid} ro ${CONSOLE} ${GRUB_ARGS}${rd_lvm:+ $rd_lvm}
+    linux /${VMLINUZ_ESP_NAME} root=UUID=${rootuuid} ro ${CONSOLE} ${GRUB_ARGS}${rd_lvm:+ $rd_lvm}
     initrd /${INITRD_ESP_NAME}
 }
 EOF

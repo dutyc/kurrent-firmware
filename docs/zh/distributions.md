@@ -18,10 +18,16 @@
 | Fedora 44 | 44 | kickstart（Anaconda） | 6.19（自带） | ✅ TLS 冷启动 |
 | AlmaLinux 10.2 | 10.2 | kickstart（Anaconda） | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
 | openSUSE Leap 16.0 | 16.0 | Agama profile | 6.12（`CONFIG_NVME_TCP_TLS=y`） | ✅ TLS 冷启动 |
+| Arch Linux | rolling（2026.11.01 ISO） | archinstall JSON | 7.3.6-arch1-1 | ✅ TLS 冷启动 |
 
 Debian 12 需要源码构建的 NVMe 用户态（`ktls-utils` / `libnvme` / `nvme-cli`），
 因为 bookworm 没有打包 TLS 能力工具链；代价记录在
 [验收记录](archive/debian12-tls-coldboot-verification.md) 中。
+
+Arch Linux 为滚动发行版；矩阵以 2026.11.01 ISO 与内核 7.3.6-arch1-1 为实测基线。
+发行版同样没有打包 TLS 能力的 `ktls-utils`，定制脚本按固定标签与提交构建 1.5.0。
+initramfs 使用 mkinitcpio 钩子（`install/nbft`、`hooks/nbft`），移除 `autodetect`，
+并经 `dhcpcd` 获取地址。
 
 ## 验收判据
 

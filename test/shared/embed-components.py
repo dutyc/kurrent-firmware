@@ -16,15 +16,18 @@ comp = repo / "initramfs-nbft"
 
 items = {
     "EMBED_B64_CONNECT": comp / "nbft-connect",
-    "EMBED_B64_HOOK": comp / "initramfs/hooks/nbft",
-    "EMBED_B64_LOCALTOP": comp / "initramfs/scripts/local-top/nbft",
     "EMBED_B64_BOOTX64": repo / "test" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
 }
 # Scripts that source test/shared/golden-common.sh also carry an embedded copy
 # so they stay runnable as a single file; scripts without the marker are left
-# untouched.
+# untouched. The initramfs-tools hook pair is only used by the initramfs-tools
+# distributions (Arch uses the mkinitcpio hooks below).
 optional = {
+    "EMBED_B64_HOOK": comp / "initramfs/hooks/nbft",
+    "EMBED_B64_LOCALTOP": comp / "initramfs/scripts/local-top/nbft",
     "EMBED_B64_COMMON": repo / "test" / "shared" / "golden-common.sh",
+    "EMBED_B64_MKINITCPIO_INSTALL": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "install" / "nbft",
+    "EMBED_B64_MKINITCPIO_HOOK": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "hooks" / "nbft",
 }
 
 if not setups:

@@ -20,10 +20,17 @@ golden image and run. After a component change, re-run
 | Fedora 44 | 44 | kickstart (Anaconda) | 6.19 (shipped) | ✅ TLS cold boot |
 | AlmaLinux 10.2 | 10.2 | kickstart (Anaconda) | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
 | openSUSE Leap 16.0 | 16.0 | Agama profile | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
+| Arch Linux | rolling (2026.11.01 ISO) | archinstall JSON | 7.3.6-arch1-1 | ✅ TLS cold boot |
 
 Debian 12 needs a source-built NVMe userspace (`ktls-utils` / `libnvme` /
 `nvme-cli`) because bookworm has no packaged TLS-capable tooling; the costs are
 recorded in the [verification record](../zh/archive/debian12-tls-coldboot-verification.md).
+
+Arch Linux is rolling; the matrix pins the 2026.11.01 ISO and kernel
+7.3.6-arch1-1 as the tested baseline. There is no TLS-capable `ktls-utils`
+package either, so the setup script builds 1.5.0 from a pinned tag and commit.
+The initramfs uses mkinitcpio hooks (`install/nbft`, `hooks/nbft`) with
+`autodetect` removed and obtains its lease through `dhcpcd`.
 
 ## Acceptance criteria
 

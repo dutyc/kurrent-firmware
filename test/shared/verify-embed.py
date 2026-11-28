@@ -23,10 +23,17 @@ repo = pathlib.Path(__file__).resolve().parent.parent.parent
 
 sources = {
     "EMBED_B64_CONNECT": repo / "initramfs-nbft" / "nbft-connect",
+    "EMBED_B64_BOOTX64": repo / "test" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
+}
+# Optional payloads: checked when present, ignored when a script does not use
+# them. initramfs-tools scripts embed the hook pair; the Arch script embeds the
+# mkinitcpio pair instead.
+optional_sources = {
     "EMBED_B64_HOOK": repo / "initramfs-nbft" / "initramfs" / "hooks" / "nbft",
     "EMBED_B64_LOCALTOP": repo / "initramfs-nbft" / "initramfs" / "scripts" / "local-top" / "nbft",
-    "EMBED_B64_BOOTX64": repo / "test" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
     "EMBED_B64_COMMON": repo / "test" / "shared" / "golden-common.sh",
+    "EMBED_B64_MKINITCPIO_INSTALL": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "install" / "nbft",
+    "EMBED_B64_MKINITCPIO_HOOK": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "hooks" / "nbft",
 }
 
 scripts = [pathlib.Path(a) for a in sys.argv[1:]] or sorted(
@@ -42,8 +49,10 @@ for script in scripts:
         print(f"FAIL {script}: {exc}")
         failed = True
         continue
-    for var, src in sources.items():
+    for var, src in {**sources, **optional_sources}.items():
         found = re.findall(rf"^{var}='([^']*)'", text, flags=re.M)
+        if not found and var in optional_sources:
+            continue
         if len(found) != 1:
             print(f"FAIL {script.name}: {var} found {len(found)} times")
             failed = True

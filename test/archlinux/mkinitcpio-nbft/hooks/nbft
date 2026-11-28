@@ -1,0 +1,248 @@
+#!/bin/sh
+# mkinitcpio runtime hook - NBCT/NBFT to NVMe/TCP connect with credentials + TLS.
+#
+# The hook obtains its own DHCP lease with dhcpcd inside the initramfs; it does
+# not use the kernel ip= parameter (IP_PNP cannot wait for the NIC module) nor
+# klibc ipconfig (measured SIOCGIFFLAGS failures on virtio-net).
+# Logs go to /dev/kmsg and the serial console for initramfs forensics.
+log() {
+    local line="nbft: $*"
+    [ -w /dev/kmsg ] && echo "$line" > /dev/kmsg 2>/dev/null
+    [ -w /dev/ttyS0 ] && echo "$line" > /dev/ttyS0 2>/dev/null
+    return 0
+}
+warn() { log "WARNING: $*"; }
+
+cmdline_has() {
+    local x
+    for x in $(cat /proc/cmdline); do
+        [ "$x" = "$1" ] && return 0
+    done
+    return 1
+}
+
+have_ipv4() {
+    local d
+    for d in /sys/class/net/*; do
+        [ "${d##*/}" = "lo" ] && continue
+        ip -4 addr show dev "${d##*/}" 2>/dev/null | grep -q 'inet ' && return 0
+    done
+    return 1
+}
+
+wait_ipv4() {
+    local t=0
+    while [ "$t" -lt 120 ]; do
+        have_ipv4 && return 0
+        sleep 1
+        t=$((t + 1))
+    done
+    return 1
+}
+
+start_tlshd() {
+    local conf
+    [ -x /usr/sbin/tlshd ] || { warn "tlshd missing, kernel TLS will fail"; return 0; }
+    for conf in /etc/tlshd/config /etc/tlshd.conf; do
+        [ -f "$conf" ] && break
+    done
+    [ -f "$conf" ] || { warn "no tlshd config, kernel TLS will fail"; return 0; }
+    if [ -s /run/tlshd.pid ] && kill -0 "$(cat /run/tlshd.pid)" 2>/dev/null; then
+        return 0
+    fi
+    /usr/sbin/tlshd -c "$conf" >/dev/kmsg 2>&1 &
+    echo $! > /run/tlshd.pid
+    sleep 1
+    kill -0 "$(cat /run/tlshd.pid)" 2>/dev/null || \
+        warn "tlshd exited (check $conf), kernel TLS will fail"
+}
+
+apply_static_nbft() {
+    local i=0 iface mac proto vlan ipaddr prefix netmask gateway
+    while [ "$i" -lt "${NBFT_ENTRY_COUNT:-0}" ]; do
+        eval "iface=\$NBFT_IFACE_${i}"
+        eval "mac=\$NBFT_MAC_${i}"
+        eval "proto=\$NBFT_PROTO_${i}"
+        eval "vlan=\$NBFT_VLAN_${i}"
+        eval "ipaddr=\$NBFT_IP_${i}"
+        eval "prefix=\$NBFT_PREFIX_${i}"
+        eval "netmask=\$NBFT_NETMASK_${i}"
+        eval "gateway=\$NBFT_GATEWAY_${i}"
+        if [ -n "$vlan" ]; then
+            warn "VLAN ${iface}.${vlan} unsupported, skipping"
+        elif [ -z "$iface" ]; then
+            warn "no interface for MAC ${mac}, skipping"
+        elif [ "$proto" = "static" ] && [ -n "$ipaddr" ]; then
+            ip link set dev "$iface" up
+            ip addr replace "$ipaddr/$prefix" dev "$iface" 2>/dev/null || \
+                ip addr add "$ipaddr" netmask "$netmask" dev "$iface" 2>/dev/null || \
+                warn "cannot configure $ipaddr on $iface"
+            if [ -n "$gateway" ] && [ "$gateway" != "0.0.0.0" ]; then
+                ip route replace default via "$gateway" 2>/dev/null || true
+            fi
+        fi
+        i=$((i + 1))
+    done
+}
+
+# Only a purely static NBFT configuration skips DHCP; NBCT-only boots have no
+# NBFT entries and must still obtain an address.
+nbft_needs_dhcp() {
+    local i=0 proto found=0
+    [ "${NBFT_ENTRY_COUNT:-0}" -gt 0 ] || return 0
+    while [ "$i" -lt "$NBFT_ENTRY_COUNT" ]; do
+        eval "proto=\$NBFT_PROTO_${i}"
+        [ "$proto" = "dhcp" ] && found=1
+        i=$((i + 1))
+    done
+    [ "$found" = 1 ]
+}
+
+wait_iface() {
+    local t=0 d
+    while [ "$t" -lt 30 ]; do
+        for d in /sys/class/net/*; do
+            [ "${d##*/}" = "lo" ] || return 0
+        done
+        sleep 1
+        t=$((t + 1))
+    done
+    return 1
+}
+
+iface_exists() { [ -e "/sys/class/net/$1" ]; }
+iface_carrier() { cat "/sys/class/net/$1/carrier" 2>/dev/null || true; }
+
+# DHCP candidate order: the NBFT-mapped boot NIC, then links with carrier=1,
+# then every other non-lo device. An NBCT-only session has no NBFT entries, so
+# NBFT_IFACE_0 is empty and the carrier check decides; with no carrier data at
+# all the devices are tried in enumeration order.
+dhcp_candidates() {
+    local d seen=" "
+    if [ -n "${NBFT_IFACE_0:-}" ] && iface_exists "$NBFT_IFACE_0"; then
+        echo "$NBFT_IFACE_0"
+        seen="$seen$NBFT_IFACE_0 "
+    fi
+    for d in /sys/class/net/*; do
+        d=${d##*/}
+        [ "$d" = "lo" ] && continue
+        case "$seen" in *" $d "*) continue ;; esac
+        [ "$(iface_carrier "$d")" = "1" ] || continue
+        echo "$d"
+        seen="$seen$d "
+    done
+    for d in /sys/class/net/*; do
+        d=${d##*/}
+        [ "$d" = "lo" ] && continue
+        case "$seen" in *" $d "*) continue ;; esac
+        echo "$d"
+        seen="$seen$d "
+    done
+}
+
+run_dhcp() {
+    local ifaces iface tried=0
+    if [ ! -x /usr/bin/dhcpcd ]; then
+        warn "dhcpcd missing; cannot configure DHCP"
+        return 0
+    fi
+    if ! wait_iface; then
+        warn "no network interface after 30s (driver module missing?)"
+        return 0
+    fi
+    ifaces=$(dhcp_candidates)
+    [ -n "$ifaces" ] || { warn "no usable interface"; return 0; }
+    mkdir -p /var/lib/dhcpcd 2>/dev/null || true
+    log "DHCP candidates: $(printf '%s' "$ifaces" | tr '\n' ' ')"
+    for iface in $ifaces; do
+        tried=$((tried + 1))
+        log "DHCP attempt $tried on $iface (carrier=$(iface_carrier "$iface"))"
+        /usr/bin/dhcpcd -4 -1 -t 30 "$iface" >/dev/ttyS0 2>&1 || \
+            warn "dhcpcd failed on $iface"
+        if have_ipv4; then
+            log "IPv4 obtained via $iface (attempt $tried)"
+            break
+        fi
+    done
+    have_ipv4 || warn "no IPv4 after $tried DHCP attempt(s): $(printf '%s' "$ifaces" | tr '\n' ' ')"
+    log "ip: $(ip -4 -br addr 2>/dev/null | tr '\n' ';')"
+}
+
+# Connect under one session keyring. The initramfs has no login session, so a
+# bare keyctl call gets a throwaway session: the PSK injected by nbft-connect
+# would never be possessed and newer kernels hand tlshd a key serial it is not
+# allowed to read. tlshd and the connect step therefore share one session.
+connect_session() {
+    local out=/run/nbft-connect.out rc
+    rm -f "$out"
+    if [ -x /usr/sbin/tlshd ] && command -v keyctl >/dev/null 2>&1; then
+        keyctl session - sh -c '
+            /usr/sbin/tlshd -c /etc/tlshd/config >/dev/kmsg 2>&1 &
+            sleep 1
+            /bin/sh /usr/local/sbin/nbft-connect --connect --verbose
+            echo $? > /run/nbft-connect.rc
+        ' > "$out" 2>&1
+    else
+        [ -x /usr/sbin/tlshd ] || warn "tlshd missing, kernel TLS will fail"
+        /bin/sh /usr/local/sbin/nbft-connect --connect --verbose > "$out" 2>&1
+        echo $? > /run/nbft-connect.rc
+    fi
+    rc=$(cat /run/nbft-connect.rc 2>/dev/null || echo unknown)
+    [ -s "$out" ] && while IFS= read -r line; do
+        [ -n "$line" ] && log "$line"
+    done < "$out"
+    log "nbft-connect --connect rc=$rc"
+}
+
+run_hook() {
+    local tbl
+    log "enter; cmdline: $(cat /proc/cmdline 2>/dev/null)"
+    [ -e /run/nbft-done ] && return 0
+    if ! cmdline_has nbft_auto; then
+        log "nbft_auto absent; skipping"
+        : > /run/nbft-done
+        return 0
+    fi
+
+    tbl=/sys/firmware/acpi/tables
+    log "acpi tables: $(ls "$tbl" 2>/dev/null | tr '\n' ' ')"
+    if [ ! -e "$tbl/NBFT" ] && ! ls "$tbl"/NBCT* >/dev/null 2>&1; then
+        log "no NBFT/NBCT table; skipping"
+        : > /run/nbft-done
+        return 0
+    fi
+    log "NBFT/NBCT present"
+    [ -x /usr/local/sbin/nbft-connect ] || {
+        warn "nbft-connect missing at /usr/local/sbin"
+        return 0
+    }
+
+    modprobe -q nvme 2>/dev/null || true
+    modprobe -q nvme_fabrics 2>/dev/null || true
+    modprobe -q nvme_tcp 2>/dev/null || true
+    modprobe -q nvme_auth 2>/dev/null || true
+    modprobe -q tls 2>/dev/null || true
+    modprobe -q nvme_keyring 2>/dev/null || true
+
+    eval "$(/bin/sh /usr/local/sbin/nbft-connect)" || warn "NBFT parse failed"
+    log "nbft entries=${NBFT_ENTRY_COUNT:-0}"
+    if nbft_needs_dhcp; then
+        run_dhcp
+    else
+        log "static NBFT config; skip DHCP"
+    fi
+    apply_static_nbft
+
+    log "waiting for IPv4"
+    if ! wait_ipv4; then
+        log "ip: $(ip -4 -br addr 2>/dev/null | tr '\n' ';')"
+        warn "no IPv4 after 120s; refusing to connect (no plaintext fallback)"
+        return 0
+    fi
+    log "IPv4 ready"
+    connect_session
+
+    udevadm settle 2>/dev/null || true
+    : > /run/nbft-done
+    return 0
+}
