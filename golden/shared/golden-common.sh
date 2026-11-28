@@ -919,11 +919,13 @@ phase_b_dracut_nm() {
     # driver set with the shared wired NIC and storage/crypto whitelist.
     # --omit nvmf：发行版原生 95nvmf 只做无凭据的 connect-all --nbft，
     # 与本模块的 NBCT 带凭据连接互斥，必须排除以免先发明文/无认证握手。
+    # --omit drm：initrd 只用串口控制台，drm 模块会拉入 amdgpu 等 GPU 驱动。
     local drivers img=$INITRD_SRC list nbft_count nm_count tls_count
     drivers=$(golden_dracut_wired_drivers)
     [ -n "$drivers" ] || { echo "ERROR: no wired dracut drivers available"; exit 1; }
+    golden_dracut_wired_network_module "$drivers"
     dracut --force --no-hostonly --drivers "$drivers" \
-        --add "nbft network network-manager" --omit "nvmf" --kver "$KVER"
+        --add "nbft network network-manager" --omit "nvmf drm" --kver "$KVER"
     list=$(mktemp "${TMPDIR:-/tmp}/golden-initrd.XXXXXX")
     lsinitrd "$img" > "$list" 2>/dev/null || {
         rm -f "$list"
