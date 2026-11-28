@@ -101,8 +101,14 @@ phase_a() {
     apt-get install -y "linux-modules-extra-${KVER}" || \
         echo "    note: linux-modules-extra-${KVER} unavailable, NIC set limited to the base kernel package"
     # 内核段 NVMe/TCP TLS（段 1.3c）：keyctl（keyutils）注入 .nvme PSK；tlshd（ktls-utils）
-    # 承担内核 TLS 握手 upcall。两者是 TLS-only 引导路径的硬依赖，缺失即中止构建。
-    apt-get install -y keyutils ktls-utils
+    # 承担内核 TLS 握手 upcall。noble 自带的 ktls-utils 0.9 没有 GnuTLS PSK，
+    # 无法完成 TLS 1.3 PSK 握手，改为构建固定版本的上游源码。
+    apt-get install -y keyutils
+    apt-get purge -y ktls-utils >/dev/null 2>&1 || true
+    apt-get install -y build-essential autoconf automake libtool pkg-config curl \
+        libgnutls28-dev libkeyutils-dev libglib2.0-dev libnl-3-dev libnl-genl-3-dev
+    golden_build_ktls_utils
+    golden_install_tlshd_config
     [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils/tlshd not installed; kernel-stage TLS unavailable"; exit 1; }
     command -v keyctl >/dev/null || { echo "ERROR: keyutils/keyctl not installed; TLS-PSK injection unavailable"; exit 1; }
     # 内核 NVME_AUTH 校验（Ubuntu 24.04 noble 自带 6.8+，无需换内核）
