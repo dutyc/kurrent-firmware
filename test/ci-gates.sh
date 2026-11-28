@@ -26,10 +26,21 @@ list_scripts() {
 
 gate_layout() {
     local rc=0 bad n
-    bad=$(find test \( -name 'golden-image-setup-*.sh' -o -name golden-common.sh \
-        -o -name golden-install-vm.sh -o -name golden-vm-run.sh \
-        -o -name embed-components.py -o -path 'test/shared/assets/BOOTX64*' \
-        -o -path 'test/*/mkinitcpio-nbft*' \) -print)
+    bad=$(find test \( \
+        -path 'test/*/golden-image-setup-*.sh' \
+        -o -path 'test/*/run-*-install.sh' \
+        -o -path 'test/*/run-archlinux-setup.sh' \
+        -o -path 'test/*/arch-install.sh' \
+        -o -path 'test/*/*.ks.in' \
+        -o -path 'test/*/archinstall.json.in' \
+        -o -path 'test/*/leap16-profile.json' \
+        -o -path 'test/*/mkinitcpio-nbft*' \
+        -o -path 'test/shared/golden-common.sh' \
+        -o -path 'test/shared/golden-install-vm.sh' \
+        -o -path 'test/shared/golden-vm-*.sh' \
+        -o -path 'test/shared/golden-vm-sendkey.py' \
+        -o -path 'test/shared/embed-components.py' \
+        -o -path 'test/shared/assets/BOOTX64*' \) -print)
     if [ -n "$bad" ]; then
         echo "ERROR: golden image provisioning assets found under test/:" >&2
         printf '%s\n' "$bad" >&2
