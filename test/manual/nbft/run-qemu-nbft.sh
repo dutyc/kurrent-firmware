@@ -6,22 +6,22 @@
 # The NBFT table is injected externally with -acpitable (the pre-iPXE
 # phase; iPXE-side table generation is the follow-up implementation).
 #
-# Usage: bash test/run-qemu-nbft.sh [round]     (default round: "nbft")
+# Usage: bash test/manual/nbft/run-qemu-nbft.sh [round]     (default round: "nbft")
 #
 # Prerequisites:
-#   1. sudo bash test/nvmet-setup.sh          (target, AUTH=0)
-#   2. bash test/make-debian-san-disk.sh      (2G SAN boot disk)
+#   1. sudo bash test/shared/nvmet-setup.sh          (target, AUTH=0)
+#   2. bash test/manual/nbft/make-debian-san-disk.sh      (2G SAN boot disk)
 #   3. build the iPXE firmware and deploy it to the FAT drive:
 #        make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
-#          EMBED=test/nvmeof-test.ipxe DEBUG=nvmetcp,tcp,efi_block:3
+#          EMBED=test/manual/nbft/nvmeof-test.ipxe DEBUG=nvmetcp,tcp,efi_block:3
 #        cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi diag/tmp/EFI/BOOT/BOOTX64.EFI
-#   4. python3 test/gen-nbft-table.py         (diag/nbft-qemu.bin)
+#   4. python3 test/manual/nbft/gen-nbft-table.py         (diag/nbft-qemu.bin)
 #
 # Outputs: diag/qemu-<round>.log, diag/netdump-<round>.pcap
 # Run outside sandbox (requires /dev/kvm).
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG

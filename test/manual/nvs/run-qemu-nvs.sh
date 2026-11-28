@@ -6,14 +6,14 @@
 # The two rounds MUST share the same diag/OVMF_VARS.fd.  Delete that
 # file before the "setup" round to start from a clean NVRAM.
 #
-# Usage: bash test/run-qemu-nvs.sh [setup|verify]   (default: verify)
+# Usage: bash test/manual/nvs/run-qemu-nvs.sh [setup|verify]   (default: verify)
 #
 # Prerequisites:
 #   build the firmware with the matching EMBED and deploy it:
 #     make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
-#       EMBED=test/nvs-setup.ipxe            # setup round
+#       EMBED=test/manual/nvs/nvs-setup.ipxe            # setup round
 #     make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
-#       EMBED=test/nvs-verify.ipxe           # verify round
+#       EMBED=test/manual/nvs/nvs-verify.ipxe           # verify round
 #     cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi \
 #        diag/tmp/EFI/BOOT/BOOTX64.EFI
 #
@@ -21,7 +21,7 @@
 # Run outside sandbox (requires /dev/kvm).
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG

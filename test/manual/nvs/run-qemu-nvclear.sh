@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # nvclear acceptance: three QEMU/OVMF rounds on one OVMF_VARS.fd, with
-# test/nvs-clear.ipxe embedded in the firmware.
+# test/manual/nvs/nvs-clear.ipxe embedded in the firmware.
 #
 #   round 1: store server-fingerprint / trust, read back
 #   round 2: read back (round 1 persisted) -> nvclear -> read back (empty)
@@ -21,7 +21,7 @@
 # Run outside the sandbox (requires /dev/kvm).
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG
@@ -36,7 +36,7 @@ command -v mcopy >/dev/null && command -v mkfs.vfat >/dev/null || {
 qemu_require
 
 # Embed the test script (EMBED paths are relative to the iPXE source root)
-cp "$ROOT/test/nvs-clear.ipxe" "$SRC/embed/nvs-clear.ipxe"
+cp "$ROOT/test/manual/nvs/nvs-clear.ipxe" "$SRC/embed/nvs-clear.ipxe"
 ( cd "$SRC" && rm -f bin-x86_64-efi/ipxe.efi \
   && make bin-x86_64-efi/ipxe.efi EMBED=embed/nvs-clear.ipxe -j"$(nproc)" ) \
   >"$D/nvs-build.log" 2>&1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a TPM quote captured by test/ak-test.ipxe.
+"""Verify a TPM quote captured by test/manual/ak/ak-test.ipxe.
 
 Reads the serial log, extracts ak-public / ak-name / ak-type / quote /
 quote-sig, and checks the quotation the same way the control plane
@@ -11,7 +11,7 @@ This is a stand-alone check for boot-time acceptance; the authoritative
 implementation is the control plane's attestation module.
 
 Usage:
-  python3 test/verify-ak-quote.py LOG NONCE [--baseline HEX]
+  python3 test/manual/ak/verify-ak-quote.py LOG NONCE [--baseline HEX]
 
 Output: one "OK ..." or "FAIL ..." line per check; exit status 1 on the
 first failure.

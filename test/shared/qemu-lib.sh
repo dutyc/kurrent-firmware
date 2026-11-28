@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# qemu-lib.sh - shared QEMU/OVMF scaffolding for the test/run-qemu-*.sh rounds.
+# qemu-lib.sh - shared QEMU/OVMF scaffolding for the test/manual/*/run-qemu-*.sh rounds.
 #
 # Sourced after the caller has set ROOT. Each round keeps its own firmware,
 # ESP, variable store, devices and serial backend; this library only owns the

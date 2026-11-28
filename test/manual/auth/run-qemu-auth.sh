@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Run one QEMU round of NVMe/TCP validation against the local nvmet target.
 #
-# Usage: bash test/run-qemu-auth.sh [round]     (default round: "auth")
+# Usage: bash test/manual/auth/run-qemu-auth.sh [round]     (default round: "auth")
 #
 # - serial log and pcap are written to diag/ as qemu-<round>.log and
 #   netdump-<round>.log (diag/ is gitignored: runtime artifacts stay local)
 # - the FAT drive diag/tmp/ must contain the test firmware at
 #   EFI/BOOT/BOOTX64.EFI, e.g. built with
-#   EMBED=test/nvmeof-auth-test.ipxe DEBUG=nvmetcp,nvmetcp_auth:3
+#   EMBED=test/manual/auth/nvmeof-auth-test.ipxe DEBUG=nvmetcp,nvmetcp_auth:3
 # - note: QEMU+OVMF provides no SMBIOS UUID to iPXE, so the host NQN
-#   falls back to "nqn.2014-08.org.ipxe:ipxe" (see test/nvmet-setup.sh)
+#   falls back to "nqn.2014-08.org.ipxe:ipxe" (see test/shared/nvmet-setup.sh)
 # - run outside sandbox (requires /dev/kvm)
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG

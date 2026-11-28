@@ -6,7 +6,7 @@
 # Prerequisite: diag/debian-rootfs/ built by
 #     sudo bash diag/make-debian-rootfs.sh
 #
-# Usage: bash test/make-debian-san-disk.sh
+# Usage: bash test/manual/nbft/make-debian-san-disk.sh
 #
 # Output: diag/nvme-boot.img (2G GPT: ESP 300MiB + ext4 rootfs)
 #
@@ -16,13 +16,13 @@
 # the NBFT table (firmware side) supplies the target at boot time.
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 
 # mkfs.ext4 -d must read root-only files (e.g. /etc/shadow, 640 root:shadow)
 # and preserve their ownership in the image; re-exec as root via sudo.
 if [ "$(id -u)" -ne 0 ]; then
         echo "==> re-exec as root (sudo)"
-        exec sudo bash "$ROOT/test/make-debian-san-disk.sh" "$@"
+        exec sudo bash "$ROOT/test/manual/nbft/make-debian-san-disk.sh" "$@"
 fi
 
 D=$ROOT/diag
@@ -31,8 +31,7 @@ IMG=$D/nvme-boot.img
 ESP=$D/.esp.img
 STAGE=$D/.esp-stage
 
-# Disk layout (4K sectors, same geometry rules as make-grub-bootdisk.sh:
-# nvmet file backend exposes 4096-byte logical blocks)
+# Disk layout (4K sectors: the nvmet file backend exposes 4096-byte blocks)
 SIZE_M=2048
 ESP_M=300
 ESP_START_M=8

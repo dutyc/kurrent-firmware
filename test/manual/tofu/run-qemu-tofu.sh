@@ -7,12 +7,12 @@
 # The three rounds MUST share diag/OVMF_VARS.fd.  Delete that file
 # before round 1 to start from a clean NVRAM.
 #
-# Usage: bash test/run-qemu-tofu.sh [1|2|3]
+# Usage: bash test/manual/tofu/run-qemu-tofu.sh [1|2|3]
 #
 # Prerequisites:
-#   build the firmware with test/tofu-test.ipxe embedded and deploy it:
+#   build the firmware with test/manual/tofu/tofu-test.ipxe embedded and deploy it:
 #     make -C .cache/ipxe-upstream/src bin-x86_64-efi/ipxe.efi \
-#       EMBED=test/tofu-test.ipxe
+#       EMBED=test/manual/tofu/tofu-test.ipxe
 #     cp .cache/ipxe-upstream/src/bin-x86_64-efi/ipxe.efi \
 #        diag/tmp/EFI/BOOT/BOOTX64.EFI
 #
@@ -20,7 +20,7 @@
 # Run outside sandbox (requires /dev/kvm).
 set -e
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 . "$ROOT/test/shared/qemu-lib.sh"
 
 D=$DIAG
@@ -28,7 +28,7 @@ ROUND=${1:-1}
 LOG=$D/qemu-tofu-$ROUND.log
 TMP=$D/tmp
 VARS=$D/OVMF_VARS.fd
-TLS=$ROOT/test/tls
+TLS=$DIAG/tls
 PORT=8443
 
 [ "$ROUND" = 1 ] || [ "$ROUND" = 2 ] || [ "$ROUND" = 3 ] || {
@@ -63,7 +63,7 @@ fi
 CERT=$TLS/certA.pem
 KEY=$TLS/keyA.pem
 [ "$ROUND" = 3 ] && { CERT=$TLS/certB.pem; KEY=$TLS/keyB.pem; }
-python3 "$ROOT/test/https-server.py" "$PORT" "$CERT" "$KEY" "$TMP/tlsroot" \
+python3 "$ROOT/test/manual/tofu/https-server.py" "$PORT" "$CERT" "$KEY" "$TMP/tlsroot" \
         >"$D/https-server.log" 2>&1 &
 SRV=$!
 trap 'kill $SRV 2>/dev/null || true' EXIT

@@ -23,7 +23,7 @@ the firmware-generated NBFT that iPXE will later install via
 EFI_ACPI_TABLE_PROTOCOL (the gap this tool fills for the pre-iPXE phase).
 
 Usage:
-    python3 test/gen-nbft-table.py [--mac 52:54:00:12:34:56] \
+    python3 test/manual/nbft/gen-nbft-table.py [--mac 52:54:00:12:34:56] \
         [--traddr 10.0.2.2] [--trsvcid 4420] \
         [--nqn nqn.2026-07.com.kurrent:test] \
         [--host-nqn nqn.2014-08.org.ipxe:ipxe] \

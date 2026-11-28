@@ -9,7 +9,7 @@ holds tests, QEMU ranges, capture analysis and fixtures only.
 
 | File | Used by | Purpose |
 |---|---|---|
-| `qemu-lib.sh` | `test/run-qemu-*.sh` | OVMF paths, ESP check, private TMPDIR and the shared QEMU argument groups (`QEMU_STD`, `QEMU_FAT`, `QEMU_NET`) |
+| `qemu-lib.sh` | `test/manual/*/run-qemu-*.sh` | OVMF paths, ESP check, private TMPDIR and the shared QEMU argument groups (`QEMU_STD`, `QEMU_FAT`, `QEMU_NET`) |
 
 `golden/shared/embed-components.py` regenerates the `EMBED_B64_*` blocks
 (initramfs-nbft components, BOOTX64 image and the golden-common copy) from the
@@ -27,7 +27,8 @@ python3 test/shared/verify-embed.py
 |---|---|---|
 | `fwtest-boot.sh` | PXE cold boot over an isolated bridge, with optional NVMe/TCP credentials | Requires root for the tap/bridge and a local dnsmasq; not sourced |
 | `fwtest-net.sh` | `setup`/`teardown` of the `br-fwtest` bridge and tap | Root; pairs with `fwtest-boot.sh` |
-| `fwtest-nvmet-tls.sh` | configfs nvmet target with TLS 1.3 and DH-HMAC-CHAP | Extends `test/nvmet-setup.sh` with the PSK keyring setup |
+| `nvmet-setup.sh` | configfs nvmet target for the manual auth and NBFT rounds | Optional `AUTH=1` enables DH-HMAC-CHAP; the shared target helper for `test/manual/{auth,nbft}` |
+| `fwtest-nvmet-tls.sh` | configfs nvmet target with TLS 1.3 and DH-HMAC-CHAP | Extends `test/shared/nvmet-setup.sh` with the PSK keyring setup |
 | `golden-esp-verify.sh` | Mount a 512-sector view of a golden image and list the 4K ESP | Read-only inspection |
 | `golden-net-rebuild.sh` | Rebuild `br0`/`tap0` and NAT after a host reboot | Root |
 | `golden-nvmet-enable.sh` | Re-enable an nvmet namespace from the host mount namespace | Root |
