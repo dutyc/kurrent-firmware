@@ -2,10 +2,17 @@
 
 [English](../en/distributions.md) | [中文](distributions.md)
 
-每个发行版有一个自包含的 `golden/<distro>/golden-image-setup-<distro>.sh`，运行
-共享的 A–F 定制流程；宿主侧辅助脚本与打包器在 `golden/shared/` 下。每个脚本内嵌
-`initramfs-nbft` 组件与 GRUB 2.14 产物，单文件即可拷入母盘运行。组件变更后
-重新运行 `python3 golden/shared/embed-components.py`。
+每个发行版有一个 `golden/<distro>/golden-image-setup-<distro>.sh` 模板，运行
+共享的 A–F 定制流程；宿主侧辅助脚本与生成器在 `golden/shared/` 下。构建期
+生成器把 `initramfs-nbft` 组件与 GRUB 2.14 镜像填入模板，输出到
+`dist/golden/`，作为 Release 资产发布；生成的脚本单文件即可拷入母盘运行。
+GRUB 镜像从 `grub-efi-2.14` Release 取用，并按 `golden/shared/grub-efi.lock`
+校验 SHA256。组件变更后重新生成：
+
+```bash
+bash golden/shared/build-grub-efi.sh
+python3 golden/shared/embed-components.py
+```
 
 ## 支持的发行版
 
@@ -71,6 +78,6 @@ dracut 重排模块目录时需重验该 override。
 2. 用自有流程安装并关机。
 3. 用使用者自己的 VM 或虚拟化方式启动已安装盘，运行 A–F。
 4. 运行隔离的宿主侧验收（见 [verification.md](verification.md)）；生产桥与端口不动。
-5. 组件变更后重新内嵌，并运行 `test/test-nbft-connect-nbct.sh`。
+5. 组件变更后重新生成并校验，并运行 `test/test-nbft-connect-nbct.sh`。
 
 各发行版的排障说明保留在归档中。

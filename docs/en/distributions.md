@@ -2,12 +2,19 @@
 
 [English](distributions.md) | [中文](../zh/distributions.md)
 
-Each distribution has one self-contained `golden/<distro>/golden-image-setup-<distro>.sh`
-that runs the shared A–F customization flow; the host-side helpers and the
-packer live under `golden/shared/`. Every script embeds the `initramfs-nbft`
-components and the GRUB 2.14 artifact, so a single file can be copied into a
-golden image and run. After a component change, re-run
-`python3 golden/shared/embed-components.py`.
+Each distribution has one `golden/<distro>/golden-image-setup-<distro>.sh`
+template that runs the shared A–F customization flow; the host-side helpers and
+the generator live under `golden/shared/`. Build-time generation fills the
+templates with the `initramfs-nbft` components and the GRUB 2.14 image, writing
+single-file scripts under `dist/golden/` for publication as Release assets; a
+generated script can be copied into a golden image and run there. The GRUB
+image is fetched from the `grub-efi-2.14` Release and checked against
+`golden/shared/grub-efi.lock`. After a component change, regenerate:
+
+```bash
+bash golden/shared/build-grub-efi.sh
+python3 golden/shared/embed-components.py
+```
 
 ## Supported distributions
 
@@ -87,6 +94,7 @@ GPT/ESP rebuild and still refreshes the ESP content.
 3. Start the installed disk with your own VM or virtualization tooling and run A–F.
 4. Run the isolated host-side acceptance (see [verification.md](verification.md));
    the production bridge and port stay untouched.
-5. Re-embed components after changes and run `test/test-nbft-connect-nbct.sh`.
+5. Regenerate and verify after component changes, and run
+   `test/test-nbft-connect-nbct.sh`.
 
 Per-distribution troubleshooting notes are kept in the archive.

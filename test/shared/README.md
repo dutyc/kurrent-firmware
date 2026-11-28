@@ -11,12 +11,13 @@ holds tests, QEMU ranges, capture analysis and fixtures only.
 |---|---|---|
 | `qemu-lib.sh` | `test/manual/*/run-qemu-*.sh` | OVMF paths, ESP check, private TMPDIR and the shared QEMU argument groups (`QEMU_STD`, `QEMU_FAT`, `QEMU_NET`) |
 
-`golden/shared/embed-components.py` regenerates the `EMBED_B64_*` blocks
-(initramfs-nbft components, BOOTX64 image and the golden-common copy) from the
-repository sources. `verify-embed.py` checks the decoded SHA-256 of every block
-against its source and fails on a missing, duplicated or stale copy:
+`golden/shared/build-grub-efi.sh` obtains the pinned GRUB image.
+`golden/shared/embed-components.py` fills the tracked templates and writes the
+single-file scripts under `dist/golden/`; `verify-embed.py` checks every decoded
+payload against its source and the image hash in `golden/shared/grub-efi.lock`:
 
 ```bash
+bash golden/shared/build-grub-efi.sh
 python3 golden/shared/embed-components.py
 python3 test/shared/verify-embed.py
 ```

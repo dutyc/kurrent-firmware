@@ -77,13 +77,18 @@ dist/secureboot/
 
 ## 母盘辅助脚本
 
-`golden/*/golden-image-setup-*.sh` 内嵌运行期组件的 base64 副本（`initramfs-nbft`
-文件、GRUB 2.14 镜像与共享库）。组件变更后重新内嵌并校验：
+`golden/*/golden-image-setup-*.sh` 是模板，`EMBED_B64_*` 为空；构建期由
+生成器把运行期组件、`golden/shared/` 源与 GRUB 2.14 镜像填入，输出到
+`dist/golden/`，作为 Release 资产发布。生成的脚本仍是单文件，可直接拷入
+母盘运行。
+
+GRUB 镜像不入库：`golden/shared/build-grub-efi.sh` 从 `grub-efi-2.14`
+Release 下载并按 `golden/shared/grub-efi.lock` 校验 SHA256；`--from-file`
+使用本地副本，`--rebuild` 用固定 Ubuntu 包在宿主重建。组件变更后重新生成
+并校验：
 
 ```bash
+bash golden/shared/build-grub-efi.sh
 python3 golden/shared/embed-components.py
 python3 test/shared/verify-embed.py
 ```
-
-`golden/shared/assets/BOOTX64-2.14-generic.EFI` 是由未修改上游源码构建的
-GNU GRUB 2.14 `x86_64-efi` 镜像。
