@@ -42,3 +42,30 @@ jobs:
 
       - name: Full firmware build
         run: bash test/ci-gates.sh build
+
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the pinned GRUB EFI
+        run: bash golden/shared/build-grub-efi.sh
+
+      - name: Generate the setup scripts
+        run: python3 golden/shared/embed-components.py
+
+      - name: Verify generated payloads
+        run: |
+          python3 test/shared/verify-embed.py
+          bash test/ci-gates.sh embed
+
+      - name: Write checksums
+        run: |
+          cd dist/golden
+          sha256sum */golden-image-setup-*.sh > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: golden-image-setup
+          path: dist/golden
+          if-no-files-found: error
