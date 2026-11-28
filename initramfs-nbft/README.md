@@ -1,6 +1,9 @@
 # initramfs-nbft — NBFT 消费模块（种子实现）
 
-Debian 系（initramfs-tools）的 NBFT（NVMe Boot Firmware Table）消费模块。
+NBFT（NVMe Boot Firmware Table）消费模块。`nbft-connect` 核心与 initramfs
+框架无关；本目录提供 Debian/Ubuntu 的 initramfs-tools 集成，Fedora/AlmaLinux/
+openSUSE 由 `golden/shared/golden-common.sh` 与各发行版脚本生成 dracut `95nbft`
+模块，消费同一核心。
 **种子定位**：实现仅供参考与上游提案，目标是由各发行版官方包自行纳入
 （iBFT 先例：open-iscsi 包自带 `local-top/iscsi` + `iscsi_auto`，Debian/Ubuntu
 同源继承，上游一处维护）。
@@ -12,6 +15,8 @@ nbft-connect                    核心脚本（框架无关，POSIX sh）
 initramfs/hooks/nbft           initramfs-tools hook（打包依赖 + 模块）
 initramfs/scripts/local-top/nbft  initramfs-tools local-top（网络 + 连接）
 ```
+
+dracut 系不在本目录提供模块文件，`95nbft` 由 golden 脚本注入。
 
 设计对齐：
 
@@ -40,7 +45,10 @@ initramfs/scripts/local-top/nbft  initramfs-tools local-top（网络 + 连接）
    （不再附 `--dhchap-secret`）；无 NBCT 表时回退 `nvme connect-all --nbft`
    （nvme-cli 2.5+；旧版自动降级 `connect-nbft`）
 
-## 母盘安装（一次定制，克隆即用）
+## 母盘安装（Debian/Ubuntu，initramfs-tools）
+
+dracut 系（Fedora/AlmaLinux/openSUSE）由 `golden/shared/` 与对应发行版脚本生成
+`95nbft` 后安装，不走本节命令。
 
 ```sh
 # 1. 安装依赖
