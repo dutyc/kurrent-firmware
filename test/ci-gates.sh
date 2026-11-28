@@ -46,6 +46,28 @@ gate_layout() {
         printf '%s\n' "$bad" >&2
         rc=1
     fi
+    # test/ is split by purpose; reject stray top-level entries in both levels.
+    local entry
+    for entry in test/*; do
+        [ -e "$entry" ] || continue
+        case "${entry#test/}" in
+        README.md|ci-gates.sh|archlinux|shared|manual|test-nbft-connect-nbct.sh) ;;
+        *)
+            echo "ERROR: unexpected test/ entry: $entry" >&2
+            rc=1
+            ;;
+        esac
+    done
+    for entry in test/manual/*; do
+        [ -e "$entry" ] || continue
+        case "${entry#test/manual/}" in
+        README.md|ak|auth|nbft|nvs|tofu) ;;
+        *)
+            echo "ERROR: unexpected test/manual/ entry: $entry" >&2
+            rc=1
+            ;;
+        esac
+    done
     n=$(find golden -maxdepth 2 -type f -name 'golden-image-setup-*.sh' | wc -l)
     [ "$n" -eq 8 ] || {
         echo "ERROR: expected 8 golden-image-setup scripts under golden/, found $n" >&2
