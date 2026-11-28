@@ -13,14 +13,14 @@ golden image and run. After a component change, re-run
 
 | Distribution | Version | Kernel | Acceptance |
 |---|---|---|---|
-| Debian 12 | bookworm | 6.12 (backports) | ⚠️ TLS cold boot; source-built NVMe userspace required |
-| Debian 13 | 13.6.0 | 6.12 (shipped) | ✅ authenticated cold boot |
-| Ubuntu 24.04 | 24.04 LTS | 6.8 (GA) | ✅ TLS cold boot |
-| Ubuntu 26.04 | 26.04 LTS | 7.0 (shipped) | ✅ authenticated cold boot |
-| Fedora 44 | 44 | 6.19 (shipped) | ✅ TLS cold boot |
-| AlmaLinux 10.2 | 10.2 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
-| openSUSE Leap 16.0 | 16.0 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | ✅ TLS cold boot |
-| Arch Linux | rolling (2026.11.01 ISO) | 7.3.6-arch1-1 | ✅ TLS cold boot |
+| Debian 12 | bookworm | 6.12 (backports) | TLS cold boot; source-built NVMe userspace (workaround) |
+| Debian 13 | 13.6.0 | 6.12 (shipped) | TLS cold boot |
+| Ubuntu 24.04 | 24.04 LTS | 6.8 (GA) | TLS cold boot; source-built ktls-utils (workaround) |
+| Ubuntu 26.04 | 26.04 LTS | 7.0 (shipped) | TLS cold boot |
+| Fedora 44 | 44 | 6.19 (shipped) | TLS cold boot; dracut network-module override (workaround) |
+| AlmaLinux 10.2 | 10.2 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | TLS cold boot; dracut network-module override (workaround) |
+| openSUSE Leap 16.0 | 16.0 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | TLS cold boot; dracut network-module override (workaround) |
+| Arch Linux | rolling (2026.11.01 ISO) | 7.3.6-arch1-1 | TLS cold boot; source-built ktls-utils (workaround) |
 
 Acceptance runs use each distribution's native unattended installation, but
 installer inputs are not deliverables of this repository. Three acceptance
@@ -29,15 +29,32 @@ fixtures stay in the tree: `golden/almalinux10/almalinux10.ks.in`,
 `golden/opensuse-leap16/leap16-profile.json`. Installation follows the
 operator's own process, and A–F starts from an installed system.
 
-Debian 12 needs a source-built NVMe userspace (`ktls-utils` / `libnvme` /
-`nvme-cli`) because bookworm has no packaged TLS-capable tooling; the costs are
-recorded in the [verification record](../zh/archive/debian12-tls-coldboot-verification.md).
+Three distributions need source-built NVMe userspace tooling because their
+release ships no TLS-capable package:
 
-Arch Linux is rolling; the matrix pins the 2026.11.01 ISO and kernel
-7.3.6-arch1-1 as the tested baseline. There is no TLS-capable `ktls-utils`
-package either, so the setup script builds 1.5.0 from a pinned tag and commit.
-The initramfs uses mkinitcpio hooks (`install/nbft`, `hooks/nbft`) with
-`autodetect` removed and obtains its lease through `dhcpcd`.
+- Debian 12 (bookworm) builds `ktls-utils`, `libnvme` and `nvme-cli`; the costs
+  are recorded in the
+  [verification record](../zh/archive/debian12-tls-coldboot-verification.md)
+  (about 1.24 MiB of source, 6.22 MiB of installed binaries, and 50.2 MiB of
+  build dependencies left on the image; the components sit outside apt and are
+  not upgraded or patched).
+- Ubuntu 24.04 ships ktls-utils 0.9 whose `tlshd` lacks the `gnutls_psk_*`
+  symbols, so the kernel TLS handshake fails with `-5`; the script purges it
+  and builds pinned ktls-utils 1.5.0.
+- Arch Linux is rolling; the matrix pins the 2026.11.01 ISO and kernel
+  7.3.6-arch1-1 as the tested baseline, and the script builds ktls-utils 1.5.0
+  from a pinned tag and commit. Its initramfs uses mkinitcpio hooks
+  (`install/nbft`, `hooks/nbft`) with `autodetect` removed and obtains its
+  lease through `dhcpcd`.
+
+Fedora, AlmaLinux and openSUSE Leap use dracut, whose `kernel-network-modules`
+pulls in the whole `drivers/net` tree (and, under `--no-hostonly`, GPU modules
+through `kernel-modules`). dracut has no supported way to constrain that set,
+so the shared setup replaces `kernel-network-modules`' `module-setup.sh` with a
+fixed wired-NIC allowlist and omits `drm`. The initramfs carries only the wired
+NIC drivers in the allowlist; wireless, USB-network and GPU/DRM modules are
+excluded, and the override must be re-checked when dracut reorganizes its
+module layout.
 
 ## Acceptance criteria
 

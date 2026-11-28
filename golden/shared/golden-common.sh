@@ -115,6 +115,57 @@ golden_install_tlshd_config() {
     [ -e /etc/tlshd/config ] || : > /etc/tlshd/config
 }
 
+# Pinned ktls-utils source build for distributions whose package predates the
+# NVMe TLS 1.3 PSK handshake (Ubuntu 24.04 ships 0.9, which links no GnuTLS PSK
+# credentials). The tarball is the same release Arch builds.
+GOLDEN_KTLS_UTILS_TAG="ktls-utils-1.5.0"
+GOLDEN_KTLS_UTILS_COMMIT="d0b4de1ba000fe6baf739e85f17bca33b821a16f"
+GOLDEN_KTLS_UTILS_SHA256="2a40edd383dc5910c375c36606ed941d013dbf4eaf7b9421b7b5bb09dc194ec4"
+GOLDEN_KTLS_UTILS_URL="https://codeload.github.com/oracle/ktls-utils/tar.gz/refs/tags/${GOLDEN_KTLS_UTILS_TAG}"
+
+golden_build_ktls_utils() {
+    local state=/usr/lib/ktls-utils.golden-version
+    if [ -x /usr/sbin/tlshd ] && [ "$(cat "$state" 2>/dev/null)" = "$GOLDEN_KTLS_UTILS_TAG" ]; then
+        echo "    tlshd is already ${GOLDEN_KTLS_UTILS_TAG}, skipping the build"
+        return 0
+    fi
+    local url=${GOLDEN_KTLS_UTILS_SOURCE_URL:-$GOLDEN_KTLS_UTILS_URL}
+    local work src
+    work=$(mktemp -d /var/tmp/ktls-utils.XXXXXX)
+    echo "    building ${GOLDEN_KTLS_UTILS_TAG} (pinned commit ${GOLDEN_KTLS_UTILS_COMMIT})"
+    curl -fsSL --retry 3 --connect-timeout 20 -o "$work/src.tar" "$url" || {
+        echo "ERROR: cannot download the ktls-utils source: $url" >&2
+        echo "       set GOLDEN_KTLS_UTILS_SOURCE_URL to a reachable mirror or file:// path" >&2
+        rm -rf "$work"
+        exit 1
+    }
+    echo "$GOLDEN_KTLS_UTILS_SHA256  $work/src.tar" | sha256sum -c - >/dev/null || {
+        echo "ERROR: ktls-utils tarball SHA256 mismatch" >&2
+        rm -rf "$work"
+        exit 1
+    }
+    tar -xf "$work/src.tar" -C "$work"
+    src=$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'ktls-utils-*' | head -n 1)
+    [ -n "$src" ] || { echo "ERROR: ktls-utils source directory not found" >&2; rm -rf "$work"; exit 1; }
+    (
+        cd "$src"
+        ./autogen.sh
+        ./configure --prefix=/usr --sysconfdir=/etc
+        make -j"$(nproc)"
+        make install
+    )
+    rm -rf "$work"
+    [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils installed without /usr/sbin/tlshd" >&2; exit 1; }
+    nm -D /usr/sbin/tlshd 2>/dev/null | grep -q gnutls_psk_allocate_client_credentials || {
+        echo "ERROR: installed tlshd has no GnuTLS PSK support" >&2
+        exit 1
+    }
+    # A wrong prefix can leave /usr/etc/tlshd behind; the canonical path is /etc/tlshd.
+    rm -rf /usr/etc/tlshd
+    echo "$GOLDEN_KTLS_UTILS_TAG" > "$state"
+    echo "    $GOLDEN_KTLS_UTILS_TAG installed (tlshd links GnuTLS PSK)"
+}
+
 golden_init() {
     golden_parse_args "$@"
     golden_resolve_components
@@ -767,6 +818,147 @@ EOF
     chmod 0755 "$mod/module-setup.sh"
 }
 
+# Wired NIC candidates shared with the Arch mkinitcpio hook
+# (golden/archlinux/mkinitcpio-nbft/install/nbft). Wireless, USB, WWAN and CAN
+# adapters are not boot paths; GPU drivers stay out with early KMS disabled.
+GOLDEN_WIRED_NICS="virtio_net vmxnet3 hv_netvsc \
+    e1000 e1000e igb igc ixgbe ixgbevf i40e iavf ice \
+    r8169 tg3 bnx2 bnx2x bnxt_en \
+    mlx4_core mlx5_core \
+    qede qlcnic netxen_nic cxgb4 sfc nfp liquidio atlantic sky2 skge \
+    alx atl1c atl1e be2net \
+    ena gve mana hns3 amd_xgbe \
+    8139too via_rhine sis900"
+
+# Storage, filesystem and kTLS modules that every boot path needs.
+GOLDEN_CORE_MODULES="nvme nvme_tcp nvme_auth nvme_keyring tls gcm ccm \
+    chacha20poly1305 aesni_intel ghash_clmulni_intel virtio_pci virtio_blk \
+    virtio_scsi sd_mod scsi_mod dm_mod ext4 xfs"
+
+# Print the named modules present on the running kernel. Missing names are
+# skipped: a golden image must build on distributions without every driver.
+golden_available_modules() {
+    local _m
+    for _m in "$@"; do
+        modinfo -n "$_m" >/dev/null 2>&1 && printf '%s\n' "$_m"
+    done
+    return 0
+}
+
+golden_available_wired_nics() {
+    golden_available_modules $GOLDEN_WIRED_NICS
+    return 0
+}
+
+# Check a generated initramfs against its lsinitrd/lsinitramfs listing.
+# golden_verify_initramfs <image> <listing-file> <kver> <label>
+golden_verify_initramfs() {
+    local img=$1 listing=$2 kver=$3 label=$4 pat n size
+    [ -f "$img" ] || { echo "ERROR: $label: $img is missing"; exit 1; }
+    [ -f "$listing" ] || { echo "ERROR: $label: initramfs listing $listing is missing"; exit 1; }
+    for pat in '(^|/)nbft-connect$' '(^|/)tlshd$' '(^|/)keyctl$' \
+        '(^|/)nvme$' '/nvme\.ko' '/nvme[-_]tcp\.ko' 'net/tls/tls' \
+        '/virtio_net\.ko' '/gcm\.ko' '/ccm\.ko' '/chacha20poly1305\.ko' \
+        '/aesni[-_]intel\.ko' '/ghash[-_]clmulni[-_]intel\.ko'; do
+        n=$(grep -Ec "$pat" "$listing" || true)
+        if [ "$n" -eq 0 ] && grep -qE "$pat" "/lib/modules/$kver/modules.builtin" 2>/dev/null; then
+            echo "    $label: $pat built into the kernel"
+            continue
+        fi
+        [ "$n" -gt 0 ] || { echo "ERROR: $label: $pat not found in $img"; exit 1; }
+    done
+    for pat in '/nvidia[^/]*\.ko' '/amdgpu\.ko' '/iwlwifi\.ko' \
+        '/ath10k[^/]*\.ko' '/ath11k[^/]*\.ko' '/rtw89[^/]*\.ko' \
+        '/brcmfmac[^/]*\.ko' '/drivers/net/wireless/' '/drivers/net/usb/' \
+        '/drivers/net/wan/'; do
+        n=$(grep -Ec "$pat" "$listing" || true)
+        [ "$n" -eq 0 ] || { echo "ERROR: $label: $img contains $pat ($n entries)"; exit 1; }
+    done
+    size=$(stat -c %s "$img")
+    echo "    $label: initramfs size $((size / 1024 / 1024)) MiB ($size bytes)"
+    [ "$size" -le $((120 * 1024 * 1024)) ] || {
+        echo "ERROR: $label: $img is $size bytes, above the 120 MiB limit"; exit 1
+    }
+}
+
+# Build a Debian/Ubuntu (initramfs-tools) initramfs from the shared wired list.
+# Writes MODULES=list, refreshes a managed block in /etc/initramfs-tools/modules
+# and verifies the result. User content outside the block is preserved and
+# repeated runs are idempotent.
+golden_initramfs_tools_wired() {
+    local confdir=/etc/initramfs-tools/conf.d modfile=/etc/initramfs-tools/modules
+    local begin='# BEGIN kurrent nbft (managed)' end='# END kurrent nbft (managed)'
+    local img=/boot/initrd.img-$KVER list mods tmp
+    mkdir -p "$confdir"
+    printf '%s\n' \
+        '# Written by the golden image setup: use the explicit module list only.' \
+        'MODULES=list' > "$confdir/90-kurrent-nbft"
+    mods=$(golden_available_wired_nics)
+    mods="$mods
+$(golden_available_modules $GOLDEN_CORE_MODULES)"
+    if command -v lvm >/dev/null 2>&1; then
+        mods="$mods
+$(golden_available_modules lvm)"
+    fi
+    mods=$(printf '%s\n' "$mods" | awk 'NF && !seen[$0]++')
+    [ -n "$mods" ] || { echo "ERROR: no initramfs-tools modules available"; exit 1; }
+    [ -f "$modfile" ] || : > "$modfile"
+    tmp=$(mktemp "${TMPDIR:-/tmp}/golden-modules.XXXXXX")
+    awk -v b="$begin" -v e="$end" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { print }
+    ' "$modfile" > "$tmp"
+    { cat "$tmp"; echo "$begin"; printf '%s\n' "$mods"; echo "$end"; } > "$modfile"
+    rm -f "$tmp"
+    update-initramfs -u -k "$KVER"
+    list=$(mktemp "${TMPDIR:-/tmp}/golden-initrd.XXXXXX")
+    lsinitramfs "$img" > "$list" 2>/dev/null || {
+        rm -f "$list"
+        echo "ERROR: lsinitramfs failed for $img"
+        exit 1
+    }
+    golden_verify_initramfs "$img" "$list" "$KVER" "initramfs-tools"
+    rm -f "$list"
+}
+
+# dracut 的 kernel-network-modules 按 eth 符号扫描整个 drivers/net（只排除
+# wireless/isdn/uwb），--drivers 无法约束它，USB 网卡驱动因此进入 initramfs。
+# 该模块是 network-manager/systemd-networkd 的依赖，不能 --omit；用同一份有线
+# 白名单覆盖其 installkernel，保留依赖解析与内核网络基础模块。
+golden_dracut_wired_network_module() {
+    local drivers=$1 mod=
+    for mod in /usr/lib/dracut/modules.d/*kernel-network-modules; do
+        [ -d "$mod" ] && break
+        mod=
+    done
+    [ -n "$mod" ] || { echo "ERROR: dracut kernel-network-modules not found"; return 1; }
+    cat > "$mod/module-setup.sh" <<EOF
+#!/usr/bin/bash
+# Overwritten by golden-image-setup: the packaged module scans all of
+# drivers/net, which pulls USB NIC drivers regardless of --drivers.
+check() { return 255; }
+installkernel() {
+    instmods $drivers
+    instmods '=drivers/net/mdio' '=drivers/net/phy' '=drivers/net/team'
+    instmods ecb arc4 bridge stp llc ipv6 bonding 8021q ipvlan macvlan af_packet
+}
+EOF
+}
+
+# Space-separated dracut driver list: wired NICs plus storage/filesystem/kTLS.
+# Passing this to dracut --drivers replaces the full --no-hostonly driver set,
+# so dracut still pulls the dependencies of every listed module.
+golden_dracut_wired_drivers() {
+    local mods
+    mods=$(golden_available_wired_nics)
+    mods="$mods $(golden_available_modules $GOLDEN_CORE_MODULES)"
+    if command -v lvm >/dev/null 2>&1; then
+        mods="$mods $(golden_available_modules lvm)"
+    fi
+    printf '%s\n' "$mods" | awk 'NF && !seen[$0]++ { printf "%s%s", sep, $0; sep=" " } END { print "" }'
+}
+
 # Full B stage for the NetworkManager variants (shared package-independent part).
 phase_b_dracut_nm() {
     log "[B] initramfs seed module (dracut 95nbft: NBCT credentials + kernel TLS)"
@@ -774,19 +966,30 @@ phase_b_dracut_nm() {
     install -m 0755 "$COMPONENT_DIR/nbft-connect" /usr/libexec/nbft-connect
     golden_install_tlshd_config
     golden_write_dracut_module_nm /usr/lib/dracut/modules.d/95nbft
-    # --no-hostonly：母盘跨硬件（网卡/存储驱动全量）。
+    # --no-hostonly keeps the image portable; --drivers replaces its full
+    # driver set with the shared wired NIC and storage/crypto whitelist.
     # --omit nvmf：发行版原生 95nvmf 只做无凭据的 connect-all --nbft，
     # 与本模块的 NBCT 带凭据连接互斥，必须排除以免先发明文/无认证握手。
-    dracut --force --no-hostonly --add "nbft network network-manager" \
-        --omit "nvmf" --kver "$KVER"
-    # 注意：grep -q 提前退出会让上游 lsinitrd 吃到 SIGPIPE（pipefail 下误判失败），
-    # 因此用 grep -c 消费完整输出后再判断
-    local img=$INITRD_SRC nbft_count nm_count tls_count
-    nbft_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'nbft' || true)
-    nm_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'NetworkManager' || true)
-    tls_count=$(lsinitrd "$img" 2>/dev/null | grep -c 'tlshd' || true)
+    # --omit drm：initrd 只用串口控制台，drm 模块会拉入 amdgpu 等 GPU 驱动。
+    local drivers img=$INITRD_SRC list nbft_count nm_count tls_count
+    drivers=$(golden_dracut_wired_drivers)
+    [ -n "$drivers" ] || { echo "ERROR: no wired dracut drivers available"; exit 1; }
+    golden_dracut_wired_network_module "$drivers"
+    dracut --force --no-hostonly --drivers "$drivers" \
+        --add "nbft network network-manager" --omit "nvmf drm" --kver "$KVER"
+    list=$(mktemp "${TMPDIR:-/tmp}/golden-initrd.XXXXXX")
+    lsinitrd "$img" > "$list" 2>/dev/null || {
+        rm -f "$list"
+        echo "ERROR: lsinitrd failed for $img"
+        exit 1
+    }
+    nbft_count=$(grep -c 'nbft' "$list" || true)
+    nm_count=$(grep -c 'NetworkManager' "$list" || true)
+    tls_count=$(grep -c 'tlshd' "$list" || true)
     [ "$nbft_count" -gt 0 ] || { echo "ERROR: $img has no nbft component"; exit 1; }
     [ "$nm_count" -gt 0 ] || { echo "ERROR: $img has no NetworkManager (initrd DHCP owner)"; exit 1; }
     [ "$tls_count" -gt 0 ] || { echo "ERROR: $img has no tlshd (required for kernel TLS)"; exit 1; }
+    golden_verify_initramfs "$img" "$list" "$KVER" "dracut"
+    rm -f "$list"
     echo "    $img contains nbft ($nbft_count), NetworkManager ($nm_count), tlshd ($tls_count)"
 }
