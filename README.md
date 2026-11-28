@@ -2,7 +2,6 @@
 
 [![License](https://img.shields.io/badge/License-GPL--2.0-green)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware)
-[![Version](https://img.shields.io/github/v/tag/dutyc/kurrent-firmware)](https://github.com/dutyc/kurrent-firmware/releases)
 [![Platform](https://img.shields.io/badge/Platform-x86_64%20UEFI-0f766e)](docs/en/build.md)
 [![Upstream](https://img.shields.io/badge/Upstream-iPXE%20e6e51ccb-111111)](patches/README.md)
 [![Patches](https://img.shields.io/badge/Patches-12-7c3aed)](docs/en/build.md)
