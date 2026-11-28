@@ -22,12 +22,10 @@ golden image and run. After a component change, re-run
 | openSUSE Leap 16.0 | 16.0 | 6.12 (`CONFIG_NVME_TCP_TLS=y`) | TLS cold boot; dracut network-module override (workaround) |
 | Arch Linux | rolling (2026.11.01 ISO) | 7.3.6-arch1-1 | TLS cold boot; source-built ktls-utils (workaround) |
 
-Acceptance runs use each distribution's native unattended installation, but
-installer inputs are not deliverables of this repository. Three acceptance
-fixtures stay in the tree: `golden/almalinux10/almalinux10.ks.in`,
-`golden/archlinux/archinstall.json.in` and
-`golden/opensuse-leap16/leap16-profile.json`. Installation follows the
-operator's own process, and A–F starts from an installed system.
+Acceptance runs use each distribution's native unattended installation;
+installer inputs and local VM helpers are not shipped with the repository.
+Installation follows the operator's own process, and A–F starts from an
+installed system.
 
 Three distributions need source-built NVMe userspace tooling because their
 release ships no TLS-capable package:
@@ -86,8 +84,7 @@ GPT/ESP rebuild and still refreshes the ESP content.
    (installer kernel/initrd names, boot arguments when using an unattended
    installer, package-manager source format). Use a 4K logical-block disk for the target.
 2. Install with your own process and power off.
-3. Start the customization VM with `golden/shared/golden-vm-run.sh` (or
-   `golden-ubuntu-vm-run.sh`), copy the script in and run A–F.
+3. Start the installed disk with your own VM or virtualization tooling and run A–F.
 4. Run the isolated host-side acceptance (see [verification.md](verification.md));
    the production bridge and port stay untouched.
 5. Re-embed components after changes and run `test/test-nbft-connect-nbct.sh`.

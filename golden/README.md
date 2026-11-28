@@ -2,10 +2,10 @@
 
 Provisioning assets for the distribution golden images. Each `golden/<distro>/`
 directory holds that distribution's `golden-image-setup-*.sh`, which runs the
-shared A–F customization stages; three directories also keep the installer
-inputs used as acceptance fixtures, which are not deliverables.
-`golden/shared/` holds the common library, the host-side VM helpers, the embed
-tooling and the GRUB image that the scripts embed.
+shared A–F customization stages; `golden/archlinux/` additionally ships
+`mkinitcpio-nbft/`. Installer inputs and local VM helpers are not shipped with
+the repository. `golden/shared/` holds the common library, the embed tooling
+and the GRUB image that the scripts embed.
 
 Tests, QEMU ranges, capture analysis and fixtures stay under `test/`. The
 distribution matrix and the A–F flow are documented in
