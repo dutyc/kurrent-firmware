@@ -1,6 +1,6 @@
 # NVMe-oF (NVMe/TCP) 支持研究
 
-> 分支：`research/nvme-of`（基于 main / v0.1.2）
+> 分支：`research/nvme-of`（基于 main / 20fb7c8）
 > 状态：研究阶段（M1 完成）
 >
 > 实机验证进展（2026-08-18）：QEMU + nvmet + GRUB 2.14 的 SAN 引导链路已验证通过，
