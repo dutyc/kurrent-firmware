@@ -805,8 +805,10 @@ golden_verify_initramfs() {
     local img=$1 listing=$2 kver=$3 label=$4 pat n size
     [ -f "$img" ] || { echo "ERROR: $label: $img is missing"; exit 1; }
     [ -f "$listing" ] || { echo "ERROR: $label: initramfs listing $listing is missing"; exit 1; }
-    for pat in nbft-connect tlshd keyctl nvme 'nvme[-_]tcp' tls virtio_net gcm ccm \
-        chacha20poly1305 'aesni[-_]intel' 'ghash[-_]clmulni[-_]intel'; do
+    for pat in '(^|/)nbft-connect$' '(^|/)tlshd$' '(^|/)keyctl$' \
+        '(^|/)nvme$' '/nvme\.ko' '/nvme[-_]tcp\.ko' 'net/tls/tls' \
+        '/virtio_net\.ko' '/gcm\.ko' '/ccm\.ko' '/chacha20poly1305\.ko' \
+        '/aesni[-_]intel\.ko' '/ghash[-_]clmulni[-_]intel\.ko'; do
         n=$(grep -Ec "$pat" "$listing" || true)
         if [ "$n" -eq 0 ] && grep -qE "$pat" "/lib/modules/$kver/modules.builtin" 2>/dev/null; then
             echo "    $label: $pat built into the kernel"
