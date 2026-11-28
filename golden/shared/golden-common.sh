@@ -115,6 +115,57 @@ golden_install_tlshd_config() {
     [ -e /etc/tlshd/config ] || : > /etc/tlshd/config
 }
 
+# Pinned ktls-utils source build for distributions whose package predates the
+# NVMe TLS 1.3 PSK handshake (Ubuntu 24.04 ships 0.9, which links no GnuTLS PSK
+# credentials). The tarball is the same release Arch builds.
+GOLDEN_KTLS_UTILS_TAG="ktls-utils-1.5.0"
+GOLDEN_KTLS_UTILS_COMMIT="d0b4de1ba000fe6baf739e85f17bca33b821a16f"
+GOLDEN_KTLS_UTILS_SHA256="2a40edd383dc5910c375c36606ed941d013dbf4eaf7b9421b7b5bb09dc194ec4"
+GOLDEN_KTLS_UTILS_URL="https://codeload.github.com/oracle/ktls-utils/tar.gz/refs/tags/${GOLDEN_KTLS_UTILS_TAG}"
+
+golden_build_ktls_utils() {
+    local state=/usr/lib/ktls-utils.golden-version
+    if [ -x /usr/sbin/tlshd ] && [ "$(cat "$state" 2>/dev/null)" = "$GOLDEN_KTLS_UTILS_TAG" ]; then
+        echo "    tlshd is already ${GOLDEN_KTLS_UTILS_TAG}, skipping the build"
+        return 0
+    fi
+    local url=${GOLDEN_KTLS_UTILS_SOURCE_URL:-$GOLDEN_KTLS_UTILS_URL}
+    local work src
+    work=$(mktemp -d /var/tmp/ktls-utils.XXXXXX)
+    echo "    building ${GOLDEN_KTLS_UTILS_TAG} (pinned commit ${GOLDEN_KTLS_UTILS_COMMIT})"
+    curl -fsSL --retry 3 --connect-timeout 20 -o "$work/src.tar" "$url" || {
+        echo "ERROR: cannot download the ktls-utils source: $url" >&2
+        echo "       set GOLDEN_KTLS_UTILS_SOURCE_URL to a reachable mirror or file:// path" >&2
+        rm -rf "$work"
+        exit 1
+    }
+    echo "$GOLDEN_KTLS_UTILS_SHA256  $work/src.tar" | sha256sum -c - >/dev/null || {
+        echo "ERROR: ktls-utils tarball SHA256 mismatch" >&2
+        rm -rf "$work"
+        exit 1
+    }
+    tar -xf "$work/src.tar" -C "$work"
+    src=$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'ktls-utils-*' | head -n 1)
+    [ -n "$src" ] || { echo "ERROR: ktls-utils source directory not found" >&2; rm -rf "$work"; exit 1; }
+    (
+        cd "$src"
+        ./autogen.sh
+        ./configure --prefix=/usr --sysconfdir=/etc
+        make -j"$(nproc)"
+        make install
+    )
+    rm -rf "$work"
+    [ -x /usr/sbin/tlshd ] || { echo "ERROR: ktls-utils installed without /usr/sbin/tlshd" >&2; exit 1; }
+    nm -D /usr/sbin/tlshd 2>/dev/null | grep -q gnutls_psk_allocate_client_credentials || {
+        echo "ERROR: installed tlshd has no GnuTLS PSK support" >&2
+        exit 1
+    }
+    # A wrong prefix can leave /usr/etc/tlshd behind; the canonical path is /etc/tlshd.
+    rm -rf /usr/etc/tlshd
+    echo "$GOLDEN_KTLS_UTILS_TAG" > "$state"
+    echo "    $GOLDEN_KTLS_UTILS_TAG installed (tlshd links GnuTLS PSK)"
+}
+
 golden_init() {
     golden_parse_args "$@"
     golden_resolve_components
