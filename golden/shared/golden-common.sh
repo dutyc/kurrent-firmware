@@ -779,13 +779,23 @@ GOLDEN_WIRED_NICS="virtio_net vmxnet3 hv_netvsc \
     ena gve mana hns3 amd_xgbe \
     8139too via_rhine sis900"
 
-# Print the wired NIC modules present on the running kernel. Missing names are
+# Storage, filesystem and kTLS modules that every boot path needs.
+GOLDEN_CORE_MODULES="nvme nvme_tcp nvme_auth nvme_keyring tls gcm ccm \
+    chacha20poly1305 aesni_intel ghash_clmulni_intel virtio_pci virtio_blk \
+    virtio_scsi sd_mod scsi_mod dm_mod ext4 xfs"
+
+# Print the named modules present on the running kernel. Missing names are
 # skipped: a golden image must build on distributions without every driver.
-golden_available_wired_nics() {
+golden_available_modules() {
     local _m
-    for _m in $GOLDEN_WIRED_NICS; do
+    for _m in "$@"; do
         modinfo -n "$_m" >/dev/null 2>&1 && printf '%s\n' "$_m"
     done
+    return 0
+}
+
+golden_available_wired_nics() {
+    golden_available_modules $GOLDEN_WIRED_NICS
     return 0
 }
 
@@ -814,6 +824,47 @@ golden_verify_initramfs() {
     [ "$size" -le $((120 * 1024 * 1024)) ] || {
         echo "ERROR: $label: $img is $size bytes, above the 120 MiB limit"; exit 1
     }
+}
+
+# Build a Debian/Ubuntu (initramfs-tools) initramfs from the shared wired list.
+# Writes MODULES=list, refreshes a managed block in /etc/initramfs-tools/modules
+# and verifies the result. User content outside the block is preserved and
+# repeated runs are idempotent.
+golden_initramfs_tools_wired() {
+    local confdir=/etc/initramfs-tools/conf.d modfile=/etc/initramfs-tools/modules
+    local begin='# BEGIN kurrent nbft (managed)' end='# END kurrent nbft (managed)'
+    local img=/boot/initrd.img-$KVER list mods tmp
+    mkdir -p "$confdir"
+    printf '%s\n' \
+        '# Written by the golden image setup: use the explicit module list only.' \
+        'MODULES=list' > "$confdir/90-kurrent-nbft"
+    mods=$(golden_available_wired_nics)
+    mods="$mods
+$(golden_available_modules $GOLDEN_CORE_MODULES)"
+    if command -v lvm >/dev/null 2>&1; then
+        mods="$mods
+$(golden_available_modules lvm)"
+    fi
+    mods=$(printf '%s\n' "$mods" | awk 'NF && !seen[$0]++')
+    [ -n "$mods" ] || { echo "ERROR: no initramfs-tools modules available"; exit 1; }
+    [ -f "$modfile" ] || : > "$modfile"
+    tmp=$(mktemp "${TMPDIR:-/tmp}/golden-modules.XXXXXX")
+    awk -v b="$begin" -v e="$end" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        !skip { print }
+    ' "$modfile" > "$tmp"
+    { cat "$tmp"; echo "$begin"; printf '%s\n' "$mods"; echo "$end"; } > "$modfile"
+    rm -f "$tmp"
+    update-initramfs -u -k "$KVER"
+    list=$(mktemp "${TMPDIR:-/tmp}/golden-initrd.XXXXXX")
+    lsinitramfs "$img" > "$list" 2>/dev/null || {
+        rm -f "$list"
+        echo "ERROR: lsinitramfs failed for $img"
+        exit 1
+    }
+    golden_verify_initramfs "$img" "$list" "$KVER" "initramfs-tools"
+    rm -f "$list"
 }
 
 # Full B stage for the NetworkManager variants (shared package-independent part).
