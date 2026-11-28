@@ -53,4 +53,19 @@ check() { # check <name> <listing> <ok|fail>
 check "tlshd does not satisfy the tls module" "$TMP/no-tls" fail
 check "the nvme binary does not satisfy the nvme module" "$TMP/no-nvme" fail
 check "a complete listing passes" "$TMP/full" ok
+
+# 3. Standard modprobe configuration files mention iwlwifi/nvidia but are not
+#    modules: they must not trip the forbidden checks.
+{ cat "$TMP/full"; \
+  echo "etc/modprobe.d/iwlwifi.conf"; \
+  echo "usr/lib/modprobe.d/nvidia-graphics-drivers.conf"; } > "$TMP/full-conf"
+check "modprobe configuration files are not forbidden modules" "$TMP/full-conf" ok
+
+# 4. The wireless and GPU module paths themselves must be rejected.
+{ cat "$TMP/full"; \
+  echo "lib/modules/$KV/kernel/drivers/net/wireless/intel/iwlwifi/iwlwifi.ko"; } > "$TMP/full-wifi"
+check "wireless modules are rejected" "$TMP/full-wifi" fail
+{ cat "$TMP/full"; \
+  echo "lib/modules/$KV/kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko"; } > "$TMP/full-gpu"
+check "GPU modules are rejected" "$TMP/full-gpu" fail
 echo "test-initramfs-guard: OK"

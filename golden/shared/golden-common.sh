@@ -816,8 +816,10 @@ golden_verify_initramfs() {
         fi
         [ "$n" -gt 0 ] || { echo "ERROR: $label: $pat not found in $img"; exit 1; }
     done
-    for pat in nvidia amdgpu iwlwifi ath10k ath11k rtw89 brcmfmac \
-        '/drivers/net/wireless/' '/drivers/net/usb/' '/drivers/net/wan/'; do
+    for pat in '/nvidia[^/]*\.ko' '/amdgpu\.ko' '/iwlwifi\.ko' \
+        '/ath10k[^/]*\.ko' '/ath11k[^/]*\.ko' '/rtw89[^/]*\.ko' \
+        '/brcmfmac[^/]*\.ko' '/drivers/net/wireless/' '/drivers/net/usb/' \
+        '/drivers/net/wan/'; do
         n=$(grep -Ec "$pat" "$listing" || true)
         [ "$n" -eq 0 ] || { echo "ERROR: $label: $img contains $pat ($n entries)"; exit 1; }
     done
