@@ -85,14 +85,14 @@ Native drivers are adapted for high-performance NICs (2.5G and above); ordinary
 
 ## Golden image helpers
 
-`test/*/golden-image-setup-*.sh` embed base64 copies of their runtime
+`golden/*/golden-image-setup-*.sh` embed base64 copies of their runtime
 components (the `initramfs-nbft` files, the GRUB 2.14 image and the shared
 library). After changing a source, regenerate and verify them:
 
 ```bash
-python3 test/shared/embed-components.py
+python3 golden/shared/embed-components.py
 python3 test/shared/verify-embed.py
 ```
 
-`test/shared/assets/BOOTX64-2.14-generic.EFI` is a GNU GRUB 2.14 `x86_64-efi`
+`golden/shared/assets/BOOTX64-2.14-generic.EFI` is a GNU GRUB 2.14 `x86_64-efi`
 image built from unmodified upstream sources.

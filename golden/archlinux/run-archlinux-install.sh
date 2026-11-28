@@ -1,7 +1,7 @@
 #!/bin/bash
 # run-archlinux-install.sh - unattended Arch Linux install VM (archinstall + OVMF)
 #
-# Usage: bash test/archlinux/run-archlinux-install.sh [ISO]
+# Usage: bash golden/archlinux/run-archlinux-install.sh [ISO]
 # Default ISO: <repo>/.cache/isos/archlinux-2026.11.01-x86_64.iso
 #
 # Flow: 4K-logical virtio-blk target disk -> extract the archiso kernel/initrd
@@ -23,10 +23,10 @@ HTTP_PORT=${HTTP_PORT:-8011}
 HTTP_PID_FILE=$CACHE/archinstall/http-$HTTP_PORT.pid
 SOCK=$CACHE/vm/archlinux-install.sock
 SSH_KEY=$CACHE/ssh/archlinux
-TEMPLATE=$ROOT/test/archlinux/archinstall.json.in
-WRAPPER=$ROOT/test/archlinux/arch-install.sh
+TEMPLATE=$ROOT/golden/archlinux/archinstall.json.in
+WRAPPER=$ROOT/golden/archlinux/arch-install.sh
 
-. "$ROOT/test/shared/golden-install-vm.sh"
+. "$ROOT/golden/shared/golden-install-vm.sh"
 
 [ -f "$ISO" ] || { echo "ERROR: missing ISO: $ISO" >&2; exit 1; }
 

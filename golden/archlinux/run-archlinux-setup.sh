@@ -3,7 +3,7 @@
 # customization script over SSH
 #
 # Usage:
-#   bash test/archlinux/run-archlinux-setup.sh [--skip-disk] [--yes] [other setup options]
+#   bash golden/archlinux/run-archlinux-setup.sh [--skip-disk] [--yes] [other setup options]
 #
 # Prerequisite: run-archlinux-install.sh has produced .cache/vm/archlinux.raw
 # and the SSH key. The customization script is piped over stdin, so the guest
@@ -19,7 +19,7 @@ SETUP_LOG=${SETUP_LOG:-$CACHE/vm/archlinux-setup.log}
 HTTP_PORT=${HTTP_PORT:-8012}
 HTTP_PID_FILE=$CACHE/archsetup/http-$HTTP_PORT.pid
 SSH_KEY=$CACHE/ssh/archlinux
-SCRIPT=$ROOT/test/archlinux/golden-image-setup-archlinux.sh
+SCRIPT=$ROOT/golden/archlinux/golden-image-setup-archlinux.sh
 SSH_PORT=${SSH_PORT:-2227}
 
 [ -f "$RAW" ] || { echo "ERROR: missing target disk $RAW (run run-archlinux-install.sh first)" >&2; exit 1; }

@@ -77,13 +77,13 @@ dist/secureboot/
 
 ## 母盘辅助脚本
 
-`test/*/golden-image-setup-*.sh` 内嵌运行期组件的 base64 副本（`initramfs-nbft`
+`golden/*/golden-image-setup-*.sh` 内嵌运行期组件的 base64 副本（`initramfs-nbft`
 文件、GRUB 2.14 镜像与共享库）。组件变更后重新内嵌并校验：
 
 ```bash
-python3 test/shared/embed-components.py
+python3 golden/shared/embed-components.py
 python3 test/shared/verify-embed.py
 ```
 
-`test/shared/assets/BOOTX64-2.14-generic.EFI` 是由未修改上游源码构建的
+`golden/shared/assets/BOOTX64-2.14-generic.EFI` 是由未修改上游源码构建的
 GNU GRUB 2.14 `x86_64-efi` 镜像。

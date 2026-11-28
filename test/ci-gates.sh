@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Repository gates shared by CI and local runs.
 #
-# Usage: bash test/ci-gates.sh <syntax|shellcheck|embed|boot|pcap|replay|build>
+# Usage: bash test/ci-gates.sh <layout|syntax|shellcheck|embed|boot|pcap|replay|build>
 #
+#   layout      test/ holds tests and fixtures only; golden/ holds provisioning
 #   syntax      bash -n / sh -n for every tracked shell script
 #   `shellcheck`  ShellCheck at error severity on the same set
 #   embed       every EMBED_B64_* payload matches its repository source
@@ -21,6 +22,26 @@ list_scripts() {
     while IFS= read -r -d '' f; do
         head -1 "$f" 2>/dev/null | grep -qE '^#!.*(bash|/sh)' && printf '%s\n' "$f"
     done < <(git ls-files -z)
+}
+
+gate_layout() {
+    local rc=0 bad n
+    bad=$(find test \( -name 'golden-image-setup-*.sh' -o -name golden-common.sh \
+        -o -name golden-install-vm.sh -o -name golden-vm-run.sh \
+        -o -name embed-components.py -o -path 'test/shared/assets/BOOTX64*' \
+        -o -path 'test/*/mkinitcpio-nbft*' \) -print)
+    if [ -n "$bad" ]; then
+        echo "ERROR: golden image provisioning assets found under test/:" >&2
+        printf '%s\n' "$bad" >&2
+        rc=1
+    fi
+    n=$(find golden -maxdepth 2 -type f -name 'golden-image-setup-*.sh' | wc -l)
+    [ "$n" -eq 8 ] || {
+        echo "ERROR: expected 8 golden-image-setup scripts under golden/, found $n" >&2
+        rc=1
+    }
+    [ "$rc" = 0 ] && echo "layout: OK ($n golden image scripts)"
+    return "$rc"
 }
 
 gate_syntax() {
@@ -71,14 +92,14 @@ gate_boot() {
             rc=1
         }
     done
-    grep -q -- 'instmods gcm ccm chacha20poly1305 ghash_generic' test/shared/golden-common.sh || {
+    grep -q -- 'instmods gcm ccm chacha20poly1305 ghash_generic' golden/shared/golden-common.sh || {
         echo "ERROR: dracut hook does not add the kTLS ciphers" >&2
         rc=1
     }
     # Arch runs mkinitcpio hooks instead; the same kernel-stage TLS contract
     # applies there.
-    local arch_install=test/archlinux/mkinitcpio-nbft/install/nbft
-    local arch_hook=test/archlinux/mkinitcpio-nbft/hooks/nbft
+    local arch_install=golden/archlinux/mkinitcpio-nbft/install/nbft
+    local arch_hook=golden/archlinux/mkinitcpio-nbft/hooks/nbft
     grep -q -- 'add_file /etc/tlshd/config' "$arch_install" || {
         echo "ERROR: $arch_install does not ship /etc/tlshd/config" >&2
         rc=1
@@ -146,6 +167,7 @@ gate_build() {
 }
 
 case "${1:-}" in
+layout) gate_layout ;;
 syntax) gate_syntax ;;
 shellcheck) gate_shellcheck ;;
 embed) gate_embed ;;
@@ -154,7 +176,7 @@ pcap) gate_pcap ;;
 replay) gate_replay ;;
 build) gate_build ;;
 *)
-    echo "usage: $0 <syntax|shellcheck|embed|boot|pcap|replay|build>" >&2
+    echo "usage: $0 <layout|syntax|shellcheck|embed|boot|pcap|replay|build>" >&2
     exit 1
     ;;
 esac

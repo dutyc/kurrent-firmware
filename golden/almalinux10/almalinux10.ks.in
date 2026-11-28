@@ -1,6 +1,6 @@
 # kurrent-firmware: AlmaLinux 10 (RHEL 系) 母盘安装 kickstart 模板
 #
-# 占位符 __GOLDEN_SSH_PUBKEY__ 由 test/almalinux10/run-almalinux10-install.sh
+# 占位符 __GOLDEN_SSH_PUBKEY__ 由 golden/almalinux10/run-almalinux10-install.sh
 # 在生成运行时 kickstart 时替换（公钥不属于机密，私钥只留在 .cache/ 不入库）。
 #
 # 安装盘必须是 4K 逻辑块虚拟盘（virtio-blk logical_block_size=4096）：
