@@ -767,6 +767,55 @@ EOF
     chmod 0755 "$mod/module-setup.sh"
 }
 
+# Wired NIC candidates shared with the Arch mkinitcpio hook
+# (golden/archlinux/mkinitcpio-nbft/install/nbft). Wireless, USB, WWAN and CAN
+# adapters are not boot paths; GPU drivers stay out with early KMS disabled.
+GOLDEN_WIRED_NICS="virtio_net vmxnet3 hv_netvsc \
+    e1000 e1000e igb igc ixgbe ixgbevf i40e iavf ice \
+    r8169 tg3 bnx2 bnx2x bnxt_en \
+    mlx4_core mlx5_core \
+    qede qlcnic netxen_nic cxgb4 sfc nfp liquidio atlantic sky2 skge \
+    alx atl1c atl1e be2net \
+    ena gve mana hns3 amd_xgbe \
+    8139too via_rhine sis900"
+
+# Print the wired NIC modules present on the running kernel. Missing names are
+# skipped: a golden image must build on distributions without every driver.
+golden_available_wired_nics() {
+    local _m
+    for _m in $GOLDEN_WIRED_NICS; do
+        modinfo -n "$_m" >/dev/null 2>&1 && printf '%s\n' "$_m"
+    done
+    return 0
+}
+
+# Check a generated initramfs against its lsinitrd/lsinitramfs listing.
+# golden_verify_initramfs <image> <listing-file> <kver> <label>
+golden_verify_initramfs() {
+    local img=$1 listing=$2 kver=$3 label=$4 pat n size
+    [ -f "$img" ] || { echo "ERROR: $label: $img is missing"; exit 1; }
+    [ -f "$listing" ] || { echo "ERROR: $label: initramfs listing $listing is missing"; exit 1; }
+    for pat in nbft-connect tlshd keyctl nvme 'nvme[-_]tcp' tls virtio_net gcm ccm \
+        chacha20poly1305 'aesni[-_]intel' 'ghash[-_]clmulni[-_]intel'; do
+        n=$(grep -Ec "$pat" "$listing" || true)
+        if [ "$n" -eq 0 ] && grep -qE "$pat" "/lib/modules/$kver/modules.builtin" 2>/dev/null; then
+            echo "    $label: $pat built into the kernel"
+            continue
+        fi
+        [ "$n" -gt 0 ] || { echo "ERROR: $label: $pat not found in $img"; exit 1; }
+    done
+    for pat in nvidia amdgpu iwlwifi ath10k ath11k rtw89 brcmfmac \
+        '/drivers/net/wireless/' '/drivers/net/usb/' '/drivers/net/wan/'; do
+        n=$(grep -Ec "$pat" "$listing" || true)
+        [ "$n" -eq 0 ] || { echo "ERROR: $label: $img contains $pat ($n entries)"; exit 1; }
+    done
+    size=$(stat -c %s "$img")
+    echo "    $label: initramfs size $((size / 1024 / 1024)) MiB ($size bytes)"
+    [ "$size" -le $((120 * 1024 * 1024)) ] || {
+        echo "ERROR: $label: $img is $size bytes, above the 120 MiB limit"; exit 1
+    }
+}
+
 # Full B stage for the NetworkManager variants (shared package-independent part).
 phase_b_dracut_nm() {
     log "[B] initramfs seed module (dracut 95nbft: NBCT credentials + kernel TLS)"
