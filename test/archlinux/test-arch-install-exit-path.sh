@@ -11,7 +11,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-SRC=$ROOT/test/archlinux/arch-install.sh
+SRC=$ROOT/golden/archlinux/arch-install.sh
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0

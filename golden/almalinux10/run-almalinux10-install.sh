@@ -1,7 +1,7 @@
 #!/bin/bash
 # run-almalinux10-install.sh - AlmaLinux 10 无人值守安装 VM（kickstart + OVMF）
 #
-# 用法: bash test/almalinux10/run-almalinux10-install.sh [ISO]
+# 用法: bash golden/almalinux10/run-almalinux10-install.sh [ISO]
 # 默认 ISO: <repo>/.cache/isos/AlmaLinux-10.2-minimal.iso
 #
 # 前置: 4K 逻辑块 virtio-blk 目标盘（脚本自动创建 10G 稀疏 raw）。
@@ -15,13 +15,13 @@ RAW=${RAW:-$CACHE/vm/alma10.raw}
 VARS=$CACHE/vm/alma10-OVMF_VARS.fd
 KDIR=$CACHE/vm/alma10-install
 LOG=$CACHE/vm/alma10-install.serial
-KS_SRC=$ROOT/test/almalinux10/almalinux10.ks.in
+KS_SRC=$ROOT/golden/almalinux10/almalinux10.ks.in
 KS_DIR=$CACHE/ks
 KS_RUN=$KS_DIR/alma10.ks
 HTTP_PORT=${HTTP_PORT:-8000}
 SSH_KEY=$CACHE/ssh/alma10
 
-. "$ROOT/test/shared/golden-install-vm.sh"
+. "$ROOT/golden/shared/golden-install-vm.sh"
 
 [ -f "$ISO" ] || { echo "ERROR: 缺少 ISO: $ISO" >&2; exit 1; }
 

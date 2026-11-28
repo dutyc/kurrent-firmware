@@ -1,7 +1,7 @@
 #!/bin/bash
 # run-leap16-install.sh - openSUSE Leap 16.0 无人值守安装 VM（Agama + OVMF）
 #
-# 用法: bash test/opensuse-leap16/run-leap16-install.sh [ISO]
+# 用法: bash golden/opensuse-leap16/run-leap16-install.sh [ISO]
 # 默认 ISO: <repo>/.cache/isos/Leap-16.0-online-installer.iso
 #
 # Agama 自动安装：inst.auto=<profile>（JSON），inst.finish=poweroff。
@@ -15,13 +15,13 @@ RAW=${RAW:-$CACHE/vm/leap16.raw}
 VARS=$CACHE/vm/leap16-OVMF_VARS.fd
 KDIR=$CACHE/vm/leap16-install
 LOG=$CACHE/vm/leap16-install.serial
-PROFILE_SRC=$ROOT/test/opensuse-leap16/leap16-profile.json
+PROFILE_SRC=$ROOT/golden/opensuse-leap16/leap16-profile.json
 KS_DIR=$CACHE/ks
 PROFILE_RUN=$KS_DIR/leap16-profile.json
 HTTP_PORT=${HTTP_PORT:-8000}
 SSH_KEY=$CACHE/ssh/leap16
 
-. "$ROOT/test/shared/golden-install-vm.sh"
+. "$ROOT/golden/shared/golden-install-vm.sh"
 
 [ -f "$ISO" ] || { echo "ERROR: 缺少 ISO: $ISO" >&2; exit 1; }
 

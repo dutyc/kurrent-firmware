@@ -2,12 +2,12 @@
 
 [English](distributions.md) | [中文](../zh/distributions.md)
 
-Each distribution has one self-contained `test/<distro>/golden-image-setup-<distro>.sh`
+Each distribution has one self-contained `golden/<distro>/golden-image-setup-<distro>.sh`
 that runs the shared A–F customization flow; the host-side helpers and the
-packer live under `test/shared/`. Every script embeds the `initramfs-nbft`
+packer live under `golden/shared/`. Every script embeds the `initramfs-nbft`
 components and the GRUB 2.14 artifact, so a single file can be copied into a
 golden image and run. After a component change, re-run
-`python3 test/shared/embed-components.py`.
+`python3 golden/shared/embed-components.py`.
 
 ## Supported distributions
 
@@ -62,7 +62,7 @@ GPT/ESP rebuild and still refreshes the ESP content.
    (installer kernel/initrd names, preseed/autoinstall/kickstart boot arguments,
    package-manager source format). Use a 4K logical-block disk for the target.
 2. Run the unattended installation through to automatic power-off.
-3. Start the customization VM with `test/shared/golden-vm-run.sh` (or
+3. Start the customization VM with `golden/shared/golden-vm-run.sh` (or
    `golden-ubuntu-vm-run.sh`), copy the script in and run A–F.
 4. Run the isolated host-side acceptance (see [verification.md](verification.md));
    the production bridge and port stay untouched.

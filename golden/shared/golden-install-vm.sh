@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 #golden-install-vm.sh - host-side helpers for the unattended installer runs.
 #
-# Shared by test/almalinux10/run-almalinux10-install.sh and
-# test/opensuse-leap16/run-leap16-install.sh. Only the installer input differs
+# Shared by golden/almalinux10/run-almalinux10-install.sh and
+# golden/opensuse-leap16/run-leap16-install.sh. Only the installer input differs
 # (kickstart vs Agama profile, kernel/initrd paths); the VM scaffolding is the
 # same and lives here.
 

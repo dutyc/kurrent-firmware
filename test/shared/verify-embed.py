@@ -9,7 +9,7 @@ old component, so check the decoded SHA-256 against the repository source.
 Usage:
     python3 test/shared/verify-embed.py [SCRIPT ...]
 
-Without arguments every test/*/golden-image-setup-*.sh is checked.  Exit
+Without arguments every golden/*/golden-image-setup-*.sh is checked.  Exit
 status is non-zero if a payload is missing, duplicated, malformed or stale.
 """
 import base64
@@ -23,7 +23,7 @@ repo = pathlib.Path(__file__).resolve().parent.parent.parent
 
 sources = {
     "EMBED_B64_CONNECT": repo / "initramfs-nbft" / "nbft-connect",
-    "EMBED_B64_BOOTX64": repo / "test" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
+    "EMBED_B64_BOOTX64": repo / "golden" / "shared" / "assets" / "BOOTX64-2.14-generic.EFI",
 }
 # Optional payloads: checked when present, ignored when a script does not use
 # them. initramfs-tools scripts embed the hook pair; the Arch script embeds the
@@ -31,13 +31,13 @@ sources = {
 optional_sources = {
     "EMBED_B64_HOOK": repo / "initramfs-nbft" / "initramfs" / "hooks" / "nbft",
     "EMBED_B64_LOCALTOP": repo / "initramfs-nbft" / "initramfs" / "scripts" / "local-top" / "nbft",
-    "EMBED_B64_COMMON": repo / "test" / "shared" / "golden-common.sh",
-    "EMBED_B64_MKINITCPIO_INSTALL": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "install" / "nbft",
-    "EMBED_B64_MKINITCPIO_HOOK": repo / "test" / "archlinux" / "mkinitcpio-nbft" / "hooks" / "nbft",
+    "EMBED_B64_COMMON": repo / "golden" / "shared" / "golden-common.sh",
+    "EMBED_B64_MKINITCPIO_INSTALL": repo / "golden" / "archlinux" / "mkinitcpio-nbft" / "install" / "nbft",
+    "EMBED_B64_MKINITCPIO_HOOK": repo / "golden" / "archlinux" / "mkinitcpio-nbft" / "hooks" / "nbft",
 }
 
 scripts = [pathlib.Path(a) for a in sys.argv[1:]] or sorted(
-    repo.glob("test/*/golden-image-setup-*.sh"))
+    repo.glob("golden/*/golden-image-setup-*.sh"))
 if not scripts:
     sys.exit("ERROR: no golden-image-setup scripts found")
 

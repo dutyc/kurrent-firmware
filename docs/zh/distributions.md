@@ -2,10 +2,10 @@
 
 [English](../en/distributions.md) | [中文](distributions.md)
 
-每个发行版有一个自包含的 `test/<distro>/golden-image-setup-<distro>.sh`，运行
-共享的 A–F 定制流程；宿主侧辅助脚本与打包器在 `test/shared/` 下。每个脚本内嵌
+每个发行版有一个自包含的 `golden/<distro>/golden-image-setup-<distro>.sh`，运行
+共享的 A–F 定制流程；宿主侧辅助脚本与打包器在 `golden/shared/` 下。每个脚本内嵌
 `initramfs-nbft` 组件与 GRUB 2.14 产物，单文件即可拷入母盘运行。组件变更后
-重新运行 `python3 test/shared/embed-components.py`。
+重新运行 `python3 golden/shared/embed-components.py`。
 
 ## 支持的发行版
 
@@ -55,7 +55,7 @@ initramfs 使用 mkinitcpio 钩子（`install/nbft`、`hooks/nbft`），移除 `
 1. 从最接近的现有变体派生脚本，逐项核对参数（安装器内核/initrd 文件名、
    preseed/autoinstall/kickstart 引导参数、包管理源格式）；目标盘用 4K 逻辑块。
 2. 运行无人值守安装直至自动关机。
-3. 用 `test/shared/golden-vm-run.sh`（或 `golden-ubuntu-vm-run.sh`）启动定制 VM，
+3. 用 `golden/shared/golden-vm-run.sh`（或 `golden-ubuntu-vm-run.sh`）启动定制 VM，
    拷入脚本并运行 A–F。
 4. 运行隔离的宿主侧验收（见 [verification.md](verification.md)）；生产桥与端口不动。
 5. 组件变更后重新内嵌，并运行 `test/test-nbft-connect-nbct.sh`。

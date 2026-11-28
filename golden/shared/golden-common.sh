@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # golden-common.sh - shared stages for the RHEL/SUSE golden image setup scripts.
 #
-# Sourced by test/{almalinux10,fedora44,opensuse-leap16}/golden-image-setup-*.sh.
+# Sourced by golden/{almalinux10,fedora44,opensuse-leap16}/golden-image-setup-*.sh.
 # The distributions keep their own A/B stages (package manager, kernel/initrd,
 # dracut modules, network stack); this library owns the A-F stages that must
 # behave identically: argument parsing, C/D/F, the whole E disk layout, and the
@@ -74,7 +74,7 @@ golden_parse_args() {
 }
 
 release_embedded_components() {
-    [ -n "$EMBED_B64_CONNECT" ] || { echo "ERROR: no embedded components (run bash test/shared/embed-components.py)" >&2; return 1; }
+    [ -n "$EMBED_B64_CONNECT" ] || { echo "ERROR: no embedded components (run bash golden/shared/embed-components.py)" >&2; return 1; }
     local d; d=$(mktemp -d /tmp/nbft-components.XXXXXX)
     echo "$EMBED_B64_CONNECT" | base64 -d > "$d/nbft-connect"
     mkdir -p "$d/initramfs/hooks" "$d/initramfs/scripts/local-top"

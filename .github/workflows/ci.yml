@@ -19,6 +19,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             shellcheck python3 make gcc binutils libc6-dev perl
 
+      - name: Directory layout
+        run: bash test/ci-gates.sh layout
+
       - name: Shell syntax
         run: bash test/ci-gates.sh syntax
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # test-golden-esp.sh - regression test for the ESP volid check in
-# test/shared/golden-common.sh
+# golden/shared/golden-common.sh
 #
 # Usage: bash test/shared/test-golden-esp.sh
 #
@@ -15,8 +15,8 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 
-# shellcheck source=test/shared/golden-common.sh
-. "$ROOT/test/shared/golden-common.sh"
+# shellcheck source=golden/shared/golden-common.sh
+. "$ROOT/golden/shared/golden-common.sh"
 
 python3 - "$TMP" <<'PYEOF'
 import struct, sys

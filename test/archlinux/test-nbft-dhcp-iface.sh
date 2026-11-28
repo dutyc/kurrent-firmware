@@ -11,7 +11,7 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-HOOK_SRC=$ROOT/test/archlinux/mkinitcpio-nbft/hooks/nbft
+HOOK_SRC=$ROOT/golden/archlinux/mkinitcpio-nbft/hooks/nbft
 RUN_SHELL=${1:-dash}
 fail=0
 
